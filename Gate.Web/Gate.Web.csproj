@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>compliancegate-gate-web</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gate.Contracts\Gate.Contracts.csproj" />
+    <ProjectReference Include="..\Gate.Erp\Gate.Erp.csproj" />
+    <ProjectReference Include="..\Gate.Agent\Gate.Agent.csproj" />
+    <ProjectReference Include="..\Gate.Compliance\Gate.Compliance.csproj" />
+  </ItemGroup>
+
+</Project>

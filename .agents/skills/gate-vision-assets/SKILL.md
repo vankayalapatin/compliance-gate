@@ -9,8 +9,8 @@ Owns everything the dock camera sees. Deterministic files in, cached reads out, 
 
 ## Ownership
 
-- Owns: `assets/` dock images, the carton ground-truth seed file, the read-cache manifest, plus its scoring checks under `Gate.Eval/Vision/`.
-- Never touches: any file under `Gate.Erp/`, `Gate.Core/`, `Gate.Web/`, contract DTOs, the adapter interface, `schema.md`.
+- Owns: `assets/` dock images, the carton ground-truth seed file, the read-cache manifest, plus its future scoring checks under `Gate.Eval/Vision/`.
+- Never touches: any file under `Gate.Erp/`, `Gate.Contracts/`, `Gate.Agent/`, `Gate.Compliance/`, `Gate.Web/`, contract DTOs, the adapter interface, `schema.md`.
 - Contract rule: DTOs, the adapter interface, and `schema.md` change in the lead session only.
 
 ## Rules

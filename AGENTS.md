@@ -18,11 +18,12 @@ stays read-only in the shared checkout.
 ## Folder ownership
 
 - `gate-erp-architect`: `Gate.Erp/`, `Gate.Eval/Erp/`.
-- `gate-compliance-engineer`: `Gate.Core/Compliance/`, `Gate.Eval/Compliance/`.
-- `gate-vision-assets`: `assets/`, `Gate.Eval/Vision/`.
-- `gate-agent-engineer`: `Gate.Core/Agent/`, `Gate.Eval/Agent/`.
-- `gate-ui-engineer`: `Gate.Web/`, `Gate.Eval/Ui/`.
+- `gate-compliance-engineer`: `Gate.Compliance/`, `Gate.Eval/Compliance/`.
+- `gate-vision-assets`: `assets/`, `Gate.Eval/Vision/` (reserved).
+- `gate-agent-engineer`: `Gate.Agent/`, `Gate.Eval/Agent/`.
+- `gate-ui-engineer`: `Gate.Web/`, `Gate.Eval/Ui/` (reserved).
 - `gate-reviewer`: owns nothing, edits nothing.
+- Lead session only: `Gate.Contracts/`, `Gate.Eval/SeededErp.cs`, `schema.md`, the ERP adapter interface.
 
 ## Contract rule
 

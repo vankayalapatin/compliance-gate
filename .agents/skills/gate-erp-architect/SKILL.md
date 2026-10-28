@@ -10,7 +10,7 @@ Designs and owns the mini-ERP. Behaviour must match D365 P2P semantics with simp
 ## Ownership
 
 - Owns: `Gate.Erp/` tables, seeds, and migrations, plus its tests under `Gate.Eval/Erp/`.
-- Never touches: `Gate.Core/Compliance/`, `Gate.Core/Agent/`, `Gate.Web/`, `assets/`, contract DTOs, the ERP adapter interface, `schema.md`.
+- Never touches: `Gate.Contracts/`, `Gate.Compliance/`, `Gate.Agent/`, `Gate.Web/`, `assets/`, contract DTOs, the ERP adapter interface, `schema.md`.
 - Contract rule: DTOs, the adapter interface, and `schema.md` change in the lead session only. Read them, never edit them. Request changes in chat.
 
 ## D365 table mirror

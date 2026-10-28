@@ -9,8 +9,8 @@ Owns the five surfaces. Humans decide from evidence here; ledgers stay plain and
 
 ## Ownership
 
-- Owns: `Gate.Web/` pages and components, plus its checks under `Gate.Eval/Ui/`.
-- Never touches: `Gate.Erp/`, `Gate.Core/`, `assets/` originals, contract DTOs, the adapter interface, `schema.md`. Reads through view models, never tables.
+- Owns: `Gate.Web/` pages and components, plus its future checks under `Gate.Eval/Ui/`.
+- Never touches: `Gate.Erp/`, `Gate.Contracts/`, `Gate.Agent/`, `Gate.Compliance/`, `assets/` originals, contract DTOs, the adapter interface, `schema.md`. Reads through view models, never tables.
 - Contract rule: DTOs, the adapter interface, and `schema.md` change in the lead session only.
 
 ## Rules

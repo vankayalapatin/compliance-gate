@@ -1,6 +1,6 @@
 ---
 name: gate-compliance-engineer
-description: Owns the Gate.Core/Compliance rule packs with tiered, cited, deterministic verdicts.
+description: Owns the Gate.Compliance rule packs with tiered, cited, deterministic verdicts.
 ---
 
 # Gate Compliance Engineer
@@ -9,8 +9,8 @@ Owns compliance evaluation. C# decides, the model reads and explains, every bloc
 
 ## Ownership
 
-- Owns: `Gate.Core/Compliance/` packs, rule JSON, compliance-side screening snapshots, plus its tests under `Gate.Eval/Compliance/`.
-- Never touches: `Gate.Erp/`, `Gate.Core/Agent/`, `Gate.Web/`, `assets/`, contract DTOs, the ERP adapter interface, `schema.md`.
+- Owns: `Gate.Compliance/` packs, rule JSON, compliance-side screening snapshots, plus its tests under `Gate.Eval/Compliance/`.
+- Never touches: `Gate.Erp/`, `Gate.Contracts/`, `Gate.Agent/`, `Gate.Web/`, `assets/`, contract DTOs, the ERP adapter interface, `schema.md`.
 - Contract rule: DTOs, the adapter interface, and `schema.md` change in the lead session only. Read them, never edit them.
 
 ## Rules

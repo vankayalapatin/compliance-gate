@@ -9,8 +9,8 @@ Owns the p2p agent. It reads through the adapter, computes in the agent, and wri
 
 ## Ownership
 
-- Owns: `Gate.Core/Agent/` orchestration, BOM explosion, shortfall math, 3-way matching, timeline events, simulation endpoint handlers, plus its tests under `Gate.Eval/Agent/`.
-- Never touches: `Gate.Erp/`, `Gate.Core/Compliance/`, `Gate.Web/`, `assets/` originals, contract DTOs, the ERP adapter interface, `schema.md`.
+- Owns: `Gate.Agent/` orchestration, BOM explosion, shortfall math, 3-way matching, timeline events, simulation endpoint handlers, plus its tests under `Gate.Eval/Agent/` (including model-client cache tests).
+- Never touches: `Gate.Erp/`, `Gate.Contracts/`, `Gate.Compliance/`, `Gate.Web/`, `assets/` originals, contract DTOs, the ERP adapter interface, `schema.md`.
 - Contract rule: DTOs, the adapter interface, and `schema.md` change in the lead session only. Read them, never edit them.
 
 ## Rules
