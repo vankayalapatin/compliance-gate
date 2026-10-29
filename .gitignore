@@ -3,3 +3,8 @@ bin/
 obj/
 TestResults/
 .vs/
+# Generated scenario run state: sequence-assigned document ids per event.
+scenarios/run-manifest.json
+# Local scenario sqlite database (lands beside the app working directory).
+**/*.db
+**/*.db-journal

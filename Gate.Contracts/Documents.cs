@@ -47,6 +47,20 @@ public sealed record VendorDocumentDto(
     string Reference,
     bool Present);
 
+/// <summary>The proposed lot handed to vendor evaluation: what part, how
+/// many units, and which country the award would go to.</summary>
+public sealed record ProposedAward(
+    string ItemId,
+    decimal Quantity,
+    string Country);
+
+/// <summary>One row of trailing-12-month posted received volume in cells.
+/// Raw history only; shares are always computed from these rows, never stored.</summary>
+public sealed record VolumeHistory(
+    string Source,
+    string Country,
+    decimal Cells);
+
 public sealed record PurchaseRequisitionLine(
     string ItemId,
     decimal Quantity,

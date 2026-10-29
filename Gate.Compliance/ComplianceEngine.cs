@@ -16,7 +16,8 @@ public sealed class ComplianceEngine : IComplianceEngine
     public Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor,
         IReadOnlyList<VendorDocumentDto> documents,
-        decimal volumeShare,
+        ProposedAward award,
+        IReadOnlyList<VolumeHistory> history,
         CancellationToken ct = default)
     {
         var verdicts = new List<Verdict>();
@@ -33,13 +34,33 @@ public sealed class ComplianceEngine : IComplianceEngine
                 : new Verdict($"BAT-LI-{(required == "UN38.3" ? "01" : "02")}", VerdictKind.Block, $"{required} declaration missing for lot.", MissingDocSource));
         }
 
-        verdicts.Add(volumeShare > CorpOriginCap
-            ? new Verdict(CorpOriginCapId, VerdictKind.Block,
-                $"Vendor country share {volumeShare:P0} exceeds {CorpOriginCap:P0} country-of-origin cap.", CorpOriginCapSource)
-            : new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"Vendor country share {volumeShare:P0} within {CorpOriginCap:P0} cap.", CorpOriginCapSource));
+        verdicts.Add(EvaluateOriginCap(award, history));
 
         return Task.FromResult<IReadOnlyList<Verdict>>(verdicts);
+    }
+
+    private static Verdict EvaluateOriginCap(ProposedAward award, IReadOnlyList<VolumeHistory> history)
+    {
+        var total = history.Sum(h => h.Cells);
+        if (total <= 0)
+        {
+            // No trailing history for this part: CORP-02 has no denominator.
+            // Passes as not applicable so history-free parts (e.g. SCR-9 via
+            // Vendor C) keep their straight-through path. The empty-history
+            // human-review boundary from the scenario plan is still open.
+            return new Verdict(CorpOriginCapId, VerdictKind.Pass,
+                $"No 12-month volume history for {award.ItemId}; country-of-origin cap not applicable.", CorpOriginCapSource);
+        }
+
+        var countryCells = history
+            .Where(h => string.Equals(h.Country, award.Country, StringComparison.OrdinalIgnoreCase))
+            .Sum(h => h.Cells);
+        var share = (countryCells + award.Quantity) / (total + award.Quantity);
+        return share > CorpOriginCap
+            ? new Verdict(CorpOriginCapId, VerdictKind.Block,
+                $"Awarding {award.Quantity} {award.ItemId} cells to {award.Country} puts its share at {share:P1} ({countryCells}+{award.Quantity} of {total}+{award.Quantity}), exceeding the {CorpOriginCap:P0} country-of-origin cap.", CorpOriginCapSource)
+            : new Verdict(CorpOriginCapId, VerdictKind.Pass,
+                $"Awarding {award.Quantity} {award.ItemId} cells to {award.Country} puts its share at {share:P1}, within the {CorpOriginCap:P0} cap.", CorpOriginCapSource);
     }
 
     public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(

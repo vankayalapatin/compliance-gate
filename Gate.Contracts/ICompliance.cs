@@ -18,10 +18,14 @@ public sealed record Verdict(
 
 public interface IComplianceEngine
 {
+    /// <summary>Evaluates a vendor for a proposed award. The engine computes
+    /// every share itself as (country history + award) / (total history +
+    /// award) from the trailing-12-month rows; callers never pass shares.</summary>
     Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor,
         IReadOnlyList<VendorDocumentDto> documents,
-        decimal volumeShare,
+        ProposedAward award,
+        IReadOnlyList<VolumeHistory> history,
         CancellationToken ct = default);
 
     Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(

@@ -2,6 +2,7 @@ using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
 using Gate.Erp;
+using Gate.Web;
 using Gate.Web.Components;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -45,5 +46,10 @@ app.UseAntiforgery();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+// Scenario seed (additive): fills sqlite + ERP from GATE_SCENARIO on startup
+// when the store is empty; no-op when no scenario file resolves.
+await ScenarioEndpoints.EnsureLoadedAsync(app.Services, builder.Configuration);
+app.MapScenarioReset();
 
 app.Run();

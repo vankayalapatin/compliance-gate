@@ -71,6 +71,8 @@ public sealed class P2pAgent
     public async Task<(PurchaseOrder Po, IReadOnlyList<VendorScreening> Screenings)> ScreenAndOrderAsync(
         string prNumber, IReadOnlyList<string> candidateVendorIds, string currency, string source, string caseId, CancellationToken ct = default)
     {
+        var pr = await _erp.GetPrAsync(prNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Unknown PR {prNumber}.");
         var screenings = new List<VendorScreening>();
         string? winner = null;
         foreach (var vendorId in candidateVendorIds)
@@ -79,8 +81,13 @@ public sealed class P2pAgent
             var vendor = vendors.FirstOrDefault(v => v.VendorId == vendorId)
                 ?? throw new InvalidOperationException($"Unknown vendor {vendorId}.");
             var docs = await _erp.GetVendorDocumentsAsync(vendorId, ct).ConfigureAwait(false);
-            var share = await _erp.GetVendorVolumeShareAsync(vendorId, string.Empty, ct).ConfigureAwait(false);
-            var verdicts = await _compliance.EvaluateVendorAsync(vendor, docs, share, ct).ConfigureAwait(false);
+            var verdicts = new List<Verdict>();
+            foreach (var line in pr.Lines)
+            {
+                var award = new ProposedAward(line.ItemId, line.Quantity, vendor.CountryOfOrigin);
+                var history = await _erp.GetVolumeHistoryAsync(line.ItemId, ct).ConfigureAwait(false);
+                verdicts.AddRange(await _compliance.EvaluateVendorAsync(vendor, docs, award, history, ct).ConfigureAwait(false));
+            }
             var passed = verdicts.All(v => v.Kind == VerdictKind.Pass);
             screenings.Add(new VendorScreening(vendorId, passed, verdicts));
             if (passed && winner is null)

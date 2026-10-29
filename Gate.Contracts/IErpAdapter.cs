@@ -13,7 +13,12 @@ public interface IErpAdapter
     Task<IReadOnlyList<VendorDto>> GetVendorsAsync(string itemId, CancellationToken ct = default);
     Task<IReadOnlyList<VendorDocumentDto>> GetVendorDocumentsAsync(string vendorId, CancellationToken ct = default);
     Task<string?> GetVendorCountryAsync(string vendorId, CancellationToken ct = default);
+    /// <summary>Legacy precomputed per-vendor share. New paths read raw
+    /// history below and let compliance compute; kept for interface stability.</summary>
     Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default);
+    /// <summary>Raw trailing-12-month posted received volume in cells for an
+    /// item, one row per source. Shares are computed from these rows.</summary>
+    Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default);
     Task<PurchaseOrder?> GetPurchaseOrderAsync(string poNumber, CancellationToken ct = default);
     Task<ShipmentReceipt?> GetReceiptAsync(string receiptNumber, CancellationToken ct = default);
     Task<VendorInvoice?> GetInvoiceAsync(string invoiceNumber, CancellationToken ct = default);

@@ -1,0 +1,84 @@
+{
+  "$comment": "ComplianceGate demo scenario v1. Single source of truth for demo seed. Intents only: no SO/PR/PO/ASN/RCP/INV/PAY numbers appear here; the loader mints every document number from sqlite number sequences at posting and records them in scenarios/run-manifest.json. All names, prices, quantities, and dates are fictional. Currency is USD (decimal) on each header.",
+  "name": "demo-v1",
+  "currency": "USD",
+  "salesOrder": { "item": "GLASS-1", "quantity": 1300 },
+  "bom": [
+    { "item": "GLASS-1", "component": "BAT-1", "qtyPer": 1 },
+    { "item": "GLASS-1", "component": "SCR-9", "qtyPer": 2 }
+  ],
+  "stock": [
+    { "item": "BAT-1", "quantity": 60 },
+    { "item": "SCR-9", "quantity": 2500 }
+  ],
+  "openPoInbound": { "item": "BAT-1", "quantity": 40, "vendor": "V-B" },
+  "vendors": [
+    {
+      "id": "V-A", "name": "Cheap Cells Ltd", "country": "CN", "role": "cheaper-blocked",
+      "documents": [
+        { "kind": "UN38.3", "reference": "un383-a", "present": true },
+        { "kind": "SDS", "reference": "sds-a", "present": true }
+      ]
+    },
+    {
+      "id": "V-B", "name": "Compliant Cells Inc", "country": "MX", "role": "compliant-winner",
+      "documents": [
+        { "kind": "UN38.3", "reference": "un383-b", "present": true },
+        { "kind": "SDS", "reference": "sds-b", "present": true }
+      ]
+    },
+    {
+      "id": "V-C", "name": "Screws Co", "country": "TW", "role": "straight-through",
+      "documents": [
+        { "kind": "UN38.3", "reference": "n/a", "present": true },
+        { "kind": "SDS", "reference": "n/a", "present": true }
+      ]
+    }
+  ],
+  "historyPart": "BAT-1",
+  "historyCells": [
+    { "source": "V-A CN active", "country": "CN", "cells": 3400 },
+    { "source": "Legacy CN inactive", "country": "CN", "cells": 2500 },
+    { "source": "V-B MX active", "country": "MX", "cells": 3800 },
+    { "source": "Other non-CN", "country": "OTHER", "cells": 300 }
+  ],
+  "historyNote": "Loader seeds each vendor's share as its country's cells over total cells. Baseline CN is 59.0%, so no vendor breaches the 60% cap at seed time; the CORP-02 block only materializes with the prospective award included (V-A award reaches 63.4%), which needs agent-side award math decided later. Policy and history numbers are unchanged.",
+  "users": [
+    { "name": "Maya Planner", "role": "requester", "signingLimit": 5000 },
+    { "name": "Dana Director", "role": "approver", "signingLimit": 50000 },
+    { "name": "Del Delegate", "role": "dated-delegate-for-Dana", "signingLimit": 50000 },
+    { "name": "Amy AP Clerk", "role": "ap-clerk", "signingLimit": 0 },
+    { "name": "Finn Finance", "role": "payment-approver", "signingLimit": 100000 }
+  ],
+  "delegations": [
+    { "from": "Dana Director", "to": "Del Delegate", "start": "2026-10-20", "end": "2026-11-10" }
+  ],
+  "autoApproveUnder": 500,
+  "cartonPlan": { "unitsPerCarton": 100, "cartons": 12 },
+  "cartons": [
+    { "id": "CTN-01", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-01", "IMG-03"] },
+    { "id": "CTN-02", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-01", "IMG-03"] },
+    { "id": "CTN-03", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-01"] },
+    { "id": "CTN-04", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "crush outer, cells OK", "visibleIn": ["IMG-01", "IMG-03"] },
+    { "id": "CTN-05", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-01", "IMG-02"] },
+    { "id": "CTN-06", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-01", "IMG-02"] },
+    { "id": "CTN-07", "part": "BAT-1", "units": 100, "markPresent": false, "damage": "none", "visibleIn": ["IMG-01", "IMG-02"], "reshotIn": "IMG-04" },
+    { "id": "CTN-08", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-02"] },
+    { "id": "CTN-09", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-02", "IMG-03"] },
+    { "id": "CTN-10", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-03"] },
+    { "id": "CTN-11", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none, hidden", "visibleIn": [] },
+    { "id": "CTN-12", "part": "BAT-1", "units": 100, "markPresent": true, "damage": "none", "visibleIn": ["IMG-03"] }
+  ],
+  "images": ["IMG-01", "IMG-02", "IMG-03", "IMG-04"],
+  "smallPos": [
+    { "key": "duplicate-test", "item": "BAT-1", "quantity": 50, "vendor": "V-B", "unitPrice": 18.50 },
+    { "key": "bank-test", "item": "BAT-1", "quantity": 40, "vendor": "V-B", "unitPrice": 18.50 },
+    { "key": "missing-fields-test", "item": "SCR-9", "quantity": 200, "vendor": "V-C", "unitPrice": 0.40 }
+  ],
+  "invoiceIntents": {
+    "main": { "vendor": "V-B", "part": "BAT-1", "quantity": 1200, "unitPrice": 18.50 },
+    "duplicate": { "smallPo": "duplicate-test", "reusePostedNumber": true },
+    "bankChange": { "smallPo": "bank-test", "differentBank": true },
+    "missingFields": { "smallPo": "missing-fields-test", "vendorBlank": true, "poBlank": true }
+  }
+}

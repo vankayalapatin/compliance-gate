@@ -13,6 +13,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     private readonly Dictionary<string, VendorDto> _vendors = new();
     private readonly Dictionary<string, List<VendorDocumentDto>> _vendorDocs = new();
     private readonly Dictionary<string, decimal> _volumeShares = new();
+    private readonly Dictionary<string, List<VolumeHistory>> _volumeHistory = new();
     private readonly Dictionary<string, decimal> _signingLimits = new();
     private readonly Dictionary<string, PurchaseRequisition> _prs = new();
     private readonly Dictionary<string, PurchaseOrder> _pos = new();
@@ -34,7 +35,35 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     public void SeedVendor(VendorDto vendor) => _vendors[vendor.VendorId] = vendor;
     public void SeedVendorDocuments(string vendorId, IEnumerable<VendorDocumentDto> docs) => _vendorDocs[vendorId] = docs.ToList();
     public void SeedVolumeShare(string vendorId, decimal share) => _volumeShares[vendorId] = share;
+
+    public void SeedVolumeHistory(string itemId, IEnumerable<VolumeHistory> rows) => _volumeHistory[itemId] = rows.ToList();
     public void SeedSigningLimit(string user, decimal limit) => _signingLimits[user] = limit;
+
+    // Scenario reset support (additive): wipes all rows, approvals, notes,
+    // and sequences so a scenario reload regenerates every document number.
+    public void Clear()
+    {
+        _salesOrders.Clear();
+        _boms.Clear();
+        _stock.Clear();
+        _vendors.Clear();
+        _vendorDocs.Clear();
+        _volumeShares.Clear();
+        _volumeHistory.Clear();
+        _signingLimits.Clear();
+        _prs.Clear();
+        _pos.Clear();
+        _receipts.Clear();
+        _invoices.Clear();
+        _payments.Clear();
+        _holds.Clear();
+        _approvals.Clear();
+        _requesters.Clear();
+        _paymentInvoices.Clear();
+        _sequences.Clear();
+        _paidAmounts.Clear();
+        _poNotes.Clear();
+    }
 
     private string Next(string prefix)
     {
@@ -77,6 +106,9 @@ public sealed class InMemoryErpAdapter : IErpAdapter
 
     public Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default) =>
         Task.FromResult(_volumeShares.GetValueOrDefault(vendorId));
+
+    public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<VolumeHistory>>(_volumeHistory.GetValueOrDefault(itemId, []));
 
     public Task<PurchaseOrder?> GetPurchaseOrderAsync(string poNumber, CancellationToken ct = default) =>
         Task.FromResult(_pos.GetValueOrDefault(poNumber));

@@ -17,7 +17,15 @@ public sealed class ComplianceTests
             new VendorDocumentDto("V-A", "UN38.3", "un383-a", true),
             new VendorDocumentDto("V-A", "SDS", "sds-a", true)
         };
-        var verdicts = await _engine.EvaluateVendorAsync(vendor, docs, 0.65m);
+        // (59 + 10) / (100 + 10) = 62.7%: award breaches the 60% cap.
+        var history = new[]
+        {
+            new VolumeHistory("V-A CN active", "CN", 34),
+            new VolumeHistory("Legacy CN inactive", "CN", 25),
+            new VolumeHistory("V-B MX active", "MX", 38),
+            new VolumeHistory("Other non-CN", "OTHER", 3)
+        };
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, docs, new ProposedAward("BAT-1", 10, "CN"), history);
         var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Block, corp.Kind);
         Assert.Contains("CORP-02", corp.Reason + corp.RuleId);
@@ -32,7 +40,15 @@ public sealed class ComplianceTests
             new VendorDocumentDto("V-B", "UN38.3", "un383-b", true),
             new VendorDocumentDto("V-B", "SDS", "sds-b", true)
         };
-        var verdicts = await _engine.EvaluateVendorAsync(vendor, docs, 0.30m);
+        // (38 + 10) / (100 + 10) = 43.6%: award stays within the 60% cap.
+        var history = new[]
+        {
+            new VolumeHistory("V-A CN active", "CN", 34),
+            new VolumeHistory("Legacy CN inactive", "CN", 25),
+            new VolumeHistory("V-B MX active", "MX", 38),
+            new VolumeHistory("Other non-CN", "OTHER", 3)
+        };
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, docs, new ProposedAward("BAT-1", 10, "MX"), history);
         Assert.All(verdicts, v => Assert.Equal(VerdictKind.Pass, v.Kind));
     }
 
@@ -41,7 +57,13 @@ public sealed class ComplianceTests
     {
         var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null);
         var docs = new[] { new VendorDocumentDto("V-B", "SDS", "sds-b", true) };
-        var verdicts = await _engine.EvaluateVendorAsync(vendor, docs, 0.30m);
+        var history = new[]
+        {
+            new VolumeHistory("V-A CN active", "CN", 59),
+            new VolumeHistory("V-B MX active", "MX", 38),
+            new VolumeHistory("Other non-CN", "OTHER", 3)
+        };
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, docs, new ProposedAward("BAT-1", 10, "MX"), history);
         Assert.Contains(verdicts, v => v.RuleId == "BAT-LI-01" && v.Kind == VerdictKind.Block);
     }
 
