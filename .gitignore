@@ -8,3 +8,9 @@ scenarios/run-manifest.json
 # Local scenario sqlite database (lands beside the app working directory).
 **/*.db
 **/*.db-journal
+# Agent check runner traffic (requests, results, logs).
+.agent-checks/inbox/*.json
+.agent-checks/outbox/*.json
+.agent-checks/outbox/*.log
+.agent-checks/archive/*.json
+.agent-checks/.lock

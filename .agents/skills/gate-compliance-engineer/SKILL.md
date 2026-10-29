@@ -28,6 +28,7 @@ Owns compliance evaluation. C# decides, the model reads and explains, every bloc
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.
 - Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune packs, thresholds, or tiers to force a pass.
 - Production bar (see `AGENTS.md`): simulation feeds external inputs only; every rule carries a failure-path test; errors are logged with context and surfaced, never omitted.
+- Check runner (see `AGENTS.md`): never run dotnet yourself; write `.agent-checks/inbox/<id>.json` and read `.agent-checks/outbox/<id>.json`.
 
 ## Done criteria
 

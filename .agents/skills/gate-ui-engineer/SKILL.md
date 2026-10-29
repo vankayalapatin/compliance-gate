@@ -24,6 +24,7 @@ Owns the five surfaces. Humans decide from evidence here; ledgers stay plain and
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.
 - Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not relabel or reshape surfaces to force a pass.
 - Production bar (see `AGENTS.md`): errors surface with context, never omitted; reset and replay carry tests.
+- Check runner (see `AGENTS.md`): never run dotnet yourself; write `.agent-checks/inbox/<id>.json` and read `.agent-checks/outbox/<id>.json`.
 
 ## Done criteria
 

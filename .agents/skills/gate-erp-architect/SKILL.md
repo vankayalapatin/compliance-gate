@@ -32,6 +32,7 @@ Mirror these with behaviour-faithful fields and simple names: `VendTable`, `Purc
 - Agent provenance uses native audit columns only (`Source`, `CreatedBy`). The UI shows its agent-made banner whenever `Source` equals `p2p-agent`. No agent-specific foreign keys in ERP tables.
 - Simulation and offline writes carry idempotency keys so replay cannot double-post.
 - Production bar (see `AGENTS.md`): controls are enforced in the real EF Core ERP layer with migrations and transactions; the fake ERP is unit-test-only; every refusal carries a failure-path test.
+- Check runner (see `AGENTS.md`): never run dotnet yourself; write `.agent-checks/inbox/<id>.json` and read `.agent-checks/outbox/<id>.json`.
 - No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from the scenario file or run manifest, never from C# constants or literals. Code holds logic only.
 - Tests may carry their own small data but must not depend on the demo numbers.
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.

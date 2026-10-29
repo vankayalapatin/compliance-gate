@@ -26,6 +26,7 @@ Owns everything the dock camera sees. Deterministic files in, cached reads out, 
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.
 - Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune reads or scoring to force a pass.
 - Production bar (see `AGENTS.md`): images are external inputs; reads carry timeouts and retries; scoring carries failure-path tests.
+- Check runner (see `AGENTS.md`): never run dotnet yourself; write `.agent-checks/inbox/<id>.json` and read `.agent-checks/outbox/<id>.json`.
 
 ## Done criteria
 

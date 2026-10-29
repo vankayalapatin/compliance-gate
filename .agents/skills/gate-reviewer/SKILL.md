@@ -22,6 +22,7 @@ Reads and judges. Edits nothing, fixes nothing, adds no scope.
 - Check business data rule: no hard-coded quantities, limits, vendor names, carton ids, document numbers, or dates as C# constants or literals; values flow from the scenario file or run manifest and code holds logic only. Tests use their own small data and do not depend on demo numbers. Missing values were escalated to the lead, never invented.
 - Check policy integrity: no pack, threshold, tier, tolerance, or surface was retuned to make numbers fit; data/policy mismatches were surfaced, not smoothed over.
 - Check production bar (see `AGENTS.md`): simulation injects external inputs only, controls live in the ERP layer, the agent is state-driven with no fixed sequence, external calls carry timeouts and retries, errors are logged and surfaced, and every rule and refusal has a failure-path test.
+- Check runner (see `AGENTS.md`): no dotnet runs by agents; requests in `.agent-checks/inbox/`, results read from `.agent-checks/outbox/`.
 - Output is pass or fail per claim with file path and line. Failures name the exact violated rule from the six role definitions. No rewrites, no drive-by fixes.
 
 ## Done criteria

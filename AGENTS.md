@@ -45,6 +45,24 @@ only. Member roles read them and request changes in chat.
 - External calls carry timeouts and retries. Errors are logged with context and surfaced; nothing is silently swallowed or omitted.
 - Every rule and every refusal has a test, including its failure path.
 
+## Agent check runner
+
+The sandbox compiles but cannot run tests (local sockets are blocked there),
+so a watcher on your machine runs checks on agents' behalf.
+
+- Start it once and leave it running: `./scripts/agent-check.sh`
+- Agents never run `dotnet build` or `dotnet test` themselves. They write one
+  request file per check: `.agent-checks/inbox/<unique-id>.json`
+  `{ "kind": "check", "target": "Gate.Eval/Gate.Eval.csproj", "filter": "Category!=Live", "scenario": "scenarios/demo-v1.json" }`
+  Kinds: `check` (build + tests), `build` (optional `target`), `test`
+  (optional `target`/`filter`, defaults to the suite minus Live), `live`
+  (live tests only), `smoke` (scenario smoke, optional `scenario`).
+- Results land in `.agent-checks/outbox/<unique-id>.json` plus the full log
+  `<unique-id>.log`; the request moves to `.agent-checks/archive/`. Agents
+  read the outbox file on a later turn — never poll in a loop.
+- Keep ids unique (`<date>-<n>`), one check per file. Inbox, outbox, and
+  archive traffic is git-ignored.
+
 ## Git rule
 
 Never git push. Commits happen only when explicitly asked.
