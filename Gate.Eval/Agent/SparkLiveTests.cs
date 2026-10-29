@@ -10,6 +10,7 @@ namespace Gate.Eval;
 public sealed class SparkLiveTests
 {
     [Fact]
+    [Trait("Category", "Live")]
     public async Task RealSparkCallWorksAndGetsCached()
     {
         var config = new ConfigurationBuilder()
@@ -31,18 +32,28 @@ public sealed class SparkLiveTests
             Model = model!,
             ApiKey = apiKey!
         });
-        var cacheDir = Path.Combine(Path.GetTempPath(), "gate-spark-live");
-        var cached = new CachedModelClient(spark, cacheDir);
-        var request = new ModelRequest("Reply with exactly: spark-ok", "You are a connectivity probe.");
+        var cacheDir = Path.Combine(Path.GetTempPath(), "gate-spark-live", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var cached = new CachedModelClient(spark, cacheDir);
+            var request = new ModelRequest("Reply with exactly: spark-ok", "You are a connectivity probe.");
 
-        var first = await cached.CompleteAsync(request);
-        Assert.Contains("spark-ok", first.Text, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, counter.Count);
-        Assert.True(File.Exists(Path.Combine(cacheDir, CachedModelClient.CacheKey(model!, request) + ".json")));
+            var first = await cached.CompleteAsync(request);
+            Assert.Contains("spark-ok", first.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1, counter.Count);
+            Assert.True(File.Exists(Path.Combine(cacheDir, CachedModelClient.CacheKey(model!, request) + ".json")));
 
-        var second = await cached.CompleteAsync(request);
-        Assert.Equal(first.Text, second.Text);
-        Assert.Equal(1, counter.Count);
+            var second = await cached.CompleteAsync(request);
+            Assert.Equal(first.Text, second.Text);
+            Assert.Equal(1, counter.Count);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheDir))
+            {
+                Directory.Delete(cacheDir, recursive: true);
+            }
+        }
     }
 
     private sealed class CountingHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
