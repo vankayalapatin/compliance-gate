@@ -19,6 +19,10 @@ Owns the five surfaces. Humans decide from evidence here; ledgers stay plain and
 - Every agent-created record shows the agent-made banner driven by native `Source`. Ledgers stay plain otherwise.
 - All money shows currency. All blocks show rule id plus a human-readable reason. Photos render from cached reads, never live calls.
 - Reset-to-start plus full offline replay works from a button with no live calls in replay.
+- No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from the scenario file or run manifest via view models and cached case data, never from C# constants or literals. Code holds logic only.
+- Tests may carry their own small data but must not depend on the demo numbers.
+- If the scenario is missing a value you need, ask the lead agent instead of inventing one.
+- Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not relabel or reshape surfaces to force a pass.
 
 ## Done criteria
 

@@ -23,6 +23,10 @@ Owns compliance evaluation. C# decides, the model reads and explains, every bloc
 - Dock gate is photo-only. Photos never set quantities. ASN cartons missing from every image go to human review. BAT-LI-05 damage never auto-quarantines; a human decides from model crops, and putaway plus pay stay blocked until review closes.
 - Pre-pay gate blocks while any hold, quarantine, or open review from the earlier gates is still open on that lot or shipment.
 - CORP-02 override works only by logged exception from a named approver, with approver, timestamp, and reason recorded.
+- No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from the scenario file or run manifest, never from C# constants or literals. Code holds logic only. Pack thresholds live in rule JSON, never as inline literals used to force a demo outcome.
+- Tests may carry their own small data but must not depend on the demo numbers.
+- If the scenario is missing a value you need, ask the lead agent instead of inventing one.
+- Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune packs, thresholds, or tiers to force a pass.
 
 ## Done criteria
 

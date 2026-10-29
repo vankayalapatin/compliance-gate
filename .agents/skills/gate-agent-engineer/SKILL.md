@@ -22,6 +22,10 @@ Owns the p2p agent. It reads through the adapter, computes in the agent, and wri
 - Partial pay: passed units pay, failed units stay held with the cited rule and amount. The reshot releases the hold and the remainder pays in the next run. Customer notification fires once materials are secured.
 - Every agent write sets native `Source` to `p2p-agent` so the UI banner appears. No direct table writes, ever.
 - Simulation endpoints (order webhook, supplier ACK, ASN, invoices, secured notification) are idempotent and replayable from cache with zero live calls.
+- No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from the scenario file or run manifest, never from C# constants or literals. Code holds logic only.
+- Tests may carry their own small data but must not depend on the demo numbers.
+- If the scenario is missing a value you need, ask the lead agent instead of inventing one.
+- Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune matching, tolerances, or flow to force a pass.
 
 ## Done criteria
 

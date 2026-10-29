@@ -30,6 +30,13 @@ stays read-only in the shared checkout.
 DTOs, the ERP adapter interface, and `schema.md` change in the lead session
 only. Member roles read them and request changes in chat.
 
+## Business data rule
+
+- No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from the scenario file or run manifest, never from C# constants or literals. Code holds logic only.
+- Tests may carry their own small data but must not depend on the demo numbers.
+- If a scenario is missing a value an agent needs, the agent asks the lead agent instead of inventing one.
+- Never change policy to make numbers fit. If data and policy disagree, surface the mismatch; do not retune thresholds, rules, or packs to force a pass.
+
 ## Git rule
 
 Never git push. Commits happen only when explicitly asked.

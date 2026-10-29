@@ -21,6 +21,10 @@ Owns everything the dock camera sees. Deterministic files in, cached reads out, 
 - Scoring is per carton against ground truth, reported as read rate plus correct-cite rate. No aggregate-only scores.
 - Legibility backstop: if a pallet image stays unreadable after a few tries, composite labels from seed data and stop regenerating. Never burn credits on regeneration churn.
 - Every model result is cached with image hash, prompt version, and timestamp. Demo replays read cache only. Upload stays for testing, never for the demo path.
+- No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from the scenario file or run manifest, never from C# constants or literals. Code holds logic only.
+- Tests may carry their own small data but must not depend on the demo numbers.
+- If the scenario is missing a value you need, ask the lead agent instead of inventing one.
+- Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune reads or scoring to force a pass.
 
 ## Done criteria
 
