@@ -37,6 +37,14 @@ only. Member roles read them and request changes in chat.
 - If a scenario is missing a value an agent needs, the agent asks the lead agent instead of inventing one.
 - Never change policy to make numbers fit. If data and policy disagree, surface the mismatch; do not retune thresholds, rules, or packs to force a pass.
 
+## Production bar
+
+- Simulation endpoints inject external inputs only: webhooks, camera images, ASNs, supplier emails. They never encode, sequence, or bypass internal logic.
+- The built-in ERP is real EF Core with migrations and transactions. Controls are enforced in the ERP layer. The in-memory fake ERP is for unit tests only and never backs the app.
+- The agent picks its next tool from case state. No fixed step sequence lives in code.
+- External calls carry timeouts and retries. Errors are logged with context and surfaced; nothing is silently swallowed or omitted.
+- Every rule and every refusal has a test, including its failure path.
+
 ## Git rule
 
 Never git push. Commits happen only when explicitly asked.

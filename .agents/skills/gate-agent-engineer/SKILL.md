@@ -26,6 +26,7 @@ Owns the p2p agent. It reads through the adapter, computes in the agent, and wri
 - Tests may carry their own small data but must not depend on the demo numbers.
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.
 - Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune matching, tolerances, or flow to force a pass.
+- Production bar (see `AGENTS.md`): the agent picks its next tool from case state with no fixed step sequence in code; external calls carry timeouts and retries; errors are logged, never swallowed.
 
 ## Done criteria
 

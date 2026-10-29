@@ -27,6 +27,7 @@ Owns compliance evaluation. C# decides, the model reads and explains, every bloc
 - Tests may carry their own small data but must not depend on the demo numbers.
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.
 - Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune packs, thresholds, or tiers to force a pass.
+- Production bar (see `AGENTS.md`): simulation feeds external inputs only; every rule carries a failure-path test; errors are logged with context and surfaced, never omitted.
 
 ## Done criteria
 

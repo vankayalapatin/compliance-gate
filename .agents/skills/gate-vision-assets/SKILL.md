@@ -25,6 +25,7 @@ Owns everything the dock camera sees. Deterministic files in, cached reads out, 
 - Tests may carry their own small data but must not depend on the demo numbers.
 - If the scenario is missing a value you need, ask the lead agent instead of inventing one.
 - Never change policy to make numbers fit. On a data/policy mismatch, surface it; do not retune reads or scoring to force a pass.
+- Production bar (see `AGENTS.md`): images are external inputs; reads carry timeouts and retries; scoring carries failure-path tests.
 
 ## Done criteria
 
