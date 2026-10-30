@@ -1,11 +1,10 @@
 // Full-case scenario runs: the same driver walks demo-v1 and alt-v1 from the
 // order webhook through vendor screening (cheaper vendor blocked citing
-// CORP-02), dock holds plus reviews, invoice matching, and the pre-pay gate.
+// CORP-02), dock holds plus reviews, invoice matching, the pre-pay gate, and
+// both payments: partial pay of accepted value, relabel reshot, remainder pay.
 // Every expected number is computed from the scenario JSON plus the run
-// manifest at runtime; nothing is hard-coded. Both scenarios seed NET30
-// terms, so the ERP refuses same-day drafts and the runner parks in
-// AwaitDueDate with the refusal quoted; payment posting itself is proven on
-// NET0 data in CaseRunnerTests.
+// manifest at runtime; nothing is hard-coded. NET30 terms ride on the drafts
+// as due dates; like D365, the ERP does not refuse early payment.
 using System.Text.Json;
 using Gate.Agent;
 using Gate.Compliance;
@@ -17,7 +16,8 @@ namespace Gate.Eval;
 public sealed class ScenarioCaseTests
 {
     private sealed record ScenarioCarton(
-        string Id, string Part, int Units, bool MarkPresent, string Damage, IReadOnlyList<string> VisibleIn);
+        string Id, string Part, int Units, bool MarkPresent, string Damage, IReadOnlyList<string> VisibleIn,
+        string? ReshotIn);
 
     private sealed record ScenarioSmallPo(
         string Key, string Item, decimal Quantity, string Vendor, decimal UnitPrice);
@@ -65,7 +65,8 @@ public sealed class ScenarioCaseTests
             c.GetProperty("units").GetInt32(),
             c.GetProperty("markPresent").GetBoolean(),
             c.GetProperty("damage").GetString()!,
-            c.GetProperty("visibleIn").EnumerateArray().Select(v => v.GetString()!).ToList())).ToList();
+            c.GetProperty("visibleIn").EnumerateArray().Select(v => v.GetString()!).ToList(),
+            c.TryGetProperty("reshotIn", out var reshot) ? reshot.GetString() : null)).ToList();
         var main = root.GetProperty("invoiceIntents").GetProperty("main");
         var mainVendor = main.GetProperty("vendor").GetString()!;
         var mainQty = main.GetProperty("quantity").GetDecimal();
@@ -92,6 +93,8 @@ public sealed class ScenarioCaseTests
             .GetProperty("name").GetString()!;
         var delegateTo = root.GetProperty("delegations").EnumerateArray().First()
             .GetProperty("to").GetString()!;
+        var fin = users.First(u => u.GetProperty("role").GetString() == "payment-approver")
+            .GetProperty("name").GetString()!;
 
         var tmp = TempDir();
         Directory.CreateDirectory(tmp);
@@ -173,25 +176,61 @@ public sealed class ScenarioCaseTests
         Assert.Equal($"{mainVendor}/INV-{batPo}", invDecision.DocumentNumber);
         await runner.ResolveDecisionAsync(bat, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
 
-        var parked = await runner.AdvanceAsync(bat);
-        Assert.Equal(CaseNextStep.AwaitDueDate, parked.Step);
-        var prepaid = Load(caseDir, bat);
-        Assert.Contains(prepaid.Events, e =>
-            e.Kind == CaseEventKind.Note && e.DocumentType == "Payment" && e.Summary.Contains("Nothing due"));
-        Assert.Equal(ComplianceEngine.PrePayHoldId,
-            prepaid.Events.First(e => e.Kind == CaseEventKind.Note && e.DocumentType == "Payment").RuleId);
+        await runner.AdvanceAsync(bat);
         var batGate = Assert.Single(compliance.PrePayStates);
         Assert.Single(batGate.OpenHolds);
         Assert.Equal(DockEvaluator.MarkRuleId, batGate.OpenHolds[0].RuleId);
         Assert.Equal(unmarked.Id, batGate.OpenHolds[0].CartonId);
         Assert.Equal([LotOf(unmarked.Id)], batGate.QuarantinedLotRefs);
         Assert.Empty(batGate.OpenReviews);
-        Assert.Empty(prepaid.Case.PaymentNumbers);
+        var drafted = Load(caseDir, bat);
+        Assert.Equal(CaseStage.PaymentPartial, drafted.Case.Stage);
+        var pay1 = Pending(drafted, DecisionKind.PaymentApproval);
+        Assert.Equal(fin, pay1.RequestedTo);
+        Assert.Equal(acceptedUnits * mainPrice, pay1.Amount);
+        Assert.Equal("Payment", pay1.DocumentType);
+        Assert.NotNull(pay1.DocumentNumber);
+        await runner.ResolveDecisionAsync(bat, pay1.DecisionId, true, fin, "ok");
+        var pay1Number = Assert.Single(Load(caseDir, bat).Case.PaymentNumbers);
+        Assert.Equal(
+            acceptedUnits * mainPrice,
+            (await erp.GetPaymentAsync(pay1Number))!.Lines.Sum(l => l.Amount));
+
+        var reshot = await runner.OnReshotAsync(new ReshotInput(bat, [unmarked.Id],
+            [new DockCartonRead(
+                unmarked.Id, unmarked.Part, batPo, LotOf(unmarked.Id), unmarked.Units,
+                true, true, "UN3480", true, true,
+                false, null, unmarked.ReshotIn ?? "RESHOT", 0.95m)]));
+        Assert.All(reshot[unmarked.Id], v => Assert.Equal(VerdictKind.Pass, v.Kind));
+
+        await runner.AdvanceAsync(bat);
+        var clearGate = compliance.PrePayStates[^1];
+        Assert.Empty(clearGate.OpenHolds);
+        Assert.Empty(clearGate.QuarantinedLotRefs);
+        Assert.Empty(clearGate.OpenReviews);
+        var redrafted = Load(caseDir, bat);
+        var pay2 = Pending(redrafted, DecisionKind.PaymentApproval);
+        Assert.NotEqual(pay1.DecisionId, pay2.DecisionId);
+        Assert.Equal(fin, pay2.RequestedTo);
+        Assert.Equal(heldUnits * mainPrice, pay2.Amount);
+        await runner.ResolveDecisionAsync(bat, pay2.DecisionId, true, fin, "ok");
+
+        var done = await runner.AdvanceAsync(bat);
+        Assert.Equal(CaseNextStep.Done, done.Step);
+        Assert.True(done.Complete);
+        var final = Load(caseDir, bat);
+        Assert.Equal(CaseStage.Resolved, final.Case.Stage);
+        Assert.Equal(2, final.Case.PaymentNumbers.Count);
+        Assert.Equal(
+            heldUnits * mainPrice,
+            (await erp.GetPaymentAsync(final.Case.PaymentNumbers[1]))!.Lines.Sum(l => l.Amount));
+        var settlements = await erp.GetSettlementsAsync(mainVendor, $"INV-{batPo}");
+        Assert.Equal(mainQty * mainPrice, settlements.Sum(s => s.SettledAmount));
+        Assert.Equal(InvoiceStatus.Paid, (await erp.GetInvoiceAsync(mainVendor, $"INV-{batPo}"))!.Status);
 
         await TrickyInboxAsync(erp, runner, caseDir, bat, smallPos, dupKey, bankKey, missingKey,
             requester, clerk, delegateTo, Doc);
         await StraightThroughAsync(erp, runner, caseDir, screw, compliance);
-        Assert.Equal(2, compliance.PrePayStates.Count);
     }
 
     private static async Task TrickyInboxAsync(
@@ -277,11 +316,26 @@ public sealed class ScenarioCaseTests
         var invDecision = Pending(invoiced, DecisionKind.InvoiceApproval);
         await runner.ResolveDecisionAsync(caseId, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
 
-        var parked = await runner.AdvanceAsync(caseId);
-        Assert.Equal(CaseNextStep.AwaitDueDate, parked.Step);
+        await runner.AdvanceAsync(caseId);
         var gate = compliance.PrePayStates[^1];
         Assert.Empty(gate.OpenHolds);
         Assert.Empty(gate.QuarantinedLotRefs);
         Assert.Empty(gate.OpenReviews);
+        var drafted = Load(caseDir, caseId);
+        Assert.Equal(CaseStage.PaymentRequested, drafted.Case.Stage);
+        var pay = Pending(drafted, DecisionKind.PaymentApproval);
+        Assert.Equal(qty * line.UnitPrice, pay.Amount);
+        await runner.ResolveDecisionAsync(caseId, pay.DecisionId, true, pay.RequestedTo, "ok");
+
+        var done = await runner.AdvanceAsync(caseId);
+        Assert.Equal(CaseNextStep.Done, done.Step);
+        Assert.True(done.Complete);
+        var final = Load(caseDir, caseId);
+        Assert.Equal(CaseStage.Resolved, final.Case.Stage);
+        Assert.Single(final.Case.PaymentNumbers);
+        Assert.Equal(
+            qty * line.UnitPrice,
+            (await erp.GetPaymentAsync(final.Case.PaymentNumbers[0]))!.Lines.Sum(l => l.Amount));
+        Assert.Equal(3, compliance.PrePayStates.Count);
     }
 }

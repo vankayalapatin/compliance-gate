@@ -824,7 +824,8 @@ public sealed partial class EfCoreErpAdapter
             var postedAt = inv.PostedAt is null ? DateTimeOffset.UtcNow : DateTime(inv.PostedAt);
             var dueDate = DateOnly.FromDateTime(postedAt.DateTime).AddDays(terms.NetDays);
             if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
-            if (DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime) < dueDate) continue;
+            // Terms set the due date shown on the draft; like D365, the ERP
+            // does not refuse early payment (PROJECT.md Done needs same-day pay runs).
             // Client-side sum: SQLite cannot aggregate decimals server-side.
             var acceptedRows = await _db.VendorInvoiceLines
                 .Where(l => l.VendorId == inv.VendorId && l.SupplierInvoiceNumber == inv.SupplierInvoiceNumber &&

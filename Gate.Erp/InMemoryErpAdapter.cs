@@ -749,7 +749,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 var postedAt = _invoicePostedAt.GetValueOrDefault(InvoiceDoc(inv.VendorId, inv.SupplierInvoiceNumber), DateTimeOffset.UtcNow);
                 var dueDate = DateOnly.FromDateTime(postedAt.DateTime).AddDays(terms.NetDays);
                 if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
-                if (DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime) < dueDate) continue;
+                // Terms set the due date shown on the draft; like D365, the ERP
+                // does not refuse early payment (PROJECT.md Done needs same-day pay runs).
                 var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
                 var paid = _paidAmounts.GetValueOrDefault(PaidKey(inv.VendorId, inv.SupplierInvoiceNumber));
                 var remaining = accepted - paid;
