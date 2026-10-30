@@ -17,7 +17,14 @@ adapter interface, and this file change in the lead session only.
 - `Gate.Contracts/ICompliance.cs` — compliance verdicts. C# decides, every
   block cites rule id plus stored source. Document packs (BAT-LI, ELEC)
   apply to critical parts only (`ItemDto.IsCritical`); non-critical parts
-  get not-applicable passes, vendor screening still applies.
+  get not-applicable passes, vendor screening still applies. Pre-pay takes
+  `PrePayState` (holds plus quarantine plus open reviews); the holds-only
+  overload stays as legacy.
+- `Gate.Contracts/Cases.cs` — agent-side case store shapes (one case per
+  SO shortfall item): `Case` stage plus document links plus block, `CaseEvent`
+  append-only timeline, `Decision` human card with evidence refs.
+- `Gate.Contracts/PrePayState.cs` — pre-pay gate input: open holds plus
+  quarantined lot refs plus open reviews.
 - Dock reads (`CartonRead`) stay compliance-internal by decision (see
   `docs/DECISIONS.md` 29): transcription is agent-side evidence, the hold
   carries rule id, case link, and carton id. No dock DTO in contracts.
