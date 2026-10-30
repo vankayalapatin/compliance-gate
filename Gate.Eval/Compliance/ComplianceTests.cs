@@ -72,11 +72,19 @@ public sealed class ComplianceTests
         Assert.Contains(verdicts, v => v.RuleId == "BAT-LI-01" && v.Kind == VerdictKind.Block);
     }
 
+    private static readonly DateTimeOffset FixedAt = new(2026, 5, 4, 12, 0, 0, TimeSpan.Zero);
+
+    private static HoldDto MakeHold(string holdId, string? cartonId = null) =>
+        new(holdId, "DOCK", "Mark missing.", "BAT-LI-03", "case-1", "agent", FixedAt, HoldStatus.Set, "Shipment", "RCT-1", "PO-L1", "LOT-1", cartonId ?? "CTN-07");
+
+    private static OpenReview MakeReview(string reviewId, string ruleId) =>
+        new(reviewId, ruleId, "case-1", "CTN-07", "LOT-1", FixedAt, "Damage needs a human look.");
+
     [Fact]
     public async Task OpenHoldBlocksPayment()
     {
-        var holds = new[] { new HoldDto("HLD-1", "DOCK", "Mark missing.", "BAT-LI-03", "case-1", "agent", DateTimeOffset.UtcNow, HoldStatus.Set, "Shipment", "RCT-1", "PO-L1", "LOT-1", "CTN-07") };
-        var verdicts = await _engine.EvaluatePaymentAsync(holds);
+        var state = new PrePayState([MakeHold("HLD-1")], [], []);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
         Assert.Single(verdicts);
         Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
         Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
@@ -85,7 +93,8 @@ public sealed class ComplianceTests
     [Fact]
     public async Task NoHoldsPassesPayment()
     {
-        var verdicts = await _engine.EvaluatePaymentAsync([]);
+        var state = new PrePayState([], [], []);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
         Assert.Single(verdicts);
         Assert.Equal(VerdictKind.Pass, verdicts[0].Kind);
     }
@@ -93,15 +102,84 @@ public sealed class ComplianceTests
     [Fact]
     public async Task MultipleHoldsListEveryHold()
     {
-        var holds = new[]
-        {
-            new HoldDto("HLD-1", "DOCK", "Mark missing.", "BAT-LI-03", "case-1", "agent", DateTimeOffset.UtcNow, HoldStatus.Set, "Shipment", "RCT-1", "PO-L1", "LOT-1", "CTN-07"),
-            new HoldDto("HLD-2", "DOCK", "Damage review open.", "BAT-LI-05", "case-1", "agent", DateTimeOffset.UtcNow, HoldStatus.Set, "Shipment", "RCT-1", "PO-L1", "LOT-1", "CTN-04")
-        };
-        var verdicts = await _engine.EvaluatePaymentAsync(holds);
+        var state = new PrePayState([MakeHold("HLD-1"), MakeHold("HLD-2", "CTN-04")], [], []);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
         Assert.Single(verdicts);
         Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
         Assert.Contains("HLD-1", verdicts[0].Reason);
         Assert.Contains("HLD-2", verdicts[0].Reason);
+    }
+
+    [Fact]
+    public async Task HoldsOnlyBlocksPaymentViaNewOverload()
+    {
+        var state = new PrePayState([MakeHold("HLD-9")], [], []);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Equal(RuleCatalog.Find("ELEC-04").Source, verdicts[0].Source);
+        Assert.Contains("HLD-9", verdicts[0].Reason);
+        var repeat = await _engine.EvaluatePaymentAsync(state);
+        Assert.Equal(verdicts[0].Reason, repeat[0].Reason);
+    }
+
+    [Fact]
+    public async Task QuarantineOnlyBlocksPayment()
+    {
+        var state = new PrePayState([], ["LOT-Q1", "LOT-Q2"], []);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Equal(RuleCatalog.Find("ELEC-04").Source, verdicts[0].Source);
+        Assert.Contains("LOT-Q1", verdicts[0].Reason);
+        Assert.Contains("LOT-Q2", verdicts[0].Reason);
+    }
+
+    [Fact]
+    public async Task ReviewOnlyBlocksPayment()
+    {
+        var state = new PrePayState([], [], [MakeReview("REV-1", "BAT-LI-05")]);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Equal(RuleCatalog.Find("ELEC-04").Source, verdicts[0].Source);
+        Assert.Contains("REV-1", verdicts[0].Reason);
+        Assert.Contains("BAT-LI-05", verdicts[0].Reason);
+    }
+
+    [Fact]
+    public async Task CombinedStateBlocksListingAllThree()
+    {
+        var state = new PrePayState(
+            [MakeHold("HLD-1"), MakeHold("HLD-2", "CTN-04")],
+            ["LOT-Q1"],
+            [MakeReview("REV-1", "BAT-LI-05"), MakeReview("REV-2", "BAT-LI-03")]);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Contains("HLD-1", verdicts[0].Reason);
+        Assert.Contains("HLD-2", verdicts[0].Reason);
+        Assert.Contains("LOT-Q1", verdicts[0].Reason);
+        Assert.Contains("REV-1", verdicts[0].Reason);
+        Assert.Contains("BAT-LI-05", verdicts[0].Reason);
+        Assert.Contains("REV-2", verdicts[0].Reason);
+        Assert.Contains("BAT-LI-03", verdicts[0].Reason);
+    }
+
+    [Fact]
+    public async Task EmptyPrePayStatePassesWithAllClear()
+    {
+        var state = new PrePayState([], [], []);
+        var verdicts = await _engine.EvaluatePaymentAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Pass, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Contains("No open holds", verdicts[0].Reason);
+        Assert.Contains("no quarantined lots", verdicts[0].Reason);
+        Assert.Contains("no open reviews", verdicts[0].Reason);
     }
 }

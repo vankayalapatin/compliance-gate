@@ -181,4 +181,41 @@ public sealed class ComplianceEngine : IComplianceEngine
                 $"{openHolds.Count} open hold(s): {string.Join(", ", openHolds.Select(h => h.HoldId))}. Payment blocked.", source)];
         return Task.FromResult(verdicts);
     }
+
+    public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
+        PrePayState state,
+        CancellationToken ct = default)
+    {
+        var source = RuleCatalog.Find(PrePayHoldId).Source;
+        if (state.OpenHolds.Count == 0
+            && state.QuarantinedLotRefs.Count == 0
+            && state.OpenReviews.Count == 0)
+        {
+            IReadOnlyList<Verdict> pass =
+                [new Verdict(PrePayHoldId, VerdictKind.Pass,
+                    "No open holds, no quarantined lots, and no open reviews on lot or shipment; pre-pay all-clear.", source)];
+            return Task.FromResult(pass);
+        }
+
+        var parts = new List<string>();
+        if (state.OpenHolds.Count > 0)
+        {
+            parts.Add($"{state.OpenHolds.Count} open hold(s): {string.Join(", ", state.OpenHolds.Select(h => h.HoldId))}");
+        }
+
+        if (state.QuarantinedLotRefs.Count > 0)
+        {
+            parts.Add($"{state.QuarantinedLotRefs.Count} quarantined lot(s): {string.Join(", ", state.QuarantinedLotRefs)}");
+        }
+
+        if (state.OpenReviews.Count > 0)
+        {
+            parts.Add($"{state.OpenReviews.Count} open review(s): {string.Join(", ", state.OpenReviews.Select(r => $"{r.ReviewId} ({r.RuleId})"))}");
+        }
+
+        IReadOnlyList<Verdict> verdicts =
+            [new Verdict(PrePayHoldId, VerdictKind.Block,
+                $"{string.Join("; ", parts)}. Payment blocked.", source)];
+        return Task.FromResult(verdicts);
+    }
 }
