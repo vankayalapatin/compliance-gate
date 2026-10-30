@@ -138,6 +138,21 @@ public static class ScenarioLoader
                 small.Item, small.Quantity, small.Vendor, ct).ConfigureAwait(false);
             Record($"smallPo.{small.Key}.pr", "PR", created.PrNumber);
             Record($"smallPo.{small.Key}.po", "PO", created.PoNumber);
+            // Small POs are closed history (SCENARIO.md 12): post one invoice each,
+            // then close. No seed receipts: open small POs would net into the
+            // shortfall and receipt rows would pollute CORP-02 volume history.
+            var seedInvoice = $"SEED-INV-{created.PoNumber}";
+            var smallPo = await adapter.GetPurchaseOrderAsync(created.PoNumber, ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Small PO {created.PoNumber} vanished after seeding.");
+            await adapter.CreateInvoiceAsync(seedInvoice, small.Vendor, created.PoNumber, RecordSource.Erp, requester,
+                smallPo.Lines.Select(l => new InvoiceLineInput(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList(),
+                Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            var seedInvKey = $"{small.Vendor}/{seedInvoice}";
+            await adapter.SubmitForApprovalAsync("Invoice", seedInvKey, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            await adapter.RecordApprovalAsync("Invoice", seedInvKey, approver, true, "scenario seed", Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            await adapter.PostInvoiceAsync(small.Vendor, seedInvoice, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            Record($"smallPo.{small.Key}.invoice", "INV", seedInvoice);
+            await adapter.ClosePoAsync(created.PoNumber, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         }
 
         store.WriteMeta("scenario", scenario.Name);

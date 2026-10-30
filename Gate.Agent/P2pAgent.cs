@@ -104,8 +104,11 @@ public sealed class P2pAgent
     }
 
     public async Task<(PurchaseOrder Po, IReadOnlyList<VendorScreening> Screenings)> ScreenAndOrderAsync(
-        string prNumber, IReadOnlyList<string> candidateVendorIds, string source, string caseId, CancellationToken ct = default)
+        string prNumber, IReadOnlyList<string> candidateVendorIds, string source, string caseId, CancellationToken ct = default,
+        string? idempotencyScope = null)
     {
+        string Key(string purpose) => idempotencyScope is null ? Guid.NewGuid().ToString("N") : $"{idempotencyScope}:{purpose}";
+
         var pr = await _erp.GetPrAsync(prNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Unknown PR {prNumber}.");
         var screenings = new List<VendorScreening>();
@@ -134,8 +137,8 @@ public sealed class P2pAgent
             else if (!passed)
             {
                 var block = verdicts.First(v => v.Kind is VerdictKind.Block);
-                await _erp.BlockVendorAsync(vendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
-                await _erp.AddPoNoteAsync(prNumber, $"Vendor {vendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+                await _erp.BlockVendorAsync(vendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Key($"block:{vendorId}"), ct).ConfigureAwait(false);
+                await _erp.AddPoNoteAsync(prNumber, $"Vendor {vendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Key($"note:{vendorId}"), ct).ConfigureAwait(false);
             }
         }
 
@@ -144,14 +147,17 @@ public sealed class P2pAgent
             throw new InvalidOperationException("No compliant vendor: PO refused.");
         }
 
-        var po = await _erp.CreatePoAsync(prNumber, winner, source, pr.Requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        var po = await _erp.CreatePoAsync(prNumber, winner, source, pr.Requester, Key("po"), ct).ConfigureAwait(false);
         return (po, screenings);
     }
 
     public async Task<VendorInvoice> MatchInvoiceAsync(
         string vendorId, string supplierInvoiceNumber, string? poNumber,
-        string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, CancellationToken ct = default)
+        string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, CancellationToken ct = default,
+        string? idempotencyScope = null, string? holdAllReason = null)
     {
+        string Key(string purpose) => idempotencyScope is null ? Guid.NewGuid().ToString("N") : $"{idempotencyScope}:{purpose}";
+
         var problems = new List<string>();
         if (!string.IsNullOrWhiteSpace(vendorId) && !string.IsNullOrWhiteSpace(supplierInvoiceNumber))
         {
@@ -175,8 +181,15 @@ public sealed class P2pAgent
                 po?.Currency ?? string.Empty, source, createdBy, string.Empty, held, results);
         }
 
-        await _erp.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        await _erp.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, Key("create"), ct).ConfigureAwait(false);
         var matched = new List<LineMatchResult>();
+        if (holdAllReason is not null)
+        {
+            matched.AddRange(lines.Select(l => new LineMatchResult(l.PoLineRef, false, holdAllReason)));
+            await _erp.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, matched, Key("match"), ct).ConfigureAwait(false);
+            return await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
+        }
         foreach (var line in lines)
         {
             var poLine = po.Lines.FirstOrDefault(l => l.PoLineRef == line.PoLineRef);
@@ -191,14 +204,17 @@ public sealed class P2pAgent
             else matched.Add(new LineMatchResult(line.PoLineRef, false,
                 !priceOk ? $"AP-C2: price {line.UnitPrice} vs PO {poLine.UnitPrice}." : $"Qty {line.Quantity} exceeds received {poLine.QtyReceived}."));
         }
-        await _erp.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, matched, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        await _erp.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, matched, Key("match"), ct).ConfigureAwait(false);
         return await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
     }
 
     public async Task<(Payment? Payment, IReadOnlyList<string> SkippedHeld)> RequestPaymentAsync(
-        IReadOnlyList<InvoiceKey> invoiceKeys, string source, CancellationToken ct = default)
+        IReadOnlyList<InvoiceKey> invoiceKeys, string source, CancellationToken ct = default,
+        string? idempotencyScope = null)
     {
+        var draftKey = idempotencyScope is null ? Guid.NewGuid().ToString("N") : $"{idempotencyScope}:draft";
+
         var payable = new List<InvoiceKey>();
         var skipped = new List<string>();
         foreach (var key in invoiceKeys)
@@ -215,7 +231,7 @@ public sealed class P2pAgent
             return (null, skipped);
         }
 
-        var draft = await _erp.CreatePaymentDraftAsync(payable, source, RecordSource.P2pAgent, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        var draft = await _erp.CreatePaymentDraftAsync(payable, source, RecordSource.P2pAgent, draftKey, ct).ConfigureAwait(false);
         return (draft, skipped);
     }
 
