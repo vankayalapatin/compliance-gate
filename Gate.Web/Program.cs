@@ -34,6 +34,15 @@ builder.Services.AddSingleton<IModelClient>(sp =>
     return new CachedModelClient(inner, ModelCachePaths.ResolveDir());
 });
 builder.Services.AddScoped<P2pAgent>();
+builder.Services.AddSingleton<IDockEvaluator, DockEvaluatorService>();
+builder.Services.AddScoped(sp => new CaseRunner(
+    sp.GetRequiredService<IErpAdapter>(),
+    sp.GetRequiredService<P2pAgent>(),
+    sp.GetRequiredService<IModelClient>(),
+    sp.GetRequiredService<IComplianceEngine>(),
+    sp.GetRequiredService<IDockEvaluator>(),
+    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath),
+    sp.GetRequiredService<ILogger<CaseRunner>>()));
 builder.Services.AddSingleton(sp => new CaseCacheStore(
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddSingleton(sp => new DockPhotoService(
@@ -84,5 +93,6 @@ using (var startup = app.Services.CreateScope())
 }
 app.MapScenarioReset();
 app.MapDockImages();
+app.MapSimulation();
 
 app.Run();

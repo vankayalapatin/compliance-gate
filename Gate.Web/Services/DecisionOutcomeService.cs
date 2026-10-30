@@ -3,6 +3,7 @@
 // outcomes update the case file only. The case file is re-read immediately
 // before applying, and every outcome appends a CaseEvent. Failures return
 // a result carrying the full context; nothing is thrown away or omitted.
+using Gate.Agent;
 using Gate.Contracts;
 
 namespace Gate.Web.Services;
@@ -17,12 +18,15 @@ public sealed class DecisionOutcomeService
     private readonly IErpAdapter _erp;
     private readonly CaseCacheStore _cases;
     private readonly ILogger<DecisionOutcomeService> _log;
+    private readonly CaseRunner? _runner;
 
-    public DecisionOutcomeService(IErpAdapter erp, CaseCacheStore cases, ILogger<DecisionOutcomeService> log)
+    public DecisionOutcomeService(
+        IErpAdapter erp, CaseCacheStore cases, ILogger<DecisionOutcomeService> log, CaseRunner? runner = null)
     {
         _erp = erp;
         _cases = cases;
         _log = log;
+        _runner = runner;
     }
 
     public async Task<DecisionOutcome> ApplyAsync(
@@ -95,6 +99,20 @@ public sealed class DecisionOutcomeService
             return new DecisionOutcome(false,
                 $"ERP outcome applied ({erpNote}) but the case file write failed: {ex.Message}. " +
                 "Re-open Decisions and retry; the ERP call used a fresh idempotency key.", warnings);
+        }
+
+        if (_runner is not null)
+        {
+            try
+            {
+                var advanced = await _runner.AdvanceAsync(caseId, ct).ConfigureAwait(false);
+                warnings.Add($"Case advanced to {advanced.Stage} ({advanced.Step}).");
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Advance after decision {DecisionId} failed; the outcome stands.", decisionId);
+                warnings.Add($"Decision recorded but the case did not advance: {ex.Message}");
+            }
         }
 
         return new DecisionOutcome(true, erpNote, warnings);
