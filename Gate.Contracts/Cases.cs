@@ -98,7 +98,13 @@ public enum DecisionKind
     PaymentApproval,
     DockReview,
     DamageReview,
-    ExceptionApproval
+    ExceptionApproval,
+    /// <summary>AP clerk or finance verifies a supplier-requested bank change
+    /// out of band (VerifyVendorBankAsync). The master never auto-updates.</summary>
+    BankVerification,
+    /// <summary>AP clerk owns a held invoice exception: missing vendor or PO,
+    /// price hold, or other AP catch. Resolve or reject.</summary>
+    ApReview
 }
 
 public enum DecisionStatus
@@ -129,3 +135,10 @@ public sealed record Decision(
     string? Reason,
     IReadOnlyList<string> EvidenceRefs,
     string? Comment);
+
+/// <summary>One case file: the JSON root the agent writes and the UI reads.
+/// Both sides serialize with web defaults; one file per case.</summary>
+public sealed record CaseFile(
+    Case Case,
+    IReadOnlyList<CaseEvent> Events,
+    IReadOnlyList<Decision> Decisions);
