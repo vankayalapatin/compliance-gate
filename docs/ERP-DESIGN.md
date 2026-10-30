@@ -71,7 +71,7 @@ Quarantine is a status change on the inventory transaction, not a separate table
 | Settlement | `VendTrans` settlement | Invoice number, payment number, settled amount, remaining balance | Derived, never hand-edited |
 
 - Invoice lifecycle: received (entered), matched, approved, posted (voucher minted), partially paid, paid, closed. Held lines wait instead of blocking the accepted value.
-- The payment run pays only lines past their terms due date and only to verified bank details. A bank change received after verification blocks payment until re-verified; paying against an unverified bank change is refused.
+- The payment run pays accepted value on approved, posted invoices to verified bank details; terms set the due date shown on the draft but, like D365, never refuse early payment. A bank change received after verification blocks payment until re-verified; paying against an unverified bank change is refused.
 - One invoice line against one PO line splits by quantity into an accepted part and a held part, each its own invoice row with its own disposition and hold reason. Example: 8 units billed against a PO line become one accepted row for 6 units and one held row for 2 units citing quarantine. Check 3 (partial pay with remainder run) depends on this split: the payment run sums only accepted-part value, and the held part stays open for the next run.
 - When quarantine clears, the held parts are released (disposition flips to accepted with a release record) and the next payment run pays them. No credit-and-rebill.
 - Credit memos (vendor invoices with negative quantities against the same PO line ids, reversing value without editing the posted invoice) are design-only for now. Until they land, posted-invoice corrections wait for the release path above.
@@ -81,7 +81,7 @@ Quarantine is a status change on the inventory transaction, not a separate table
 A PO line orders 12 units at 10.00 each (line amount 120.00). The ASN lists the cartons covering those units.
 
 - Receipt 1 books 8 units: 6 available, 2 quarantined (damaged carton). PO line now shows received 8, quarantined 2. Inventory holds 6 available rows and 2 quarantined rows for that lot.
-- Invoice 1 bills 8 units against that PO line in two rows: accepted 6 (value 60.00), held 2 citing the quarantine reason. Payment run 1 pays 60.00 (terms due, bank verified). Settlement shows invoice 1 settled 60.00, held value 20.00 still open.
+- Invoice 1 bills 8 units against that PO line in two rows: accepted 6 (value 60.00), held 2 citing the quarantine reason. Payment run 1 pays 60.00 (bank verified; terms ride as the draft due date). Settlement shows invoice 1 settled 60.00, held value 20.00 still open.
 - Resolution: quarantine clears, the lot rows flip back to available, and the held 2 units are released to accepted with a release record. Payment run 2 pays the remaining 20.00. Total paid 80.00 against 8 received. Nothing was edited after posting.
 
 ## 7. Number timing and per-document statuses
