@@ -558,6 +558,27 @@ public sealed class CaseRunnerTests
     }
 
     [Fact]
+    public async Task ReviewApprovalReleasesTheCartonHold()
+    {
+        var h = Create();
+        var ctx = await SetupBatteryCaseAsync(h, [
+            new AsnCartonInput("CTN-D1", SeededErp.Battery, 90, "LOT-D1")]);
+        await h.Runner.AdvanceAsync(ctx.CaseId);
+        await h.Runner.OnDockReadsAsync(ctx.CaseId,
+            [Read("CTN-D1", "IMG-D1", mark: false, damage: true, ctx.Po.PoNumber, "LOT-D1", 90, SeededErp.Battery)]);
+        var reviewed = Load(h, ctx.CaseId);
+        var damage = Assert.Single(reviewed.Decisions, d => d.Kind == DecisionKind.DamageReview);
+        Assert.NotEmpty(await h.Erp.GetOpenHoldsAsync(null));
+
+        await h.Runner.ResolveDecisionAsync(ctx.CaseId, damage.DecisionId, true, damage.RequestedTo, "mark confirmed");
+        var cleared = Load(h, ctx.CaseId);
+        Assert.Empty(await h.Erp.GetOpenHoldsAsync(null));
+        Assert.Contains(cleared.Events, e =>
+            e.Kind == CaseEventKind.HoldReleased && e.Summary.Contains("after review approval"));
+        Assert.Contains(cleared.Events, e => e.Kind == CaseEventKind.ReviewClosed);
+    }
+
+    [Fact]
     public async Task FailingReshotKeepsTheHold()
     {
         var h = Create();

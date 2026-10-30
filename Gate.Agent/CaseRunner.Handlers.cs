@@ -382,7 +382,8 @@ public partial class CaseRunner
             ruleId: verdict.RuleId, documentType: "Receipt", documentNumber: current.ReceiptNumber);
     }
 
-    private async Task ReleaseCartonAsync(CaseWork work, string cartonId, CancellationToken ct)
+    private async Task ReleaseCartonAsync(
+        CaseWork work, string cartonId, CancellationToken ct, string releaseNote = "after the passing reshot")
     {
         var current = work.Current;
         var open = await _erp.GetOpenHoldsAsync(null, ct).ConfigureAwait(false);
@@ -409,7 +410,7 @@ public partial class CaseRunner
             }
 
             work.AddEvent(CaseEventKind.HoldReleased,
-                $"Hold {hold.HoldId} on {cartonId} released after the passing reshot.",
+                $"Hold {hold.HoldId} on {cartonId} released {releaseNote}.",
                 ruleId: hold.RuleId, documentType: "Receipt", documentNumber: current.ReceiptNumber);
         }
 
@@ -889,6 +890,12 @@ public partial class CaseRunner
         var current = work.Current;
         if (approved)
         {
+            var acceptedCarton = CartonFromEvidence(decision);
+            if (acceptedCarton is not null)
+            {
+                await ReleaseCartonAsync(work, acceptedCarton, ct, "after review approval").ConfigureAwait(false);
+            }
+
             work.AddEvent(CaseEventKind.ReviewClosed,
                 $"{decision.DecisionId} accepted by {decidedBy}: {comment ?? "confirmed"}.",
                 ruleId: decision.RuleId, documentType: "Receipt", documentNumber: current.ReceiptNumber);
