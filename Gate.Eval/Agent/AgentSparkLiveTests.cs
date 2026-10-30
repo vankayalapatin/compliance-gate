@@ -2,7 +2,8 @@
 // runs from webhook to PO, then the identical advance served with zero new
 // HTTP. The key comes from user secrets (MetaApi:ApiKey) or the environment,
 // never from a file in the repo. Minimal tokens: the award rationale is
-// capped at 60 tokens and is the only model call on the path.
+// uses the client default cap (small caps starve the model's reasoning) and
+// is the only model call on the path.
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -47,7 +48,7 @@ public sealed class AgentSparkLiveTests
         var cases = await runner.OnOrderWebhookAsync(new OrderWebhookInput(
             "live", "SO-1001", "planner",
             new Dictionary<string, IReadOnlyList<string>> { [SeededErp.Battery] = ["V-A", "V-B"] }));
-        var battery = Assert.Single(cases);
+        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
         await runner.AdvanceAsync(battery);
         var raised = CaseStore.Load(caseDir, battery)!;
         var pr = raised.Decisions.Single(d =>

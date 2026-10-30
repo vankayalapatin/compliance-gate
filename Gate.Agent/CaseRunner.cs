@@ -384,11 +384,12 @@ public partial class CaseRunner
     {
         var losers = screenings.Where(s => !s.Passed).Select(s => s.VendorId).ToList();
         var qty = po.Lines.Sum(l => l.QtyOrdered);
+        // Default token cap: reasoning models burn hundreds of tokens before
+        // answering (see SparkOptions), so a small cap starves this call.
         var request = new ModelRequest(
             $"In one short sentence, why award {current.ItemId} x{qty} to {po.VendorId}"
             + (losers.Count == 0 ? "?" : $" over {string.Join(", ", losers)}?"),
-            "You write one-sentence sourcing rationales.",
-            MaxTokens: 60);
+            "You write one-sentence sourcing rationales.");
         var result = await ResilientCalls.CompleteWithRetryAsync(
             _models, request, _logger, $"award rationale for {current.CaseId}", ct).ConfigureAwait(false);
         return (result.Text.Trim(), CachedModelClient.CacheKey(_models.ModelName, request));
