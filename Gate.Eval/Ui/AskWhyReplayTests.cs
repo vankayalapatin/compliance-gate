@@ -18,7 +18,7 @@ public sealed class AskWhyReplayTests
             Task.FromResult<IReadOnlyList<Verdict>>([]);
 
         public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
-            IReadOnlyList<HoldDto> openHolds, CancellationToken ct = default) =>
+            PrePayState state, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Verdict>>([]);
     }
 

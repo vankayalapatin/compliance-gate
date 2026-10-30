@@ -32,17 +32,9 @@ public interface IComplianceEngine
         IReadOnlyList<VolumeHistory> history,
         CancellationToken ct = default);
 
-    /// <summary>Legacy holds-only input. New paths pass PrePayState below;
-    /// kept for interface stability.</summary>
-    Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
-        IReadOnlyList<HoldDto> openHolds,
-        CancellationToken ct = default);
-
-    /// <summary>Pre-pay gate over holds plus quarantine plus open reviews.
-    /// The default delegates to the holds-only method so existing engines
-    /// keep building; the compliance batch overrides with the full read.</summary>
+    /// <summary>Pre-pay gate over holds plus quarantine plus open reviews
+    /// (ELEC-04). Blocks unless all three are empty.</summary>
     Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
         PrePayState state,
-        CancellationToken ct = default) =>
-        EvaluatePaymentAsync(state.OpenHolds, ct);
+        CancellationToken ct = default);
 }

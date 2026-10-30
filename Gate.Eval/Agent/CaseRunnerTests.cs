@@ -294,7 +294,6 @@ public sealed class CaseRunnerTests
 
         Assert.Single(final.Events, e => e.Kind == CaseEventKind.CustomerNotified);
 
-        Assert.Equal(0, h.Compliance.HoldsOnlyCalls);
         Assert.Equal(2, h.Compliance.PrePayStates.Count);
         var firstGate = h.Compliance.PrePayStates[0];
         Assert.Single(firstGate.OpenHolds);

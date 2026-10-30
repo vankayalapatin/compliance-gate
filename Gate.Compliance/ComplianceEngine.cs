@@ -171,18 +171,6 @@ public sealed class ComplianceEngine : IComplianceEngine
     }
 
     public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
-        IReadOnlyList<HoldDto> openHolds,
-        CancellationToken ct = default)
-    {
-        var source = RuleCatalog.Find(PrePayHoldId).Source;
-        IReadOnlyList<Verdict> verdicts = openHolds.Count == 0
-            ? [new Verdict(PrePayHoldId, VerdictKind.Pass, "No open holds on lot.", source)]
-            : [new Verdict(PrePayHoldId, VerdictKind.Block,
-                $"{openHolds.Count} open hold(s): {string.Join(", ", openHolds.Select(h => h.HoldId))}. Payment blocked.", source)];
-        return Task.FromResult(verdicts);
-    }
-
-    public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
         PrePayState state,
         CancellationToken ct = default)
     {

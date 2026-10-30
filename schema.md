@@ -19,7 +19,7 @@ adapter interface, and this file change in the lead session only.
   apply to critical parts only (`ItemDto.IsCritical`); non-critical parts
   get not-applicable passes, vendor screening still applies. Pre-pay takes
   `PrePayState` (holds plus quarantine plus open reviews); the holds-only
-  overload stays as legacy.
+  overload removed in batch 2.
 - `Gate.Contracts/Cases.cs` — agent-side case store shapes (one case per
   SO shortfall item): `Case` stage plus document links plus block, `CaseEvent`
   append-only timeline, `Decision` human card with evidence refs.
