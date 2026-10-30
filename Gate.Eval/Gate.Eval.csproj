@@ -27,6 +27,7 @@
     <ProjectReference Include="..\Gate.Contracts\Gate.Contracts.csproj" />
     <ProjectReference Include="..\Gate.Erp\Gate.Erp.csproj" />
     <ProjectReference Include="..\Gate.Agent\Gate.Agent.csproj" />
+    <ProjectReference Include="..\Gate.Web\Gate.Web.csproj" />
     <ProjectReference Include="..\Gate.Compliance\Gate.Compliance.csproj" />
   </ItemGroup>
 

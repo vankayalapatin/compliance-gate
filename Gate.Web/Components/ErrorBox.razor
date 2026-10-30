@@ -1,0 +1,16 @@
+@if (!string.IsNullOrWhiteSpace(Message))
+{
+    <div class="alert alert-danger" role="alert">@Message</div>
+}
+@foreach (var warning in Warnings)
+{
+    <div class="alert alert-warning" role="alert">@warning</div>
+}
+
+@code {
+    [Parameter]
+    public string? Message { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<string> Warnings { get; set; } = [];
+}

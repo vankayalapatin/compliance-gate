@@ -1,0 +1,272 @@
+@page "/records"
+@using Gate.Contracts
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject CaseViewService Views
+
+<PageTitle>Records</PageTitle>
+
+<h1>Records</h1>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_records is null)
+{
+    <p>Loading records…</p>
+}
+else
+{
+    @foreach (var note in _records.Notes)
+    {
+        <div class="alert alert-warning" role="alert">@note</div>
+    }
+
+    <h2>Sales orders</h2>
+    @if (_records.SalesOrders.Count == 0)
+    {
+        <p>No sales orders.</p>
+    }
+    @foreach (var so in _records.SalesOrders)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@so.SoNumber</strong> · @so.Status · @so.Currency
+                <ul class="mb-0">
+                    @foreach (var line in so.Lines)
+                    {
+                        <li>@line.ItemId: @line.Quantity</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <h2>Purchase requisitions</h2>
+    @if (_records.PurchaseRequisitions.Count == 0)
+    {
+        <p>No purchase requisitions.</p>
+    }
+    @foreach (var pr in _records.PurchaseRequisitions)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@pr.PrNumber</strong> · @pr.Status · @pr.EstimatedAmount @pr.Currency
+                · requester @pr.Requester <AgentBanner Source="@pr.Source" />
+                <ul class="mb-0">
+                    @foreach (var line in pr.Lines)
+                    {
+                        <li>@line.ItemId: @line.Quantity @line.Unit</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <h2>Purchase orders</h2>
+    @if (_records.PurchaseOrders.Count == 0)
+    {
+        <p>No purchase orders.</p>
+    }
+    @foreach (var po in _records.PurchaseOrders)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@po.PoNumber</strong> · approval @po.ApprovalStatus · doc @po.DocStatus
+                · vendor @po.VendorId · terms @po.PaymentTermsId · @po.Currency <AgentBanner Source="@po.Source" />
+                <ul class="mb-0">
+                    @foreach (var line in po.Lines)
+                    {
+                        <li>@line.PoLineRef @line.ItemId: ordered @line.QtyOrdered, received @line.QtyReceived, invoiced @line.QtyInvoiced, quarantined @line.QtyQuarantined, rejected @line.QtyRejected @@ @line.UnitPrice (@line.LineAmount @po.Currency)</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <h2>ASNs</h2>
+    @if (_records.Asns.Count == 0)
+    {
+        <p>No ASNs.</p>
+    }
+    @foreach (var asn in _records.Asns)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@asn.AsnNumber</strong> · PO @asn.PoNumber <AgentBanner Source="@asn.Source" />
+                <ul class="mb-0">
+                    @foreach (var carton in asn.Cartons)
+                    {
+                        <li>@carton.CartonId: @carton.ItemId, @carton.UnitsPerCarton units/carton, lot @carton.LotRef</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <h2>Receipts</h2>
+    @if (_records.Receipts.Count == 0)
+    {
+        <p>No receipts.</p>
+    }
+    @foreach (var receipt in _records.Receipts)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@receipt.Receipt.PoNumber → @receipt.Receipt.ReceiptNumber</strong>
+                · slip @receipt.Receipt.SupplierPackingSlipNumber · @receipt.Receipt.Status <AgentBanner Source="@receipt.Receipt.Source" />
+                <ul class="mb-0">
+                    @foreach (var line in receipt.Receipt.Lines)
+                    {
+                        <li>@line.PoLineRef: received @line.QtyReceived, quarantined @line.QtyQuarantined, rejected @line.QtyRejected, lot @line.LotRef@(line.ConditionNote is null ? "" : $" — {line.ConditionNote}")</li>
+                    }
+                </ul>
+                @foreach (var read in receipt.CachedReads)
+                {
+                    <p class="card-text mt-2 mb-0"><small>@read</small></p>
+                }
+                @foreach (var image in receipt.ImageFileNames)
+                {
+                    <img src="dock-images/@image" alt="@image" class="img-thumbnail me-2 mt-2" style="max-width: 320px;" />
+                }
+            </div>
+        </div>
+    }
+
+    <h2>Invoices</h2>
+    @if (_records.Invoices.Count == 0)
+    {
+        <p>No invoices.</p>
+    }
+    @foreach (var inv in _records.Invoices)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@inv.SupplierInvoiceNumber</strong> (@inv.VendorId) · @inv.Status
+                · voucher @(inv.Voucher ?? "none") · @inv.Currency · PO @(inv.PoNumber ?? "none") <AgentBanner Source="@inv.Source" />
+                <ul class="mb-0">
+                    @foreach (var line in inv.Lines)
+                    {
+                        <li>@(line.PoLineRef ?? "no PO line"): @line.Quantity @@ @line.UnitPrice — @line.Disposition@(line.HoldReason is null ? "" : $" ({line.HoldReason})")</li>
+                    }
+                </ul>
+                @foreach (var match in inv.MatchResults)
+                {
+                    <p class="card-text mt-1 mb-0"><small>@(match.PoLineRef ?? "header"): @(match.Matched ? "matched" : "NOT matched") — @match.Message</small></p>
+                }
+            </div>
+        </div>
+    }
+
+    <h2>Payments</h2>
+    @if (_records.Payments.Count == 0)
+    {
+        <p>No payments.</p>
+    }
+    @foreach (var pay in _records.Payments)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@pay.PaymentNumber</strong> · @pay.Status · @pay.Currency · due @pay.DueDate
+                · bank @pay.PayeeBank.AccountRef (verified=@pay.PayeeBank.Verified) <AgentBanner Source="@pay.Source" />
+                <ul class="mb-0">
+                    @foreach (var line in pay.Lines)
+                    {
+                        <li>@line.VendorId/@line.SupplierInvoiceNumber: @line.Amount @pay.Currency</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <h2>Inventory</h2>
+    @if (_records.Inventory.Count == 0)
+    {
+        <p>No inventory rows.</p>
+    }
+    @foreach (var item in _records.Inventory)
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@item.ItemId</strong> · stock @item.Stock
+                <ul class="mb-0">
+                    @foreach (var txn in item.Transactions)
+                    {
+                        <li>@txn.ReceiptNumber / @txn.LotRef: @txn.Quantity (@txn.Status)</li>
+                    }
+                </ul>
+            </div>
+        </div>
+    }
+
+    <h2>Open holds</h2>
+    @if (_records.OpenHolds.Count == 0)
+    {
+        <p>No open holds.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr><th>Hold</th><th>Rule</th><th>Case</th><th>Blocks</th><th>Reason</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var hold in _records.OpenHolds)
+                {
+                    <tr>
+                        <td>@hold.HoldId (@hold.ReasonCode)</td>
+                        <td>@(hold.RuleId ?? "—")</td>
+                        <td>@hold.CaseId</td>
+                        <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
+                        <td>@hold.Note</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <h2>Approvals</h2>
+    @if (_records.Approvals.Count == 0)
+    {
+        <p>No approvals recorded.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr><th>Document</th><th>Routed to</th><th>Acted by</th><th>Outcome</th><th>Amount / limit</th><th>Comment</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var approval in _records.Approvals)
+                {
+                    <tr>
+                        <td>@approval.DocumentType @approval.DocumentNumber</td>
+                        <td>@approval.RoutedTo</td>
+                        <td>@(approval.ActedBy ?? "—")</td>
+                        <td>@(approval.Approved ? "approved" : "rejected")</td>
+                        <td>@approval.DocumentAmount / @approval.LimitChecked</td>
+                        <td>@(approval.Comment ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private RecordsVm? _records;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _records = await Views.GetRecordsAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Records failed to load: {ex.Message}";
+        }
+    }
+}

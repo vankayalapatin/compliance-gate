@@ -1,0 +1,66 @@
+@page "/cases"
+@using Gate.Contracts
+@using Gate.Web.Services
+@inject CaseCacheStore CaseStore
+
+<PageTitle>Cases</PageTitle>
+
+<h1>Cases</h1>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_files is null)
+{
+    <p>Loading cases…</p>
+}
+else if (_files.Count == 0)
+{
+    <p>No cases in the cache yet. Run the agent or reset-and-replay from Home.</p>
+}
+else
+{
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Case</th>
+                <th>SO</th>
+                <th>Item</th>
+                <th>Stage</th>
+                <th>Pending</th>
+                <th>Blocked by</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var file in _files)
+            {
+                <tr>
+                    <td><a href="cases/@file.Case.CaseId">@file.Case.CaseId</a></td>
+                    <td>@file.Case.SoNumber</td>
+                    <td>@file.Case.ItemId</td>
+                    <td>@file.Case.Stage</td>
+                    <td>@file.Decisions.Count(d => d.Status == DecisionStatus.Pending)</td>
+                    <td>@(file.Case.BlockedByRuleId is null ? "—" : $"{file.Case.BlockedByRuleId}: {file.Case.BlockedReason}")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<CaseFile>? _files;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _files = await CaseStore.ListAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Cases failed to load: {ex.Message}";
+        }
+    }
+}

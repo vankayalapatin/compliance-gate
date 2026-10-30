@@ -1,0 +1,157 @@
+@page "/cases/{CaseId}"
+@using Gate.Contracts
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject CaseViewService Views
+
+<PageTitle>Case @CaseId</PageTitle>
+
+<h1>Case @CaseId</h1>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_detail is null)
+{
+    <p>Loading case…</p>
+}
+else
+{
+    <p>
+        <a href="cases">← all cases</a>
+        · SO @_detail.Case.SoNumber · item @_detail.Case.ItemId · scenario @_detail.Case.ScenarioName
+        · stage <strong>@_detail.Case.Stage</strong>
+    </p>
+
+    @if (_detail.Case.BlockedByRuleId is not null)
+    {
+        <div class="alert alert-warning" role="alert">
+            Blocked by rule <strong>@_detail.Case.BlockedByRuleId</strong>: @_detail.Case.BlockedReason
+        </div>
+    }
+
+    <h2>Chain</h2>
+    <table class="table">
+        <thead>
+            <tr><th>Step</th><th>Document</th><th>Status</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var step in _detail.Chain)
+            {
+                <tr>
+                    <td>@step.Label</td>
+                    <td>@(step.DocumentNumber ?? "—")</td>
+                    <td>@step.Status</td>
+                    <td>@(step.Detail ?? "—")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (_detail.OpenHolds.Count > 0)
+    {
+        <h2>Open holds</h2>
+        <table class="table">
+            <thead>
+                <tr><th>Hold</th><th>Rule</th><th>Blocks</th><th>Note</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var hold in _detail.OpenHolds)
+                {
+                    <tr>
+                        <td>@hold.HoldId</td>
+                        <td>@(hold.RuleId ?? "—")</td>
+                        <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
+                        <td>@hold.Note</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <h2>Decisions</h2>
+    @if (_detail.Decisions.Count == 0)
+    {
+        <p>No decisions on this case.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr><th>Decision</th><th>Kind</th><th>Status</th><th>Rule</th><th>Amount</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var d in _detail.Decisions)
+                {
+                    <tr>
+                        <td><a href="decisions">@d.DecisionId</a> — @d.Title</td>
+                        <td>@d.Kind</td>
+                        <td>@d.Status</td>
+                        <td>@(d.RuleId is null ? "—" : $"{d.RuleId}: {d.Reason}")</td>
+                        <td>@(d.Amount is null ? "—" : $"{d.Amount} {d.Currency}")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <h2>Timeline</h2>
+    @if (_detail.Events.Count == 0)
+    {
+        <p>No events recorded.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr><th>At</th><th>Actor</th><th>Event</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var e in _detail.Events.OrderBy(e => e.Timestamp))
+                {
+                    <tr>
+                        <td>@e.Timestamp.ToString("u")</td>
+                        <td>@e.Actor</td>
+                        <td>@e.Kind</td>
+                        <td>
+                            @e.Summary
+                            @if (e.RuleId is not null)
+                            {
+                                <span> (rule @e.RuleId)</span>
+                            }
+                            @if (e.Amount is not null)
+                            {
+                                <span> — @e.Amount @e.Currency</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    [Parameter]
+    public string CaseId { get; set; } = string.Empty;
+
+    private CaseDetailVm? _detail;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _detail = await Views.GetCaseDetailAsync(CaseId).ConfigureAwait(false);
+            if (_detail is null)
+            {
+                _loadError = $"Case {CaseId} has no case file.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Case {CaseId} failed to load: {ex.Message}";
+        }
+    }
+}

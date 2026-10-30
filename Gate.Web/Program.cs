@@ -6,6 +6,7 @@ using Gate.Contracts;
 using Gate.Erp;
 using Gate.Web;
 using Gate.Web.Components;
+using Gate.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,11 +31,25 @@ builder.Services.AddSingleton<IModelClient>(sp =>
     IModelClient inner = string.IsNullOrWhiteSpace(spark.ApiKey)
         ? new FakeModelClient()
         : new SparkModelClient(new HttpClient(), spark);
-    var cacheDir = Environment.GetEnvironmentVariable("GATE_MODEL_CACHE")
-        ?? Path.Combine(Path.GetTempPath(), "gate-model-cache");
-    return new CachedModelClient(inner, cacheDir);
+    return new CachedModelClient(inner, ModelCachePaths.ResolveDir());
 });
 builder.Services.AddScoped<P2pAgent>();
+builder.Services.AddSingleton(sp => new CaseCacheStore(
+    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
+builder.Services.AddSingleton(sp => new DockPhotoService(
+    DockPhotoService.ResolveImageDir(), DockPhotoService.ResolveVisionCacheDir()));
+builder.Services.AddSingleton<ReplayState>();
+builder.Services.AddScoped<CaseViewService>();
+builder.Services.AddScoped<DecisionOutcomeService>();
+builder.Services.AddScoped(sp => new AskWhyService(
+    sp.GetRequiredService<P2pAgent>(),
+    sp.GetRequiredService<IModelClient>(),
+    sp.GetRequiredService<CaseCacheStore>(),
+    sp.GetRequiredService<DockPhotoService>(),
+    sp.GetRequiredService<ReplayState>(),
+    sp.GetRequiredService<ILogger<AskWhyService>>(),
+    ModelCachePaths.ResolveDir()));
+builder.Services.AddScoped<ReplayService>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -68,5 +83,6 @@ using (var startup = app.Services.CreateScope())
     await ScenarioEndpoints.EnsureLoadedAsync(startup.ServiceProvider, builder.Configuration);
 }
 app.MapScenarioReset();
+app.MapDockImages();
 
 app.Run();

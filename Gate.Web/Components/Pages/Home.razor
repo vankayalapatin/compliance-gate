@@ -1,7 +1,112 @@
-﻿@page "/"
+@page "/"
+@rendermode InteractiveServer
+@using Gate.Contracts
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject CaseCacheStore Cases
+@inject ReplayService Replay
 
-<PageTitle>Home</PageTitle>
+<PageTitle>ComplianceGate</PageTitle>
 
-<h1>Hello, world!</h1>
+<h1>ComplianceGate</h1>
 
-Welcome to your new app.
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_files is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Decisions</h5>
+                    <p class="card-text">@PendingCount() pending of @DecisionCount() total.</p>
+                    <a class="btn btn-primary" href="decisions">Open Decisions</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Cases</h5>
+                    <p class="card-text">@_files.Count case(s) in the cache.</p>
+                    <a class="btn btn-primary" href="cases">Open Cases</a>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Records</h5>
+                    <p class="card-text">Plain ERP ledgers with dock photos.</p>
+                    <a class="btn btn-primary" href="records">Open Records</a>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<h2>Reset to start + offline replay</h2>
+<p>Reloads the scenario (every number regenerated), clears the case cache, and pins Ask-why to cached answers: zero live calls after replay.</p>
+<button class="btn btn-warning" disabled="@_busy" @onclick="ResetAsync">Reset + replay offline</button>
+
+@if (_report is not null)
+{
+    <div class="mt-3">
+        <ErrorBox Message="@_report.Error" Warnings="@_report.Warnings" />
+        <ul>
+            @foreach (var step in _report.Steps)
+            {
+                <li>@step</li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<CaseFile>? _files;
+    private string? _loadError;
+    private bool _busy;
+    private ReplayReport? _report;
+
+    private int DecisionCount() => _files?.Sum(f => f.Decisions.Count) ?? 0;
+
+    private int PendingCount() =>
+        _files?.Sum(f => f.Decisions.Count(d => d.Status == DecisionStatus.Pending)) ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync().ConfigureAwait(false);
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            _files = await Cases.ListAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Case cache failed to load: {ex.Message}";
+        }
+    }
+
+    private async Task ResetAsync()
+    {
+        _busy = true;
+        try
+        {
+            _report = await Replay.ResetAndReplayAsync().ConfigureAwait(false);
+            await ReloadAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
