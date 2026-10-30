@@ -62,14 +62,46 @@ public sealed class P2pAgent
             throw new InvalidOperationException("No shortfall: PR refused.");
         }
 
-        var pr = await _erp.CreatePrAsync(requester, source, lines, ct).ConfigureAwait(false);
-        await _erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, ct).ConfigureAwait(false);
+        var pr = await _erp.CreatePrAsync(requester, source, requester, lines, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        await _erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         return await _erp.GetPrAsync(pr.PrNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"PR {pr.PrNumber} vanished after submit.");
     }
 
+    /// <summary>Routes a draft PR to the lowest-limit approver covering its
+    /// ERP-estimated amount, following an active outbound delegation.
+    /// Returns null when the PR needs no human (auto-approved under threshold).</summary>
+    public async Task<string?> RoutePrAsync(string prNumber, CancellationToken ct = default)
+    {
+        var pr = await _erp.GetPrAsync(prNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Unknown PR {prNumber}.");
+        if (pr.Status != PrStatus.Draft)
+        {
+            return null;
+        }
+
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        var delegations = await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);
+        var candidates = (await _erp.GetUsersAsync(ct).ConfigureAwait(false))
+            .Where(u => !string.Equals(u.UserId, pr.Requester, StringComparison.OrdinalIgnoreCase))
+            .Where(u => !string.Equals(u.Role, "requester", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(u.Role, "ap-clerk", StringComparison.OrdinalIgnoreCase))
+            .Where(u => u.SigningLimit >= pr.EstimatedAmount)
+            .OrderBy(u => u.SigningLimit)
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            throw new InvalidOperationException($"No approver covers PR {prNumber} estimated at {pr.EstimatedAmount}.");
+        }
+
+        var chosen = candidates[0];
+        var outbound = delegations.FirstOrDefault(d =>
+            string.Equals(d.FromUser, chosen.UserId, StringComparison.OrdinalIgnoreCase) && today >= d.Start && today <= d.End);
+        return outbound?.ToUser ?? chosen.UserId;
+    }
+
     public async Task<(PurchaseOrder Po, IReadOnlyList<VendorScreening> Screenings)> ScreenAndOrderAsync(
-        string prNumber, IReadOnlyList<string> candidateVendorIds, string currency, string source, string caseId, CancellationToken ct = default)
+        string prNumber, IReadOnlyList<string> candidateVendorIds, string source, string caseId, CancellationToken ct = default)
     {
         var pr = await _erp.GetPrAsync(prNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Unknown PR {prNumber}.");
@@ -77,7 +109,7 @@ public sealed class P2pAgent
         string? winner = null;
         foreach (var vendorId in candidateVendorIds)
         {
-            var vendors = await _erp.GetVendorsAsync(string.Empty, ct).ConfigureAwait(false);
+            var vendors = await _erp.GetVendorsAsync(ct).ConfigureAwait(false);
             var vendor = vendors.FirstOrDefault(v => v.VendorId == vendorId)
                 ?? throw new InvalidOperationException($"Unknown vendor {vendorId}.");
             var docs = await _erp.GetVendorDocumentsAsync(vendorId, ct).ConfigureAwait(false);
@@ -97,8 +129,8 @@ public sealed class P2pAgent
             else if (!passed)
             {
                 var block = verdicts.First(v => v.Kind is VerdictKind.Block);
-                await _erp.BlockVendorAsync(vendorId, $"{block.RuleId}: {block.Reason}", ct).ConfigureAwait(false);
-                await _erp.AddPoNoteAsync(prNumber, $"Vendor {vendorId} rejected for {caseId}: {block.RuleId}.", ct).ConfigureAwait(false);
+                await _erp.BlockVendorAsync(vendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+                await _erp.AddPoNoteAsync(prNumber, $"Vendor {vendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
             }
         }
 
@@ -107,91 +139,79 @@ public sealed class P2pAgent
             throw new InvalidOperationException("No compliant vendor: PO refused.");
         }
 
-        var po = await _erp.CreatePoAsync(prNumber, winner, currency, source, ct).ConfigureAwait(false);
+        var po = await _erp.CreatePoAsync(prNumber, winner, source, pr.Requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         return (po, screenings);
     }
 
-    public async Task<VendorInvoice> MatchInvoiceAsync(VendorInvoice invoice, CancellationToken ct = default)
+    public async Task<VendorInvoice> MatchInvoiceAsync(
+        string vendorId, string supplierInvoiceNumber, string? poNumber,
+        string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, CancellationToken ct = default)
     {
         var problems = new List<string>();
-        if (await _erp.GetInvoiceAsync(invoice.InvoiceNumber, ct).ConfigureAwait(false) is not null)
+        if (!string.IsNullOrWhiteSpace(vendorId) && !string.IsNullOrWhiteSpace(supplierInvoiceNumber))
         {
-            problems.Add("AP-C1: duplicate invoice number.");
+            if (await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false) is not null)
+                problems.Add("AP-C1: duplicate invoice number.");
         }
-
-        if (string.IsNullOrWhiteSpace(invoice.VendorId) || string.IsNullOrWhiteSpace(invoice.PoNumber))
-        {
+        if (string.IsNullOrWhiteSpace(vendorId) || string.IsNullOrWhiteSpace(poNumber))
             problems.Add("AP-C3: vendor or PO number missing; goods receipt required before pay.");
+
+        PurchaseOrder? po = null;
+        if (problems.Count == 0 && poNumber is not null)
+            po = await _erp.GetPurchaseOrderAsync(poNumber, ct).ConfigureAwait(false);
+
+        if (problems.Count > 0 || po is null)
+        {
+            var held = lines.Select(l => new VendorInvoiceLine(l.PoLineRef, l.Quantity, l.UnitPrice,
+                LineDisposition.Held, string.Join(" ", problems.Count > 0 ? problems : ["AP-C3: no PO match."]))).ToList();
+            var results = held.Select(l => new LineMatchResult(l.PoLineRef, false, l.HoldReason ?? "Held.")).ToList();
+            foreach (var p in problems) results.Add(new LineMatchResult(null, false, p));
+            return new VendorInvoice(supplierInvoiceNumber, vendorId, poNumber, InvoiceStatus.Received, null,
+                po?.Currency ?? string.Empty, source, createdBy, string.Empty, held, results);
         }
 
-        var po = invoice.PoNumber is null ? null : await _erp.GetPurchaseOrderAsync(invoice.PoNumber, ct).ConfigureAwait(false);
-        var matched = new List<VendorInvoiceLine>();
-        var results = new List<LineMatchResult>();
-        foreach (var line in invoice.Lines)
+        await _erp.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        var matched = new List<LineMatchResult>();
+        foreach (var line in lines)
         {
-            var poLine = po?.Lines.FirstOrDefault(l => l.PoLineRef == line.PoLineRef);
+            var poLine = po.Lines.FirstOrDefault(l => l.PoLineRef == line.PoLineRef);
             if (poLine is null)
             {
-                matched.Add(line with { Disposition = LineDisposition.Held, HoldReason = "AP-C3: no PO line match." });
-                results.Add(new LineMatchResult(line.PoLineRef, false, "No PO line match."));
+                matched.Add(new LineMatchResult(line.PoLineRef, false, "No PO line match."));
                 continue;
             }
-
             var priceOk = poLine.UnitPrice == 0 || Math.Abs(line.UnitPrice - poLine.UnitPrice) / poLine.UnitPrice <= PriceTolerance;
             var qtyOk = line.Quantity <= poLine.QtyReceived;
-            if (priceOk && qtyOk)
-            {
-                matched.Add(line with { Disposition = LineDisposition.Accepted, HoldReason = null });
-                results.Add(new LineMatchResult(line.PoLineRef, true, "Matched."));
-            }
-            else
-            {
-                var why = !priceOk ? $"AP-C2: price {line.UnitPrice} vs PO {poLine.UnitPrice}." : $"Qty {line.Quantity} exceeds received {poLine.QtyReceived}.";
-                matched.Add(line with { Disposition = LineDisposition.Held, HoldReason = why });
-                results.Add(new LineMatchResult(line.PoLineRef, false, why));
-            }
+            if (priceOk && qtyOk) matched.Add(new LineMatchResult(line.PoLineRef, true, "Matched."));
+            else matched.Add(new LineMatchResult(line.PoLineRef, false,
+                !priceOk ? $"AP-C2: price {line.UnitPrice} vs PO {poLine.UnitPrice}." : $"Qty {line.Quantity} exceeds received {poLine.QtyReceived}."));
         }
-
-        foreach (var p in problems)
-        {
-            results.Add(new LineMatchResult(null, false, p));
-        }
-
-        var heldAll = problems.Count > 0
-            ? matched.Select(l => l with { Disposition = LineDisposition.Held, HoldReason = string.Join(" ", problems) }).ToList()
-            : matched;
-        var stored = invoice with { Lines = heldAll, MatchResults = results };
-        await _erp.CreateInvoiceAsync(stored, ct).ConfigureAwait(false);
-        await _erp.RecordMatchResultAsync(stored.InvoiceNumber, results, ct).ConfigureAwait(false);
-        return stored;
+        await _erp.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, matched, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        return await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
     }
 
     public async Task<(Payment? Payment, IReadOnlyList<string> SkippedHeld)> RequestPaymentAsync(
-        IReadOnlyList<string> invoiceNumbers, string currency, string source, CancellationToken ct = default)
+        IReadOnlyList<InvoiceKey> invoiceKeys, string source, CancellationToken ct = default)
     {
-        var lines = new List<PaymentLine>();
+        var payable = new List<InvoiceKey>();
         var skipped = new List<string>();
-        foreach (var number in invoiceNumbers)
+        foreach (var key in invoiceKeys)
         {
-            var inv = await _erp.GetInvoiceAsync(number, ct).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"Unknown invoice {number}.");
+            var inv = await _erp.GetInvoiceAsync(key.VendorId, key.SupplierInvoiceNumber, ct).ConfigureAwait(false);
+            if (inv is null) { skipped.Add(key.SupplierInvoiceNumber); continue; }
             var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
-            if (accepted <= 0)
-            {
-                skipped.Add(number);
-                continue;
-            }
-
-            lines.Add(new PaymentLine(number, accepted));
+            if (accepted <= 0) { skipped.Add(key.SupplierInvoiceNumber); continue; }
+            payable.Add(key);
         }
 
-        if (lines.Count == 0)
+        if (payable.Count == 0)
         {
             return (null, skipped);
         }
 
-        var payment = await _erp.CreatePaymentAsync(currency, source, lines, ct).ConfigureAwait(false);
-        return (payment, skipped);
+        var draft = await _erp.CreatePaymentDraftAsync(payable, source, RecordSource.P2pAgent, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        return (draft, skipped);
     }
 
     public Task<string> ExplainAsync(string question, string evidence, CancellationToken ct = default) =>

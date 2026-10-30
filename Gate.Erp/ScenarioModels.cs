@@ -14,6 +14,10 @@ public sealed record ScenarioStockIntent(string Item, decimal Quantity);
 
 public sealed record ScenarioOpenPoIntent(string Item, decimal Quantity, string Vendor);
 
+public sealed record ScenarioItem(string Id, string Description, bool Critical, int PackSize, string Unit);
+
+public sealed record ScenarioPaymentTerm(string Id, int NetDays);
+
 public sealed record ScenarioVendorDoc(string Kind, string Reference, bool Present);
 
 public sealed record ScenarioVendor(
@@ -21,7 +25,10 @@ public sealed record ScenarioVendor(
     string Name,
     string Country,
     string Role,
+    string Item,
     decimal UnitPrice,
+    string Terms,
+    string BankAccount,
     IReadOnlyList<ScenarioVendorDoc> Documents);
 
 public sealed record ScenarioHistoryCells(string Source, string Country, decimal Cells);
@@ -42,6 +49,8 @@ public sealed record ScenarioFile(
     IReadOnlyList<ScenarioBomIntent> Bom,
     IReadOnlyList<ScenarioStockIntent> Stock,
     ScenarioOpenPoIntent OpenPoInbound,
+    IReadOnlyList<ScenarioItem> Items,
+    IReadOnlyList<ScenarioPaymentTerm> PaymentTerms,
     IReadOnlyList<ScenarioVendor> Vendors,
     string HistoryPart,
     IReadOnlyList<ScenarioHistoryCells> HistoryCells,
@@ -52,7 +61,7 @@ public sealed record ScenarioFile(
     ScenarioCartonPlan CartonPlan,
     IReadOnlyList<ScenarioSmallPo> SmallPos);
 
-/// <summary>One generated document id recorded for a scenario event.</summary>
+/// <summary>One generated id recorded for a scenario event.</summary>
 public sealed record ManifestDocument(string Event, string DocType, string Number);
 
 /// <summary>Run manifest: which scenario produced which document numbers.</summary>

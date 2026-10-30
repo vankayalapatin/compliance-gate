@@ -12,9 +12,18 @@
     { "item": "SCR-9", "quantity": 2500 }
   ],
   "openPoInbound": { "item": "BAT-1", "quantity": 40, "vendor": "V-B" },
+  "items": [
+    { "id": "BAT-1", "description": "Battery cell", "critical": true, "packSize": 100, "unit": "EA" },
+    { "id": "SCR-9", "description": "Screw", "critical": false, "packSize": 1, "unit": "EA" },
+    { "id": "GLASS-1", "description": "Smart glasses", "critical": false, "packSize": 1, "unit": "EA" }
+  ],
+  "paymentTerms": [
+    { "id": "NET30", "netDays": 30 }
+  ],
   "vendors": [
     {
       "id": "V-A", "name": "Cheap Cells Ltd", "country": "CN", "role": "cheaper-blocked",
+      "item": "BAT-1", "unitPrice": 14.20, "terms": "NET30", "bankAccount": "BANK-A-001",
       "documents": [
         { "kind": "UN38.3", "reference": "un383-a", "present": true },
         { "kind": "SDS", "reference": "sds-a", "present": true }
@@ -22,6 +31,7 @@
     },
     {
       "id": "V-B", "name": "Compliant Cells Inc", "country": "MX", "role": "compliant-winner",
+      "item": "BAT-1", "unitPrice": 18.50, "terms": "NET30", "bankAccount": "BANK-B-001",
       "documents": [
         { "kind": "UN38.3", "reference": "un383-b", "present": true },
         { "kind": "SDS", "reference": "sds-b", "present": true }
@@ -29,6 +39,7 @@
     },
     {
       "id": "V-C", "name": "Screws Co", "country": "TW", "role": "straight-through",
+      "item": "SCR-9", "unitPrice": 0.40, "terms": "NET30", "bankAccount": "BANK-C-001",
       "documents": [
         { "kind": "UN38.3", "reference": "n/a", "present": true },
         { "kind": "SDS", "reference": "n/a", "present": true }

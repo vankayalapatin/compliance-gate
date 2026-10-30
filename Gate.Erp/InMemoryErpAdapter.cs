@@ -1,68 +1,95 @@
 // In-memory fake ERP. Implements the full adapter contract with real D365
 // behaviours (sequences, posted immutability, SoD and limit refusals) so
 // other agents can build and test before the real module exists.
+//
+// Write-method rule: callers supply intent + audit + idempotency key only.
+// ERP assigns numbers (SO/PR/PO at creation; receipt, voucher, payment at
+// posting) and reads amounts, limits, due dates, bank snapshots, and
+// delegate flags itself.
 using Gate.Contracts;
 
 namespace Gate.Erp;
 
 public sealed class InMemoryErpAdapter : IErpAdapter
 {
+    private const decimal PriceTolerance = 0.02m;
+
     private readonly Dictionary<string, SalesOrder> _salesOrders = new();
     private readonly Dictionary<string, List<BomLine>> _boms = new();
-    private readonly Dictionary<string, decimal> _stock = new();
+    private readonly Dictionary<string, ItemDto> _items = new();
     private readonly Dictionary<string, VendorDto> _vendors = new();
     private readonly Dictionary<string, List<VendorDocumentDto>> _vendorDocs = new();
+    private readonly Dictionary<string, PaymentTermsDto> _terms = new();
+    private readonly Dictionary<string, VendorBankDto> _banks = new();
+    private readonly Dictionary<string, UserDto> _users = new();
+    private readonly List<DelegationDto> _delegations = new();
     private readonly Dictionary<string, decimal> _volumeShares = new();
-    private readonly Dictionary<string, List<VolumeHistory>> _volumeHistory = new();
-    private readonly Dictionary<string, decimal> _signingLimits = new();
+    private readonly Dictionary<string, List<VolumeHistory>> _volumeSeed = new();
+    private readonly Dictionary<(string Vendor, string Item), decimal> _prices = new();
+    private readonly Dictionary<string, decimal> _lastPrice = new();
+    private decimal _autoApproveThreshold;
     private readonly Dictionary<string, PurchaseRequisition> _prs = new();
     private readonly Dictionary<string, PurchaseOrder> _pos = new();
+    private readonly Dictionary<string, VendorConfirmation> _confirmations = new();
+    private readonly Dictionary<string, AsnDto> _asns = new();
+    private readonly HashSet<string> _cartonIds = new();
     private readonly Dictionary<string, ShipmentReceipt> _receipts = new();
-    private readonly Dictionary<string, VendorInvoice> _invoices = new();
+    private readonly Dictionary<(string Vendor, string Invoice), VendorInvoice> _invoices = new();
+    private readonly Dictionary<string, DateTimeOffset> _invoicePostedAt = new();
     private readonly Dictionary<string, Payment> _payments = new();
     private readonly Dictionary<string, HoldDto> _holds = new();
+    private readonly List<HoldRelease> _holdHistory = new();
     private readonly List<ApprovalDto> _approvals = new();
     private readonly Dictionary<(string Type, string Number), string> _requesters = new();
-    private readonly Dictionary<string, List<string>> _paymentInvoices = new();
+    private readonly Dictionary<(string Type, string Number), string> _routedTo = new();
+    private readonly Dictionary<string, List<string>> _poNotes = new();
+    private readonly Dictionary<string, List<InventoryTransaction>> _inventory = new();
+    private readonly Dictionary<string, (string PoNumber, string PoLineRef, string ItemId)> _lotMap = new();
+    private readonly List<Settlement> _settlements = new();
+    private readonly List<HeldRelease> _heldReleases = new();
     private readonly Dictionary<string, int> _sequences = new();
+    private readonly Dictionary<string, object> _idem = new();
     private readonly Dictionary<string, decimal> _paidAmounts = new();
-    private readonly List<string> _poNotes = new();
+    private string _baseCurrency = string.Empty;
 
     // Seed helpers (test and demo setup only).
     public void SeedSalesOrder(SalesOrder so) => _salesOrders[so.SoNumber] = so;
     public void SeedBom(string itemId, IEnumerable<BomLine> lines) => _boms[itemId] = lines.ToList();
-    public void SeedStock(string itemId, decimal qty) => _stock[itemId] = qty;
+    public void SeedItem(ItemDto item) => _items[item.ItemId] = item;
+    public void SeedStock(string itemId, decimal qty)
+    {
+        var list = _inventory.GetValueOrDefault(itemId);
+        if (list is null) { list = new List<InventoryTransaction>(); _inventory[itemId] = list; }
+        list.Add(new InventoryTransaction(itemId, "OPENING", "OPENING", InventoryStatus.Available, qty));
+    }
     public void SeedVendor(VendorDto vendor) => _vendors[vendor.VendorId] = vendor;
     public void SeedVendorDocuments(string vendorId, IEnumerable<VendorDocumentDto> docs) => _vendorDocs[vendorId] = docs.ToList();
     public void SeedVolumeShare(string vendorId, decimal share) => _volumeShares[vendorId] = share;
+    public void SeedVolumeHistory(string itemId, IEnumerable<VolumeHistory> rows) => _volumeSeed[itemId] = rows.ToList();
+    public void SeedPaymentTerms(PaymentTermsDto terms) => _terms[terms.TermsId] = terms;
+    public void SeedVendorBank(VendorBankDto bank) => _banks[bank.VendorId] = bank;
+    public void SeedUser(UserDto user) => _users[user.UserId] = user;
+    public void SeedDelegation(DelegationDto delegation) => _delegations.Add(delegation);
+    public void SeedVendorPrice(string vendorId, string itemId, decimal unitPrice)
+    {
+        _prices[(vendorId, itemId)] = unitPrice;
+        _lastPrice[itemId] = unitPrice;
+    }
+    public void SeedBaseCurrency(string currency) => _baseCurrency = currency;
+    public void SeedAutoApproveThreshold(decimal threshold) => _autoApproveThreshold = threshold;
 
-    public void SeedVolumeHistory(string itemId, IEnumerable<VolumeHistory> rows) => _volumeHistory[itemId] = rows.ToList();
-    public void SeedSigningLimit(string user, decimal limit) => _signingLimits[user] = limit;
-
-    // Scenario reset support (additive): wipes all rows, approvals, notes,
-    // and sequences so a scenario reload regenerates every document number.
     public void Clear()
     {
-        _salesOrders.Clear();
-        _boms.Clear();
-        _stock.Clear();
-        _vendors.Clear();
-        _vendorDocs.Clear();
-        _volumeShares.Clear();
-        _volumeHistory.Clear();
-        _signingLimits.Clear();
-        _prs.Clear();
-        _pos.Clear();
-        _receipts.Clear();
-        _invoices.Clear();
-        _payments.Clear();
-        _holds.Clear();
-        _approvals.Clear();
-        _requesters.Clear();
-        _paymentInvoices.Clear();
-        _sequences.Clear();
-        _paidAmounts.Clear();
-        _poNotes.Clear();
+        _salesOrders.Clear(); _boms.Clear(); _items.Clear(); _vendors.Clear();
+        _vendorDocs.Clear(); _terms.Clear(); _banks.Clear(); _users.Clear();
+        _delegations.Clear(); _volumeShares.Clear(); _volumeSeed.Clear(); _prices.Clear();
+        _prs.Clear(); _pos.Clear(); _confirmations.Clear(); _asns.Clear(); _cartonIds.Clear();
+        _receipts.Clear(); _invoices.Clear(); _invoicePostedAt.Clear(); _payments.Clear();
+        _holds.Clear(); _holdHistory.Clear(); _approvals.Clear(); _requesters.Clear();
+        _routedTo.Clear(); _poNotes.Clear(); _inventory.Clear(); _lotMap.Clear();
+        _settlements.Clear(); _heldReleases.Clear(); _sequences.Clear(); _idem.Clear();
+        _paidAmounts.Clear(); _baseCurrency = string.Empty;
+        _lastPrice.Clear(); _autoApproveThreshold = 0;
     }
 
     private string Next(string prefix)
@@ -73,12 +100,29 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         return $"{prefix}-{n}";
     }
 
-    private static void ThrowIfPosted(DocStatus status, string what)
+    private T Idem<T>(string key, Func<T> create)
     {
-        if (status is DocStatus.Posted or DocStatus.Closed)
-        {
-            throw new InvalidOperationException($"{what} is already posted and immutable.");
-        }
+        if (_idem.TryGetValue(key, out var existing)) return (T)existing!;
+        var result = create();
+        _idem[key] = result!;
+        return result;
+    }
+
+    private static string InvoiceDoc(string vendorId, string supplierNumber) => $"{vendorId}/{supplierNumber}";
+    private static string PaidKey(string vendorId, string supplierNumber) => $"{vendorId}/{supplierNumber}";
+
+    private decimal PoAcceptedInvoiced(string poNumber, string poLineRef)
+    {
+        return _invoices.Values
+            .Where(i => i.PoNumber == poNumber)
+            .SelectMany(i => i.Lines)
+            .Where(l => l.PoLineRef == poLineRef && l.Disposition == LineDisposition.Accepted)
+            .Sum(l => l.Quantity * l.UnitPrice);
+    }
+
+    private static void ThrowIfTerminal(string what, bool terminal)
+    {
+        if (terminal) throw new InvalidOperationException($"{what} is terminal and immutable.");
     }
 
     public Task<SalesOrder?> GetSalesOrderAsync(string soNumber, CancellationToken ct = default) =>
@@ -88,14 +132,14 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         Task.FromResult<IReadOnlyList<BomLine>>(_boms.GetValueOrDefault(itemId, []));
 
     public Task<decimal> GetStockAsync(string itemId, CancellationToken ct = default) =>
-        Task.FromResult(_stock.GetValueOrDefault(itemId));
+        Task.FromResult(_inventory.GetValueOrDefault(itemId, []).Where(t => t.Status == InventoryStatus.Available).Sum(t => t.Quantity));
 
     public Task<IReadOnlyList<PurchaseOrder>> GetOpenPurchaseOrdersAsync(string itemId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<PurchaseOrder>>(
-            _pos.Values.Where(p => p.Status is DocStatus.Approved or DocStatus.Submitted)
-                .Where(p => p.Lines.Any(l => l.ItemId == itemId)).ToList());
+            _pos.Values.Where(p => p.DocStatus is not PoDocStatus.Closed and not PoDocStatus.Cancelled)
+                .Where(p => p.Lines.Any(l => l.ItemId == itemId && l.QtyOrdered - l.QtyReceived > 0)).ToList());
 
-    public Task<IReadOnlyList<VendorDto>> GetVendorsAsync(string itemId, CancellationToken ct = default) =>
+    public Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<VendorDto>>(_vendors.Values.ToList());
 
     public Task<IReadOnlyList<VendorDocumentDto>> GetVendorDocumentsAsync(string vendorId, CancellationToken ct = default) =>
@@ -107,8 +151,43 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     public Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default) =>
         Task.FromResult(_volumeShares.GetValueOrDefault(vendorId));
 
-    public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default) =>
-        Task.FromResult<IReadOnlyList<VolumeHistory>>(_volumeHistory.GetValueOrDefault(itemId, []));
+    public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default)
+    {
+        var seeded = _volumeSeed.GetValueOrDefault(itemId, []);
+        var posted = _receipts.Values.SelectMany(r =>
+        {
+            var po = _pos.GetValueOrDefault(r.PoNumber);
+            var vendor = po is null ? null : _vendors.GetValueOrDefault(po.VendorId);
+            var country = vendor?.CountryOfOrigin ?? "OTHER";
+            return r.Lines.Select(l =>
+            {
+                var lineItem = po?.Lines.FirstOrDefault(x => x.PoLineRef == l.PoLineRef)?.ItemId ?? itemId;
+                return (Item: lineItem, Row: new VolumeHistory($"Receipt {r.ReceiptNumber}", country, l.QtyReceived));
+            }).Where(x => x.Item == itemId).Select(x => x.Row);
+        }).ToList();
+        return Task.FromResult<IReadOnlyList<VolumeHistory>>(seeded.Concat(posted).ToList());
+    }
+
+    public Task<ItemDto?> GetItemAsync(string itemId, CancellationToken ct = default) =>
+        Task.FromResult(_items.GetValueOrDefault(itemId));
+
+    public Task<PaymentTermsDto?> GetPaymentTermsAsync(string termsId, CancellationToken ct = default) =>
+        Task.FromResult(_terms.GetValueOrDefault(termsId));
+
+    public Task<VendorBankDto?> GetVendorBankAsync(string vendorId, CancellationToken ct = default) =>
+        Task.FromResult(_banks.GetValueOrDefault(vendorId));
+
+    public Task<UserDto?> GetUserAsync(string userId, CancellationToken ct = default) =>
+        Task.FromResult(_users.GetValueOrDefault(userId));
+
+    public Task<IReadOnlyList<UserDto>> GetUsersAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<UserDto>>(_users.Values.ToList());
+
+    public Task<decimal> GetAutoApproveThresholdAsync(CancellationToken ct = default) =>
+        Task.FromResult(_autoApproveThreshold);
+
+    public Task<IReadOnlyList<DelegationDto>> GetDelegationsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<DelegationDto>>(_delegations.ToList());
 
     public Task<PurchaseOrder?> GetPurchaseOrderAsync(string poNumber, CancellationToken ct = default) =>
         Task.FromResult(_pos.GetValueOrDefault(poNumber));
@@ -116,210 +195,627 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     public Task<ShipmentReceipt?> GetReceiptAsync(string receiptNumber, CancellationToken ct = default) =>
         Task.FromResult(_receipts.GetValueOrDefault(receiptNumber));
 
-    public Task<VendorInvoice?> GetInvoiceAsync(string invoiceNumber, CancellationToken ct = default) =>
-        Task.FromResult(_invoices.GetValueOrDefault(invoiceNumber));
+    public Task<VendorInvoice?> GetInvoiceAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) =>
+        Task.FromResult(_invoices.GetValueOrDefault((vendorId, supplierInvoiceNumber)));
+
+    public Task<Payment?> GetPaymentAsync(string paymentNumber, CancellationToken ct = default) =>
+        Task.FromResult(_payments.GetValueOrDefault(paymentNumber));
+
+    public Task<VendorConfirmation?> GetVendorConfirmationAsync(string poNumber, CancellationToken ct = default) =>
+        Task.FromResult(_confirmations.GetValueOrDefault(poNumber));
+
+    public Task<AsnDto?> GetAsnAsync(string asnNumber, CancellationToken ct = default) =>
+        Task.FromResult(_asns.GetValueOrDefault(asnNumber));
+
+    public Task<IReadOnlyList<InventoryTransaction>> GetInventoryTransactionsAsync(string itemId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<InventoryTransaction>>(_inventory.GetValueOrDefault(itemId, []));
+
+    public Task<IReadOnlyList<Settlement>> GetSettlementsAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Settlement>>(_settlements.Where(s => s.VendorId == vendorId && s.SupplierInvoiceNumber == supplierInvoiceNumber).ToList());
+
+    public Task<IReadOnlyList<HoldDto>> GetOpenHoldsAsync(string? documentNumber, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<HoldDto>>(_holds.Values
+            .Where(h => h.Status == HoldStatus.Set && (documentNumber == null || h.DocumentNumber == documentNumber)).ToList());
+
+    public Task<IReadOnlyList<HoldRelease>> GetHoldHistoryAsync(string holdId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<HoldRelease>>(_holdHistory.Where(h => h.HoldId == holdId).ToList());
 
     public Task<IReadOnlyList<ApprovalDto>> GetApprovalsAsync(string documentType, string documentNumber, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<ApprovalDto>>(
             _approvals.Where(a => a.DocumentType == documentType && a.DocumentNumber == documentNumber).ToList());
 
-    public Task<PurchaseRequisition> CreatePrAsync(string requester, string source, IReadOnlyList<PurchaseRequisitionLine> lines, CancellationToken ct = default)
-    {
-        var pr = new PurchaseRequisition(Next("PR"), DocStatus.Draft, requester, source, lines.ToList());
-        _prs[pr.PrNumber] = pr;
-        _requesters[("PR", pr.PrNumber)] = requester;
-        return Task.FromResult(pr);
-    }
-
     public Task<PurchaseRequisition?> GetPrAsync(string prNumber, CancellationToken ct = default) =>
         Task.FromResult(_prs.GetValueOrDefault(prNumber));
 
-    public Task SubmitForApprovalAsync(string documentType, string documentNumber, string routedTo, CancellationToken ct = default)
-    {
-        if (documentType == "PR" && _prs.TryGetValue(documentNumber, out var pr))
+    public Task<PurchaseRequisition> CreatePrAsync(string requester, string source, string createdBy, IReadOnlyList<PurchaseRequisitionLine> lines, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"pr:{idempotencyKey}", () =>
         {
-            ThrowIfPosted(pr.Status, documentNumber);
-            _prs[documentNumber] = pr with { Status = DocStatus.Submitted };
-            return Task.CompletedTask;
-        }
+            if (string.IsNullOrWhiteSpace(_baseCurrency)) throw new InvalidOperationException("Base currency is not seeded.");
+            if (lines.Count == 0) throw new InvalidOperationException("PR needs at least one line.");
+            foreach (var l in lines) if (l.Quantity <= 0) throw new InvalidOperationException($"PR line {l.ItemId} quantity must be positive.");
+            var estimated = lines.Sum(l =>
+            {
+                if (!_lastPrice.TryGetValue(l.ItemId, out var price))
+                    throw new InvalidOperationException($"No last purchase price for item {l.ItemId}: PR cannot be estimated.");
+                return l.Quantity * price;
+            });
+            var status = estimated < _autoApproveThreshold ? PrStatus.Approved : PrStatus.Draft;
+            var pr = new PurchaseRequisition(Next("PR"), status, requester, _baseCurrency, estimated, source, createdBy, idempotencyKey, lines.ToList());
+            _prs[pr.PrNumber] = pr;
+            _requesters[("PR", pr.PrNumber)] = requester;
+            return pr;
+        }));
 
-        throw new InvalidOperationException($"Unknown document {documentType} {documentNumber}.");
+    public Task SubmitForApprovalAsync(string documentType, string documentNumber, string routedTo, string submittedBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"submit:{idempotencyKey}", () =>
+        {
+            switch (documentType)
+            {
+                case "PR" when _prs.TryGetValue(documentNumber, out var pr):
+                    if (pr.Status is PrStatus.Submitted) return null;
+                    if (pr.Status is not PrStatus.Draft and not PrStatus.Rejected) throw new InvalidOperationException($"PR {documentNumber} cannot be submitted from {pr.Status}.");
+                    _prs[documentNumber] = pr with { Status = PrStatus.Submitted };
+                    break;
+                case "PO" when _pos.TryGetValue(documentNumber, out var po):
+                    if (po.ApprovalStatus is PoApprovalStatus.InReview) return null;
+                    if (po.ApprovalStatus is not PoApprovalStatus.Draft) throw new InvalidOperationException($"PO {documentNumber} cannot be submitted from {po.ApprovalStatus}.");
+                    _pos[documentNumber] = po with { ApprovalStatus = PoApprovalStatus.InReview };
+                    break;
+                case "Invoice":
+                    var inv = _invoices.Values.FirstOrDefault(i => InvoiceDoc(i.VendorId, i.SupplierInvoiceNumber) == documentNumber)
+                        ?? throw new InvalidOperationException($"Unknown invoice {documentNumber}.");
+                    if (inv.Status is not InvoiceStatus.Received and not InvoiceStatus.Matched) throw new InvalidOperationException($"Invoice {documentNumber} cannot be submitted from {inv.Status}.");
+                    _invoices[(inv.VendorId, inv.SupplierInvoiceNumber)] = inv with { Status = InvoiceStatus.Matched };
+                    break;
+                case "Payment" when _payments.TryGetValue(documentNumber, out var pay):
+                    if (pay.Status is PaymentStatus.Submitted) return null;
+                    if (pay.Status is not PaymentStatus.Draft) throw new InvalidOperationException($"Payment {documentNumber} cannot be submitted from {pay.Status}.");
+                    _payments[documentNumber] = pay with { Status = PaymentStatus.Submitted };
+                    break;
+                default: throw new InvalidOperationException($"Unknown document {documentType} {documentNumber}.");
+            }
+            _routedTo[(documentType, documentNumber)] = routedTo;
+            return null;
+        });
+        return Task.CompletedTask;
     }
 
-    public Task RecordApprovalAsync(ApprovalDto approval, CancellationToken ct = default)
-    {
-        var actor = approval.ActingAsDelegate ? approval.RoutedTo : (approval.ActedBy ?? approval.RoutedTo);
-        if (_requesters.TryGetValue((approval.DocumentType, approval.DocumentNumber), out var requester)
-            && string.Equals(approval.ActedBy ?? actor, requester, StringComparison.OrdinalIgnoreCase))
+    public Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"approval:{idempotencyKey}", () =>
         {
-            throw new InvalidOperationException("Requester cannot approve their own request.");
-        }
-
-        if (approval.Approved && _signingLimits.TryGetValue(actor, out var limit) && approval.LimitChecked > limit)
-        {
-            throw new InvalidOperationException($"{actor} cannot approve {approval.LimitChecked} above signing limit {limit}.");
-        }
-
-        if (approval is { DocumentType: "Payment", Approved: true } && _paymentInvoices.TryGetValue(approval.DocumentNumber, out var paidInvoices))
-        {
-            foreach (var inv in paidInvoices)
+            if (!_routedTo.TryGetValue((documentType, documentNumber), out var routedTo))
+                throw new InvalidOperationException($"Document {documentType} {documentNumber} was never submitted for approval.");
+            if (!_users.TryGetValue(actedBy, out var actor)) throw new InvalidOperationException($"Unknown user {actedBy}.");
+            var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+            var isDelegate = _delegations.Any(d =>
+                string.Equals(d.FromUser, routedTo, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(d.ToUser, actedBy, StringComparison.OrdinalIgnoreCase) &&
+                today >= d.Start && today <= d.End);
+            if (!string.Equals(actedBy, routedTo, StringComparison.OrdinalIgnoreCase) && !isDelegate)
+                throw new InvalidOperationException($"{actedBy} is not routed to approve {documentType} {documentNumber} and holds no delegation.");
+            var requester = _requesters.GetValueOrDefault((documentType, documentNumber))
+                ?? _requesters.GetValueOrDefault((documentType, ResolveDocKey(documentType, documentNumber)));
+            if (requester is not null && string.Equals(actedBy, requester, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Requester cannot approve their own request.");
+            var amount = ResolveDocumentAmount(documentType, documentNumber);
+            if (approved && amount > actor.SigningLimit)
+                throw new InvalidOperationException($"{actedBy} cannot approve {amount} above signing limit {actor.SigningLimit}.");
+            if (documentType == "Payment" && approved)
             {
-                if (_approvals.Any(a => a is { DocumentType: "Invoice", Approved: true } && a.DocumentNumber == inv
-                    && string.Equals(a.ActedBy ?? a.RoutedTo, approval.ActedBy ?? actor, StringComparison.OrdinalIgnoreCase)))
+                var pay = _payments.GetValueOrDefault(documentNumber) ?? throw new InvalidOperationException($"Unknown payment {documentNumber}.");
+                foreach (var line in pay.Lines)
                 {
-                    throw new InvalidOperationException("Invoice approver and payment approver must be different people.");
+                    var invKey = InvoiceDoc(line.VendorId, line.SupplierInvoiceNumber);
+                    if (_approvals.Any(a => a.DocumentType == "Invoice" && a.DocumentNumber == invKey && a.Approved &&
+                        string.Equals(a.ActedBy ?? a.RoutedTo, actedBy, StringComparison.OrdinalIgnoreCase)))
+                        throw new InvalidOperationException("Invoice approver and payment approver must be different people.");
                 }
             }
-        }
+            var stored = new ApprovalDto(documentType, documentNumber, routedTo, actedBy, isDelegate, DateTimeOffset.UtcNow, approved, comment, amount, actor.SigningLimit);
+            _approvals.Add(stored);
+            ApplyApprovalOutcome(documentType, documentNumber, approved);
+            return stored;
+        }));
 
-        _approvals.Add(approval with { Timestamp = DateTimeOffset.UtcNow });
-        if (approval.DocumentType == "PR" && approval.Approved && _prs.TryGetValue(approval.DocumentNumber, out var pr))
+    private string ResolveDocKey(string documentType, string documentNumber)
+    {
+        if (documentType == "Invoice")
         {
-            _prs[approval.DocumentNumber] = pr with { Status = DocStatus.Approved };
+            var inv = _invoices.Values.FirstOrDefault(i => InvoiceDoc(i.VendorId, i.SupplierInvoiceNumber) == documentNumber);
+            if (inv is not null && _requesters.TryGetValue(("Invoice", InvoiceDoc(inv.VendorId, inv.SupplierInvoiceNumber)), out _)) return InvoiceDoc(inv.VendorId, inv.SupplierInvoiceNumber);
         }
-
-        return Task.CompletedTask;
+        return documentNumber;
     }
 
-    public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string currency, string source, CancellationToken ct = default)
+    private decimal ResolveDocumentAmount(string documentType, string documentNumber)
     {
-        if (!_prs.TryGetValue(prNumber, out var pr) || pr.Status != DocStatus.Approved)
+        return documentType switch
         {
-            throw new InvalidOperationException($"No valid approved PR {prNumber}: PO refused.");
-        }
-
-        if (_vendors.GetValueOrDefault(vendorId)?.IsBlocked is true)
-        {
-            throw new InvalidOperationException($"Vendor {vendorId} is blocked.");
-        }
-
-        var po = new PurchaseOrder(
-            Next("PO"), prNumber, vendorId, DocStatus.Approved, currency, source,
-            pr.Lines.Select((l, i) => new PurchaseOrderLine(i + 1, l.ItemId, l.Quantity, 0, 0, 0, 0, $"PO-L{i + 1}")).ToList());
-        _pos[po.PoNumber] = po;
-        _requesters[("PO", po.PoNumber)] = pr.Requester;
-        return Task.FromResult(po);
+            "PR" when _prs.TryGetValue(documentNumber, out var pr) => pr.EstimatedAmount,
+            "PO" when _pos.TryGetValue(documentNumber, out var po) => po.Lines.Sum(l => l.LineAmount),
+            "Invoice" => _invoices.Values.FirstOrDefault(i => InvoiceDoc(i.VendorId, i.SupplierInvoiceNumber) == documentNumber) is { } inv
+                ? inv.Lines.Sum(l => l.Quantity * l.UnitPrice) : 0,
+            "Payment" when _payments.TryGetValue(documentNumber, out var pay) => pay.Lines.Sum(l => l.Amount),
+            _ => 0
+        };
     }
 
-    public void SeedPaymentWithInvoices(Payment payment, IEnumerable<string> invoiceNumbers)
+    private void ApplyApprovalOutcome(string documentType, string documentNumber, bool approved)
     {
-        _payments[payment.PaymentNumber] = payment;
-        _paymentInvoices[payment.PaymentNumber] = invoiceNumbers.ToList();
+        switch (documentType)
+        {
+            case "PR" when _prs.TryGetValue(documentNumber, out var pr):
+                _prs[documentNumber] = pr with { Status = approved ? PrStatus.Approved : PrStatus.Rejected };
+                break;
+            case "PO" when _pos.TryGetValue(documentNumber, out var po):
+                _pos[documentNumber] = po with { ApprovalStatus = approved ? PoApprovalStatus.Approved : PoApprovalStatus.Draft };
+                break;
+            case "Invoice":
+                var inv = _invoices.Values.FirstOrDefault(i => InvoiceDoc(i.VendorId, i.SupplierInvoiceNumber) == documentNumber);
+                if (inv is not null) _invoices[(inv.VendorId, inv.SupplierInvoiceNumber)] = inv with { Status = approved ? InvoiceStatus.Approved : InvoiceStatus.Received };
+                break;
+            case "Payment" when _payments.TryGetValue(documentNumber, out var pay):
+                _payments[documentNumber] = pay with { Status = approved ? PaymentStatus.Approved : PaymentStatus.Draft };
+                break;
+        }
     }
 
-    public void SetPoLinePrice(string poNumber, string poLineRef, decimal price)
-    {
-        if (_pos.TryGetValue(poNumber, out var po))
+    public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"po:{idempotencyKey}", () =>
         {
-            _pos[poNumber] = po with
+            if (!_prs.TryGetValue(prNumber, out var pr) || pr.Status != PrStatus.Approved)
+                throw new InvalidOperationException($"No valid approved PR {prNumber}: PO refused.");
+            if (!_vendors.TryGetValue(vendorId, out var vendor)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
+            if (vendor.IsBlocked) throw new InvalidOperationException($"Vendor {vendorId} is blocked: {vendor.BlockReason}.");
+            var lines = pr.Lines.Select((l, i) =>
             {
-                Lines = po.Lines.Select(l => l.PoLineRef == poLineRef ? l with { UnitPrice = price } : l).ToList()
-            };
-        }
-    }
+                if (!_prices.TryGetValue((vendorId, l.ItemId), out var price))
+                    throw new InvalidOperationException($"No price for vendor {vendorId} item {l.ItemId}: PO refused.");
+                return new PurchaseOrderLine($"PO-L{i + 1}", i + 1, l.ItemId, l.Quantity, 0, 0, 0, 0, price, l.Quantity * price);
+            }).ToList();
+            var total = lines.Sum(l => l.LineAmount);
+            var approval = total < _autoApproveThreshold ? PoApprovalStatus.Approved : PoApprovalStatus.Draft;
+            var po = new PurchaseOrder(Next("PO"), prNumber, vendorId, vendor.PaymentTermsId, approval,
+                PoDocStatus.Open, pr.Currency, source, createdBy, idempotencyKey, lines);
+            foreach (var l in lines) _lastPrice[l.ItemId] = l.UnitPrice;
+            _pos[po.PoNumber] = po;
+            _requesters[("PO", po.PoNumber)] = pr.Requester;
+            _prs[prNumber] = pr with { Status = PrStatus.Closed };
+            return po;
+        }));
 
-    public Task UpdateSalesOrderStatusAsync(string soNumber, DocStatus status, CancellationToken ct = default)
-    {
-        if (_salesOrders.TryGetValue(soNumber, out var so))
+    public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"confirm:{idempotencyKey}", () =>
         {
+            if (!_pos.TryGetValue(poNumber, out var po)) throw new InvalidOperationException($"Unknown PO {poNumber}.");
+            if (po.ApprovalStatus != PoApprovalStatus.Approved) throw new InvalidOperationException($"PO {poNumber} must be approved before confirmation.");
+            foreach (var l in lines)
+            {
+                var poLine = po.Lines.FirstOrDefault(x => x.PoLineRef == l.PoLineRef)
+                    ?? throw new InvalidOperationException($"Unknown PO line {l.PoLineRef}.");
+                if (l.ConfirmedQty > poLine.QtyOrdered) throw new InvalidOperationException($"Confirmed {l.ConfirmedQty} exceeds ordered {poLine.QtyOrdered}.");
+            }
+            var conf = new VendorConfirmation(poNumber, confirmDate, source, createdBy, idempotencyKey, lines.ToList());
+            _confirmations[poNumber] = conf;
+            _pos[poNumber] = po with { ApprovalStatus = PoApprovalStatus.Confirmed };
+            return conf;
+        }));
+
+    public Task<AsnDto> CreateAsnAsync(string asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"asn:{idempotencyKey}", () =>
+        {
+            if (!_pos.ContainsKey(poNumber)) throw new InvalidOperationException($"Unknown PO {poNumber}.");
+            if (cartons.Count == 0) throw new InvalidOperationException("ASN needs at least one carton.");
+            foreach (var c in cartons)
+                if (!_cartonIds.Add(c.CartonId)) throw new InvalidOperationException($"Duplicate carton {c.CartonId}.");
+            var asn = new AsnDto(asnNumber, poNumber, source, createdBy, idempotencyKey, cartons.ToList());
+            _asns[asnNumber] = asn;
+            return asn;
+        }));
+
+    public Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"sostatus:{idempotencyKey}", () =>
+        {
+            if (!_salesOrders.TryGetValue(soNumber, out var so)) throw new InvalidOperationException($"Unknown sales order {soNumber}.");
+            ThrowIfTerminal(soNumber, so.Status is SalesOrderStatus.Closed or SalesOrderStatus.Cancelled);
             _salesOrders[soNumber] = so with { Status = status };
-        }
-
+            return null;
+        });
         return Task.CompletedTask;
     }
 
-    public Task BlockVendorAsync(string vendorId, string reason, CancellationToken ct = default)
+    public Task BlockVendorAsync(string vendorId, string reason, string blockedBy, string idempotencyKey, CancellationToken ct = default)
     {
-        if (_vendors.TryGetValue(vendorId, out var v))
+        Idem<object?>($"block:{idempotencyKey}", () =>
         {
+            if (!_vendors.TryGetValue(vendorId, out var v)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
             _vendors[vendorId] = v with { IsBlocked = true, BlockReason = reason };
-        }
-
+            return null;
+        });
         return Task.CompletedTask;
     }
 
-    public Task AddPoNoteAsync(string poNumber, string note, CancellationToken ct = default)
+    public Task UnblockVendorAsync(string vendorId, string unblockedBy, string idempotencyKey, CancellationToken ct = default)
     {
-        _poNotes.Add($"{poNumber}: {note}");
+        Idem<object?>($"unblock:{idempotencyKey}", () =>
+        {
+            if (!_vendors.TryGetValue(vendorId, out var v)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
+            _vendors[vendorId] = v with { IsBlocked = false, BlockReason = null };
+            return null;
+        });
         return Task.CompletedTask;
     }
 
-    public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string source, IReadOnlyList<ReceiptLine> lines, CancellationToken ct = default)
+    public Task AddPoNoteAsync(string poNumber, string note, string createdBy, string idempotencyKey, CancellationToken ct = default)
     {
-        if (!_pos.TryGetValue(poNumber, out var po) || po.Status is DocStatus.Draft or DocStatus.Cancelled)
+        Idem<object?>($"note:{idempotencyKey}", () =>
         {
-            throw new InvalidOperationException($"PO {poNumber} is not approved for receipt.");
-        }
-
-        var receipt = new ShipmentReceipt(Next("RCT"), poNumber, DocStatus.Posted, source, lines.ToList());
-        _receipts[receipt.ReceiptNumber] = receipt;
-        var updated = po.Lines.Select(l =>
-        {
-            var got = lines.Where(r => r.PoLineRef == l.PoLineRef).Sum(r => r.QtyReceived);
-            var quar = lines.Where(r => r.PoLineRef == l.PoLineRef).Sum(r => r.QtyQuarantined);
-            return l with { QtyReceived = l.QtyReceived + got, QtyQuarantined = l.QtyQuarantined + quar };
-        }).ToList();
-        _pos[poNumber] = po with { Lines = updated };
-        return Task.FromResult(receipt);
-    }
-
-    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, CancellationToken ct = default)
-    {
-        var hold = new HoldDto(Next("HLD"), reasonCode, note, ruleId, caseId, setBy, DateTimeOffset.UtcNow);
-        _holds[hold.HoldId] = hold;
-        return Task.FromResult(hold);
-    }
-
-    public Task ReleaseHoldAsync(string holdId, string releasedBy, CancellationToken ct = default)
-    {
-        _holds.Remove(holdId);
+            var list = _poNotes.GetValueOrDefault(poNumber);
+            if (list is null) { list = new List<string>(); _poNotes[poNumber] = list; }
+            list.Add($"{createdBy}: {note}");
+            return null;
+        });
         return Task.CompletedTask;
     }
 
-    public Task<VendorInvoice> CreateInvoiceAsync(VendorInvoice invoice, CancellationToken ct = default)
+    public Task ClosePoAsync(string poNumber, string closedBy, string idempotencyKey, CancellationToken ct = default)
     {
-        if (_invoices.ContainsKey(invoice.InvoiceNumber))
+        Idem<object?>($"closepo:{idempotencyKey}", () =>
         {
-            throw new InvalidOperationException($"Duplicate invoice {invoice.InvoiceNumber}.");
-        }
-
-        _invoices[invoice.InvoiceNumber] = invoice;
-        return Task.FromResult(invoice);
-    }
-
-    public Task RecordMatchResultAsync(string invoiceNumber, IReadOnlyList<LineMatchResult> results, CancellationToken ct = default)
-    {
-        if (_invoices.TryGetValue(invoiceNumber, out var inv))
-        {
-            _invoices[invoiceNumber] = inv with { MatchResults = results.ToList() };
-        }
-
+            if (!_pos.TryGetValue(poNumber, out var po)) throw new InvalidOperationException($"Unknown PO {poNumber}.");
+            ThrowIfTerminal(poNumber, po.DocStatus is PoDocStatus.Closed or PoDocStatus.Cancelled);
+            _pos[poNumber] = po with { DocStatus = PoDocStatus.Closed };
+            return null;
+        });
         return Task.CompletedTask;
     }
 
-    public Task<Payment> CreatePaymentAsync(string currency, string source, IReadOnlyList<PaymentLine> lines, CancellationToken ct = default)
-    {
-        foreach (var line in lines)
+    public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"receipt:{idempotencyKey}", () =>
         {
-            if (!_invoices.TryGetValue(line.InvoiceNumber, out var inv))
+            if (!_pos.TryGetValue(poNumber, out var po)) throw new InvalidOperationException($"Unknown PO {poNumber}.");
+            if (po.ApprovalStatus != PoApprovalStatus.Confirmed) throw new InvalidOperationException($"PO {poNumber} is not confirmed for receipt.");
+            ThrowIfTerminal(poNumber, po.DocStatus is PoDocStatus.Closed or PoDocStatus.Cancelled);
+            if (string.IsNullOrWhiteSpace(supplierPackingSlipNumber)) throw new InvalidOperationException("Supplier packing-slip number is required.");
+            foreach (var l in lines)
             {
-                throw new InvalidOperationException($"Unknown invoice {line.InvoiceNumber}.");
+                if (!po.Lines.Any(x => x.PoLineRef == l.PoLineRef)) throw new InvalidOperationException($"Unknown PO line {l.PoLineRef}.");
+                if (l.QtyReceived < 0 || l.QtyQuarantined < 0 || l.QtyRejected < 0) throw new InvalidOperationException("Receipt quantities cannot be negative.");
+                if (l.QtyQuarantined + l.QtyRejected > l.QtyReceived) throw new InvalidOperationException($"Quarantined plus rejected exceeds received on {l.PoLineRef}.");
+                if (string.IsNullOrWhiteSpace(l.LotRef)) throw new InvalidOperationException("Lot reference is required.");
             }
-
-            ThrowIfPosted(inv.Status, line.InvoiceNumber);
-            var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
-            var paid = _paidAmounts.GetValueOrDefault(line.InvoiceNumber);
-            if (paid + line.Amount > accepted)
+            var receipt = new ShipmentReceipt(Next("RCT"), poNumber, supplierPackingSlipNumber, ReceiptStatus.Posted, source, createdBy, idempotencyKey, lines.ToList());
+            _receipts[receipt.ReceiptNumber] = receipt;
+            foreach (var l in lines)
             {
-                throw new InvalidOperationException($"Invoice {line.InvoiceNumber} only has {accepted - paid} accepted value left: payment refused.");
+                var poLine = po.Lines.First(x => x.PoLineRef == l.PoLineRef);
+                _lotMap[l.LotRef] = (poNumber, l.PoLineRef, poLine.ItemId);
+                AddInventory(poLine.ItemId, receipt.ReceiptNumber, l.LotRef, InventoryStatus.Available, l.QtyReceived - l.QtyQuarantined - l.QtyRejected);
+                if (l.QtyQuarantined > 0) AddInventory(poLine.ItemId, receipt.ReceiptNumber, l.LotRef, InventoryStatus.Quarantined, l.QtyQuarantined);
+                if (l.QtyRejected > 0) AddInventory(poLine.ItemId, receipt.ReceiptNumber, l.LotRef, InventoryStatus.Rejected, l.QtyRejected);
             }
+            var updated = po.Lines.Select(l =>
+            {
+                var got = lines.Where(r => r.PoLineRef == l.PoLineRef).Sum(r => r.QtyReceived);
+                var quar = lines.Where(r => r.PoLineRef == l.PoLineRef).Sum(r => r.QtyQuarantined);
+                var rej = lines.Where(r => r.PoLineRef == l.PoLineRef).Sum(r => r.QtyRejected);
+                return l with { QtyReceived = l.QtyReceived + got, QtyQuarantined = l.QtyQuarantined + quar, QtyRejected = l.QtyRejected + rej };
+            }).ToList();
+            _pos[poNumber] = po with { Lines = updated, DocStatus = DerivePoDoc(po with { Lines = updated }) };
+            return receipt;
+        }));
 
-            _paidAmounts[line.InvoiceNumber] = paid + line.Amount;
-        }
-
-        var payment = new Payment(Next("PAY"), DocStatus.Posted, currency, source, lines.ToList());
-        _payments[payment.PaymentNumber] = payment;
-        _paymentInvoices[payment.PaymentNumber] = lines.Select(l => l.InvoiceNumber).ToList();
-        return Task.FromResult(payment);
+    private void AddInventory(string itemId, string receiptNumber, string lotRef, InventoryStatus status, decimal qty)
+    {
+        if (qty <= 0) return;
+        var list = _inventory.GetValueOrDefault(itemId);
+        if (list is null) { list = new List<InventoryTransaction>(); _inventory[itemId] = list; }
+        list.Add(new InventoryTransaction(itemId, receiptNumber, lotRef, status, qty));
     }
+
+    private static PoDocStatus DerivePoDoc(PurchaseOrder po)
+    {
+        if (po.DocStatus is PoDocStatus.Closed or PoDocStatus.Cancelled) return po.DocStatus;
+        var ordered = po.Lines.Sum(l => l.QtyOrdered);
+        var received = po.Lines.Sum(l => l.QtyReceived);
+        var invoiced = po.Lines.Sum(l => l.QtyInvoiced);
+        if (ordered <= 0) return PoDocStatus.Open;
+        var fullyReceived = received >= ordered;
+        var fullyInvoiced = invoiced >= ordered;
+        if (fullyReceived && fullyInvoiced) return PoDocStatus.Closed;
+        if (fullyReceived) return fullyInvoiced ? PoDocStatus.Invoiced : PoDocStatus.Received;
+        if (fullyInvoiced) return PoDocStatus.Invoiced;
+        if (received > 0 && invoiced > 0) return PoDocStatus.PartiallyInvoiced;
+        if (received > 0) return PoDocStatus.PartiallyReceived;
+        if (invoiced > 0) return PoDocStatus.PartiallyInvoiced;
+        return PoDocStatus.Open;
+    }
+
+    public Task QuarantineLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"quar:{idempotencyKey}", () =>
+        {
+            if (!_holds.ContainsKey(holdId)) throw new InvalidOperationException($"Unknown hold {holdId}.");
+            if (!_lotMap.TryGetValue(lotRef, out var map)) throw new InvalidOperationException($"Unknown lot {lotRef}.");
+            var list = _inventory.GetValueOrDefault(map.ItemId, []);
+            var available = list.Where(t => t.LotRef == lotRef && t.Status == InventoryStatus.Available).Sum(t => t.Quantity);
+            if (available <= 0) throw new InvalidOperationException($"Lot {lotRef} has nothing available to quarantine.");
+            list.RemoveAll(t => t.LotRef == lotRef && t.Status == InventoryStatus.Available);
+            list.Add(new InventoryTransaction(map.ItemId, "QUAR", lotRef, InventoryStatus.Quarantined, available));
+            if (_pos.TryGetValue(map.PoNumber, out var po))
+            {
+                _pos[map.PoNumber] = po with { Lines = po.Lines.Select(l => l.PoLineRef == map.PoLineRef ? l with { QtyQuarantined = l.QtyQuarantined + available } : l).ToList() };
+            }
+            return null;
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task ReleaseLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"releaselot:{idempotencyKey}", () =>
+        {
+            if (!_lotMap.TryGetValue(lotRef, out var map)) throw new InvalidOperationException($"Unknown lot {lotRef}.");
+            var list = _inventory.GetValueOrDefault(map.ItemId, []);
+            var quar = list.Where(t => t.LotRef == lotRef && t.Status == InventoryStatus.Quarantined).Sum(t => t.Quantity);
+            if (quar <= 0) throw new InvalidOperationException($"Lot {lotRef} has nothing quarantined to release.");
+            list.RemoveAll(t => t.LotRef == lotRef && t.Status == InventoryStatus.Quarantined);
+            list.Add(new InventoryTransaction(map.ItemId, "QUAR", lotRef, InventoryStatus.Available, quar));
+            if (_pos.TryGetValue(map.PoNumber, out var po))
+            {
+                _pos[map.PoNumber] = po with { Lines = po.Lines.Select(l => l.PoLineRef == map.PoLineRef ? l with { QtyQuarantined = Math.Max(0, l.QtyQuarantined - quar) } : l).ToList() };
+            }
+            return null;
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task ConsumeLotAsync(string lotRef, string soNumber, decimal quantity, string actedBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"consume:{idempotencyKey}", () =>
+        {
+            if (!_lotMap.TryGetValue(lotRef, out var map)) throw new InvalidOperationException($"Unknown lot {lotRef}.");
+            if (!_salesOrders.ContainsKey(soNumber)) throw new InvalidOperationException($"Unknown sales order {soNumber}.");
+            var list = _inventory.GetValueOrDefault(map.ItemId, []);
+            var available = list.Where(t => t.LotRef == lotRef && t.Status == InventoryStatus.Available).Sum(t => t.Quantity);
+            if (quantity <= 0 || quantity > available) throw new InvalidOperationException($"Cannot consume {quantity} from lot {lotRef} (available {available}).");
+            list.RemoveAll(t => t.LotRef == lotRef && t.Status == InventoryStatus.Available);
+            if (available - quantity > 0) list.Add(new InventoryTransaction(map.ItemId, "QUAR", lotRef, InventoryStatus.Available, available - quantity));
+            list.Add(new InventoryTransaction(map.ItemId, soNumber, lotRef, InventoryStatus.Consumed, quantity));
+            return null;
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"hold:{idempotencyKey}", () =>
+        {
+            var hold = new HoldDto(Next("HLD"), reasonCode, note, ruleId, caseId, setBy, DateTimeOffset.UtcNow,
+                HoldStatus.Set, documentType, documentNumber, poLineRef, lotRef, cartonId);
+            _holds[hold.HoldId] = hold;
+            return hold;
+        }));
+
+    public Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"releasehold:{idempotencyKey}", () =>
+        {
+            if (!_holds.TryGetValue(holdId, out var hold)) throw new InvalidOperationException($"Unknown hold {holdId}.");
+            if (hold.Status == HoldStatus.Released) throw new InvalidOperationException($"Hold {holdId} is already released.");
+            _holds[holdId] = hold with { Status = HoldStatus.Released };
+            _holdHistory.Add(new HoldRelease(holdId, releasedBy, DateTimeOffset.UtcNow, approvalRef));
+            return null;
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"invoice:{idempotencyKey}", () =>
+        {
+            if (string.IsNullOrWhiteSpace(vendorId) || string.IsNullOrWhiteSpace(poNumber))
+                throw new InvalidOperationException("Vendor or PO number missing; goods receipt required before pay.");
+            if (!_vendors.ContainsKey(vendorId)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
+            if (!_pos.TryGetValue(poNumber!, out var po)) throw new InvalidOperationException($"Unknown PO {poNumber}.");
+            if (_invoices.ContainsKey((vendorId, supplierInvoiceNumber)))
+                throw new InvalidOperationException($"Duplicate invoice {supplierInvoiceNumber} for vendor {vendorId}.");
+            if (lines.Count == 0) throw new InvalidOperationException("Invoice needs at least one line.");
+            var stored = lines.Select(l => new VendorInvoiceLine(l.PoLineRef, l.Quantity, l.UnitPrice, LineDisposition.Held, "Awaiting match.")).ToList();
+            var inv = new VendorInvoice(supplierInvoiceNumber, vendorId, poNumber, InvoiceStatus.Received, null,
+                po.Currency, source, createdBy, idempotencyKey, stored, []);
+            _invoices[(vendorId, supplierInvoiceNumber)] = inv;
+            _requesters[("Invoice", InvoiceDoc(vendorId, supplierInvoiceNumber))] = createdBy;
+            return inv;
+        }));
+
+    public Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"match:{idempotencyKey}", () =>
+        {
+            if (!_invoices.TryGetValue((vendorId, supplierInvoiceNumber), out var inv))
+                throw new InvalidOperationException($"Unknown invoice {supplierInvoiceNumber}.");
+            if (!_pos.TryGetValue(inv.PoNumber!, out var po)) throw new InvalidOperationException($"Unknown PO {inv.PoNumber}.");
+            var split = new List<VendorInvoiceLine>();
+            foreach (var line in inv.Lines)
+            {
+                var result = results.FirstOrDefault(r => r.PoLineRef == line.PoLineRef);
+                var poLine = po.Lines.FirstOrDefault(l => l.PoLineRef == line.PoLineRef);
+                if (poLine is null || result is null || !result.Matched)
+                {
+                    var why = result?.Message ?? "AP-C3: no PO line match.";
+                    split.Add(line with { Disposition = LineDisposition.Held, HoldReason = why });
+                    continue;
+                }
+                if (line.UnitPrice < 0) throw new InvalidOperationException("Invoice price cannot be negative.");
+                var poPrice = poLine.UnitPrice;
+                var priceOk = poPrice == 0 || Math.Abs(line.UnitPrice - poPrice) / poPrice <= PriceTolerance;
+                if (!priceOk)
+                {
+                    split.Add(line with { Disposition = LineDisposition.Held, HoldReason = $"AP-C2: price {line.UnitPrice} vs PO {poPrice}." });
+                    continue;
+                }
+                var acceptedSoFar = PoAcceptedInvoiced(po.PoNumber, poLine.PoLineRef);
+                var available = Math.Max(0, poLine.QtyReceived - poLine.QtyQuarantined - poLine.QtyRejected - acceptedSoFar);
+                var acceptedQty = Math.Min(line.Quantity, available);
+                var heldQty = line.Quantity - acceptedQty;
+                if (acceptedQty > 0) split.Add(new VendorInvoiceLine(line.PoLineRef, acceptedQty, line.UnitPrice, LineDisposition.Accepted, null));
+                if (heldQty > 0)
+                {
+                    var why = acceptedQty <= 0 && available <= 0
+                        ? $"AP-C3: qty {line.Quantity} exceeds available received {available}."
+                        : $"Quarantine hold: {heldQty} of {line.Quantity} held.";
+                    split.Add(new VendorInvoiceLine(line.PoLineRef, heldQty, line.UnitPrice, LineDisposition.Held, why));
+                }
+            }
+            _invoices[(vendorId, supplierInvoiceNumber)] = inv with { Lines = split, MatchResults = results.ToList(), Status = InvoiceStatus.Matched };
+            return null;
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"postinv:{idempotencyKey}", () =>
+        {
+            if (!_invoices.TryGetValue((vendorId, supplierInvoiceNumber), out var inv))
+                throw new InvalidOperationException($"Unknown invoice {supplierInvoiceNumber}.");
+            if (inv.Status is InvoiceStatus.Posted or InvoiceStatus.Paid or InvoiceStatus.Closed)
+                throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} is already posted and immutable.");
+            var docKey = InvoiceDoc(vendorId, supplierInvoiceNumber);
+            if (!_approvals.Any(a => a.DocumentType == "Invoice" && a.DocumentNumber == docKey && a.Approved))
+                throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} must be approved before posting.");
+            var posted = inv with { Status = InvoiceStatus.Posted, Voucher = Next("V") };
+            _invoices[(vendorId, supplierInvoiceNumber)] = posted;
+            _invoicePostedAt[docKey] = DateTimeOffset.UtcNow;
+            if (posted.PoNumber is not null && _pos.TryGetValue(posted.PoNumber, out var po))
+            {
+                var updated = po.Lines.Select(l =>
+                {
+                    var billed = posted.Lines.Where(x => x.PoLineRef == l.PoLineRef).Sum(x => x.Quantity);
+                    return l with { QtyInvoiced = l.QtyInvoiced + billed };
+                }).ToList();
+                _pos[posted.PoNumber] = po with { Lines = updated, DocStatus = DerivePoDoc(po with { Lines = updated }) };
+            }
+            return posted;
+        }));
+
+    public Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        Idem<object?>($"releaseline:{idempotencyKey}", () =>
+        {
+            if (!_invoices.TryGetValue((vendorId, supplierInvoiceNumber), out var inv))
+                throw new InvalidOperationException($"Unknown invoice {supplierInvoiceNumber}.");
+            if (inv.Status is InvoiceStatus.Paid or InvoiceStatus.Closed) throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} is terminal.");
+            var held = inv.Lines.Where(l => l.PoLineRef == poLineRef && l.Disposition == LineDisposition.Held).Sum(l => l.Quantity);
+            if (quantity <= 0 || quantity > held) throw new InvalidOperationException($"Cannot release {quantity} (held {held}).");
+            var lines = new List<VendorInvoiceLine>();
+            var remaining = quantity;
+            foreach (var l in inv.Lines)
+            {
+                if (l.PoLineRef != poLineRef || l.Disposition != LineDisposition.Held || remaining <= 0) { lines.Add(l); continue; }
+                var take = Math.Min(l.Quantity, remaining);
+                remaining -= take;
+                if (l.Quantity - take > 0) lines.Add(l with { Quantity = l.Quantity - take });
+                lines.Add(new VendorInvoiceLine(l.PoLineRef, take, l.UnitPrice, LineDisposition.Accepted, null));
+            }
+            _invoices[(vendorId, supplierInvoiceNumber)] = inv with { Lines = lines };
+            _heldReleases.Add(new HeldRelease(vendorId, supplierInvoiceNumber, poLineRef, quantity, releasedBy, DateTimeOffset.UtcNow));
+            return null;
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"paydraft:{idempotencyKey}", () =>
+        {
+            if (invoices.Count == 0) throw new InvalidOperationException("Payment needs at least one invoice.");
+            var vendor = invoices[0].VendorId;
+            if (invoices.Any(k => k.VendorId != vendor)) throw new InvalidOperationException("One payment pays one vendor.");
+            if (!_banks.TryGetValue(vendor, out var bank)) throw new InvalidOperationException($"No bank details for vendor {vendor}.");
+            if (!bank.Verified) throw new InvalidOperationException("Bank details changed after verification: payment refused.");
+            var currency = string.Empty;
+            var lines = new List<PaymentLine>();
+            var due = DateOnly.MinValue;
+            foreach (var key in invoices)
+            {
+                if (!_invoices.TryGetValue((key.VendorId, key.SupplierInvoiceNumber), out var inv))
+                    throw new InvalidOperationException($"Unknown invoice {key.SupplierInvoiceNumber}.");
+                if (inv.Status is not InvoiceStatus.Posted and not InvoiceStatus.PartiallyPaid)
+                    throw new InvalidOperationException($"Invoice {key.SupplierInvoiceNumber} must be posted before pay.");
+                if (string.IsNullOrEmpty(currency)) currency = inv.Currency;
+                else if (currency != inv.Currency) throw new InvalidOperationException("Payment lines must share one currency.");
+                if (!_terms.TryGetValue(_vendors[inv.VendorId].PaymentTermsId, out var terms))
+                    throw new InvalidOperationException($"No payment terms for vendor {inv.VendorId}.");
+                var postedAt = _invoicePostedAt.GetValueOrDefault(InvoiceDoc(inv.VendorId, inv.SupplierInvoiceNumber), DateTimeOffset.UtcNow);
+                var dueDate = DateOnly.FromDateTime(postedAt.DateTime).AddDays(terms.NetDays);
+                if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
+                if (DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime) < dueDate) continue;
+                var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
+                var paid = _paidAmounts.GetValueOrDefault(PaidKey(inv.VendorId, inv.SupplierInvoiceNumber));
+                var remaining = accepted - paid;
+                if (remaining > 0) lines.Add(new PaymentLine(inv.VendorId, inv.SupplierInvoiceNumber, remaining));
+            }
+            if (lines.Count == 0) throw new InvalidOperationException("Nothing due: held value excluded, remainder stays open.");
+            var draftId = Next("PAYDRAFT");
+            var draft = new Payment(draftId, PaymentStatus.Draft, currency,
+                new VendorBankSnapshot(bank.AccountRef, bank.Verified), due, source, createdBy, idempotencyKey, lines);
+            _payments[draftId] = draft;
+            _requesters[("Payment", draftId)] = createdBy;
+            return draft;
+        }));
+
+    public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"paypost:{idempotencyKey}", () =>
+        {
+            if (!_payments.TryGetValue(draftPaymentNumber, out var draft)) throw new InvalidOperationException($"Unknown payment draft {draftPaymentNumber}.");
+            if (draft.Status != PaymentStatus.Approved) throw new InvalidOperationException($"Payment {draftPaymentNumber} must be approved before posting.");
+            if (!_banks.TryGetValue(draft.Lines[0].VendorId, out var bank) || !bank.Verified)
+                throw new InvalidOperationException("Bank details changed after verification: payment refused.");
+            if (bank.AccountRef != draft.PayeeBank.AccountRef)
+                throw new InvalidOperationException("Bank details changed after verification: payment refused.");
+            var posted = draft with
+            {
+                PaymentNumber = Next("PAY"),
+                Status = PaymentStatus.Posted,
+                PayeeBank = new VendorBankSnapshot(bank.AccountRef, bank.Verified),
+                IdempotencyKey = idempotencyKey
+            };
+            foreach (var line in posted.Lines)
+            {
+                var key = PaidKey(line.VendorId, line.SupplierInvoiceNumber);
+                _paidAmounts[key] = _paidAmounts.GetValueOrDefault(key) + line.Amount;
+                var inv = _invoices[(line.VendorId, line.SupplierInvoiceNumber)];
+                var totalInvoiced = inv.Lines.Sum(l => l.Quantity * l.UnitPrice);
+                var settled = _paidAmounts[key];
+                var remaining = totalInvoiced - settled;
+                _settlements.Add(new Settlement(line.VendorId, line.SupplierInvoiceNumber, posted.PaymentNumber, line.Amount, Math.Max(0, remaining)));
+                var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
+                var held = inv.Lines.Where(l => l.Disposition == LineDisposition.Held).Sum(l => l.Quantity * l.UnitPrice);
+                _invoices[(line.VendorId, line.SupplierInvoiceNumber)] = inv with
+                {
+                    Status = settled >= accepted && held <= 0 ? InvoiceStatus.Paid : InvoiceStatus.PartiallyPaid
+                };
+            }
+            _payments[posted.PaymentNumber] = posted;
+            _payments.Remove(draftPaymentNumber);
+            return posted;
+        }));
+
+    public Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"bankchange:{idempotencyKey}", () =>
+        {
+            if (!_vendors.ContainsKey(vendorId)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
+            var bank = new VendorBankDto(vendorId, newAccountRef, false, null);
+            _banks[vendorId] = bank;
+            return bank;
+        }));
+
+    public Task<VendorBankDto> VerifyVendorBankAsync(string vendorId, string verifiedBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"bankverify:{idempotencyKey}", () =>
+        {
+            if (!_banks.TryGetValue(vendorId, out var bank)) throw new InvalidOperationException($"No bank details for vendor {vendorId}.");
+            var verified = bank with { Verified = true, VerifiedAt = DateTimeOffset.UtcNow };
+            _banks[vendorId] = verified;
+            return verified;
+        }));
 }

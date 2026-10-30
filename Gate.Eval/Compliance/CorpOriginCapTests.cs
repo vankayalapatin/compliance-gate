@@ -12,7 +12,7 @@ public sealed class CorpOriginCapTests
     private readonly ComplianceEngine _engine = new();
 
     private static VendorDto Vendor(string id, string country) =>
-        new(id, $"{id} Ltd", country, false, null);
+        new(id, $"{id} Ltd", country, false, null, "NET0");
 
     private static IReadOnlyList<VendorDocumentDto> Docs(string vendorId) =>
     [

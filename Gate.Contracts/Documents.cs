@@ -1,5 +1,7 @@
 // Canonical plain-DTO P2P model. D365/NetSuite map to these same shapes.
 // Money is decimal with a currency code on the header. No floats.
+// Write methods take only what the caller actually knows; ERP reads limits,
+// amounts, due dates, statuses, vouchers, and bank snapshots itself.
 namespace Gate.Contracts;
 
 /// <summary>Identifies records created by the p2p agent (native audit column, not a foreign key).</summary>
@@ -8,16 +10,78 @@ public static class RecordSource
     public const string P2pAgent = "p2p-agent";
     public const string Human = "human";
     public const string Erp = "erp";
+    public const string Vendor = "vendor";
 }
 
-public enum DocStatus
+public enum SalesOrderStatus
+{
+    Created,
+    Confirmed,
+    PartiallyDelivered,
+    Delivered,
+    Invoiced,
+    Closed,
+    Cancelled
+}
+
+public enum PrStatus
 {
     Draft,
     Submitted,
     Approved,
-    Posted,
+    Rejected,
     Closed,
     Cancelled
+}
+
+public enum PoApprovalStatus
+{
+    Draft,
+    InReview,
+    Approved,
+    Confirmed,
+    Cancelled
+}
+
+public enum PoDocStatus
+{
+    Open,
+    PartiallyReceived,
+    Received,
+    PartiallyInvoiced,
+    Invoiced,
+    Closed,
+    Cancelled
+}
+
+public enum ReceiptStatus
+{
+    Posted
+}
+
+public enum InvoiceStatus
+{
+    Received,
+    Matched,
+    Approved,
+    Posted,
+    PartiallyPaid,
+    Paid,
+    Closed
+}
+
+public enum PaymentStatus
+{
+    Draft,
+    Submitted,
+    Approved,
+    Posted
+}
+
+public enum HoldStatus
+{
+    Set,
+    Released
 }
 
 public enum LineDisposition
@@ -34,12 +98,42 @@ public enum InventoryStatus
     Consumed
 }
 
+public sealed record ItemDto(
+    string ItemId,
+    string Description,
+    bool IsCritical,
+    int UnitsPerCarton,
+    string Unit);
+
+public sealed record PaymentTermsDto(
+    string TermsId,
+    int NetDays);
+
+public sealed record VendorBankDto(
+    string VendorId,
+    string AccountRef,
+    bool Verified,
+    DateTimeOffset? VerifiedAt);
+
+public sealed record UserDto(
+    string UserId,
+    string Role,
+    decimal SigningLimit,
+    string LimitCurrency);
+
+public sealed record DelegationDto(
+    string FromUser,
+    string ToUser,
+    DateOnly Start,
+    DateOnly End);
+
 public sealed record VendorDto(
     string VendorId,
     string Name,
     string CountryOfOrigin,
     bool IsBlocked,
-    string? BlockReason);
+    string? BlockReason,
+    string PaymentTermsId);
 
 public sealed record VendorDocumentDto(
     string VendorId,
@@ -55,7 +149,8 @@ public sealed record ProposedAward(
     string Country);
 
 /// <summary>One row of trailing-12-month posted received volume in cells.
-/// Raw history only; shares are always computed from these rows, never stored.</summary>
+/// Raw history only; shares are always computed from these rows, never stored.
+/// The read unions seeded openings plus one row per posted receipt line.</summary>
 public sealed record VolumeHistory(
     string Source,
     string Country,
@@ -68,42 +163,89 @@ public sealed record PurchaseRequisitionLine(
 
 public sealed record PurchaseRequisition(
     string PrNumber,
-    DocStatus Status,
+    PrStatus Status,
     string Requester,
+    string Currency,
+    decimal EstimatedAmount,
     string Source,
+    string CreatedBy,
+    string IdempotencyKey,
     IReadOnlyList<PurchaseRequisitionLine> Lines);
 
 public sealed record PurchaseOrderLine(
+    string PoLineRef,
     int LineNumber,
     string ItemId,
     decimal QtyOrdered,
     decimal QtyReceived,
     decimal QtyInvoiced,
     decimal QtyQuarantined,
+    decimal QtyRejected,
     decimal UnitPrice,
-    string PoLineRef);
+    decimal LineAmount);
 
 public sealed record PurchaseOrder(
     string PoNumber,
     string PrNumber,
     string VendorId,
-    DocStatus Status,
+    string PaymentTermsId,
+    PoApprovalStatus ApprovalStatus,
+    PoDocStatus DocStatus,
     string Currency,
     string Source,
+    string CreatedBy,
+    string IdempotencyKey,
     IReadOnlyList<PurchaseOrderLine> Lines);
+
+public sealed record VendorConfirmLine(
+    string PoLineRef,
+    decimal ConfirmedQty,
+    string? BackorderNote);
+
+public sealed record VendorConfirmation(
+    string PoNumber,
+    DateOnly ConfirmDate,
+    string Source,
+    string CreatedBy,
+    string IdempotencyKey,
+    IReadOnlyList<VendorConfirmLine> Lines);
+
+public sealed record AsnCarton(
+    string CartonId,
+    string ItemId,
+    int UnitsPerCarton,
+    string LotRef);
+
+public sealed record AsnDto(
+    string AsnNumber,
+    string PoNumber,
+    string Source,
+    string CreatedBy,
+    string IdempotencyKey,
+    IReadOnlyList<AsnCarton> Cartons);
 
 public sealed record ReceiptLine(
     string PoLineRef,
     decimal QtyReceived,
     decimal QtyQuarantined,
-    string Condition);
+    decimal QtyRejected,
+    string LotRef,
+    string? ConditionNote);
 
 public sealed record ShipmentReceipt(
     string ReceiptNumber,
     string PoNumber,
-    DocStatus Status,
+    string SupplierPackingSlipNumber,
+    ReceiptStatus Status,
     string Source,
+    string CreatedBy,
+    string IdempotencyKey,
     IReadOnlyList<ReceiptLine> Lines);
+
+public sealed record InvoiceLineInput(
+    string? PoLineRef,
+    decimal Quantity,
+    decimal UnitPrice);
 
 public sealed record VendorInvoiceLine(
     string? PoLineRef,
@@ -117,29 +259,61 @@ public sealed record LineMatchResult(
     bool Matched,
     string Message);
 
+public sealed record InvoiceKey(
+    string VendorId,
+    string SupplierInvoiceNumber);
+
 public sealed record VendorInvoice(
-    string InvoiceNumber,
+    string SupplierInvoiceNumber,
     string VendorId,
     string? PoNumber,
-    DocStatus Status,
+    InvoiceStatus Status,
+    string? Voucher,
     string Currency,
     string Source,
+    string CreatedBy,
+    string IdempotencyKey,
     IReadOnlyList<VendorInvoiceLine> Lines,
     IReadOnlyList<LineMatchResult> MatchResults);
 
 public sealed record PaymentLine(
-    string InvoiceNumber,
+    string VendorId,
+    string SupplierInvoiceNumber,
     decimal Amount);
+
+public sealed record VendorBankSnapshot(
+    string AccountRef,
+    bool Verified);
 
 public sealed record Payment(
     string PaymentNumber,
-    DocStatus Status,
+    PaymentStatus Status,
     string Currency,
+    VendorBankSnapshot PayeeBank,
+    DateOnly DueDate,
     string Source,
+    string CreatedBy,
+    string IdempotencyKey,
     IReadOnlyList<PaymentLine> Lines);
 
+public sealed record Settlement(
+    string VendorId,
+    string SupplierInvoiceNumber,
+    string PaymentNumber,
+    decimal SettledAmount,
+    decimal RemainingBalance);
+
+public sealed record HeldRelease(
+    string VendorId,
+    string SupplierInvoiceNumber,
+    string? PoLineRef,
+    decimal Quantity,
+    string ReleasedBy,
+    DateTimeOffset ReleasedAt);
+
 /// <summary>ERP-native hold: reason code plus free text. Rule id and case link
-/// travel in the adapter payload, never as ERP foreign keys.</summary>
+/// travel in the adapter payload, never as ERP foreign keys. Document, line,
+/// lot, and carton references name what the hold blocks.</summary>
 public sealed record HoldDto(
     string HoldId,
     string ReasonCode,
@@ -147,7 +321,19 @@ public sealed record HoldDto(
     string? RuleId,
     string CaseId,
     string SetBy,
-    DateTimeOffset SetAt);
+    DateTimeOffset SetAt,
+    HoldStatus Status,
+    string? DocumentType,
+    string? DocumentNumber,
+    string? PoLineRef,
+    string? LotRef,
+    string? CartonId);
+
+public sealed record HoldRelease(
+    string HoldId,
+    string ReleasedBy,
+    DateTimeOffset ReleasedAt,
+    string? ApprovalRef);
 
 public sealed record ApprovalDto(
     string DocumentType,
@@ -158,17 +344,20 @@ public sealed record ApprovalDto(
     DateTimeOffset Timestamp,
     bool Approved,
     string? Comment,
+    decimal DocumentAmount,
     decimal LimitChecked);
 
-public sealed record InventoryLot(
+public sealed record InventoryTransaction(
     string ItemId,
-    string ReceiptLineRef,
+    string ReceiptNumber,
+    string LotRef,
     InventoryStatus Status,
     decimal Quantity);
 
 public sealed record SalesOrder(
     string SoNumber,
-    DocStatus Status,
+    SalesOrderStatus Status,
+    string Currency,
     IReadOnlyList<SalesOrderLine> Lines);
 
 public sealed record SalesOrderLine(

@@ -52,10 +52,22 @@ public static class ScenarioLoader
             documents.Add(new ManifestDocument(eventKey, docType, number));
         }
 
+        erp.SeedBaseCurrency(scenario.Currency);
+        erp.SeedAutoApproveThreshold(scenario.AutoApproveUnder);
+        foreach (var item in scenario.Items)
+        {
+            erp.SeedItem(new ItemDto(item.Id, item.Description, item.Critical, item.PackSize, item.Unit));
+        }
+        foreach (var terms in scenario.PaymentTerms)
+        {
+            erp.SeedPaymentTerms(new PaymentTermsDto(terms.Id, terms.NetDays));
+        }
+
         var soNumber = store.NextNumber("SO");
         erp.SeedSalesOrder(new SalesOrder(
             soNumber,
-            DocStatus.Submitted,
+            SalesOrderStatus.Created,
+            scenario.Currency,
             [new SalesOrderLine(scenario.SalesOrder.Item, scenario.SalesOrder.Quantity)]));
         Record("salesOrder", "SO", soNumber);
 
@@ -69,14 +81,12 @@ public static class ScenarioLoader
             erp.SeedStock(s.Item, s.Quantity);
         }
 
-        // TODO (erp-store): seeding through InMemoryErpAdapter is temporary
-        // until the EF Core ERP lands. The loader will then seed through the
-        // EF-backed adapter while keeping the same manifest contract
-        // (sequence-minted numbers recorded per scenario event).
         foreach (var v in scenario.Vendors)
         {
-            erp.SeedVendor(new VendorDto(v.Id, v.Name, v.Country, false, null));
+            erp.SeedVendor(new VendorDto(v.Id, v.Name, v.Country, false, null, v.Terms));
             erp.SeedVendorDocuments(v.Id, v.Documents.Select(d => new VendorDocumentDto(v.Id, d.Kind, d.Reference, d.Present)));
+            erp.SeedVendorBank(new VendorBankDto(v.Id, v.BankAccount, true, now));
+            erp.SeedVendorPrice(v.Id, v.Item, v.UnitPrice);
         }
 
         // Raw trailing history only. Shares are computed by compliance at
@@ -87,25 +97,29 @@ public static class ScenarioLoader
 
         foreach (var u in scenario.Users)
         {
-            erp.SeedSigningLimit(u.Name, u.SigningLimit);
+            erp.SeedUser(new UserDto(u.Name, u.Role, u.SigningLimit, scenario.Currency));
+        }
+        foreach (var d in scenario.Delegations)
+        {
+            erp.SeedDelegation(new DelegationDto(d.From, d.To, DateOnly.Parse(d.Start), DateOnly.Parse(d.End)));
         }
 
         var requester = scenario.Users.FirstOrDefault(u => u.Role == "requester")?.Name ?? "scenario";
         var approver = scenario.Users.FirstOrDefault(u => u.Role == "approver")?.Name ?? "scenario";
 
         var inbound = scenario.OpenPoInbound;
-        var inboundPrice = scenario.Vendors.Single(v => v.Id == inbound.Vendor).UnitPrice;
         var inboundPo = await CreateApprovedPoAsync(
             erp, requester, approver, scenario.Currency,
-            inbound.Item, inbound.Quantity, inboundPrice, inbound.Vendor, ct).ConfigureAwait(false);
+            inbound.Item, inbound.Quantity, inbound.Vendor, ct).ConfigureAwait(false);
         Record("openPoInbound.pr", "PR", inboundPo.PrNumber);
         Record("openPoInbound.po", "PO", inboundPo.PoNumber);
 
         foreach (var small in scenario.SmallPos)
         {
+            erp.SeedVendorPrice(small.Vendor, small.Item, small.UnitPrice);
             var created = await CreateApprovedPoAsync(
                 erp, requester, approver, scenario.Currency,
-                small.Item, small.Quantity, small.UnitPrice, small.Vendor, ct).ConfigureAwait(false);
+                small.Item, small.Quantity, small.Vendor, ct).ConfigureAwait(false);
             Record($"smallPo.{small.Key}.pr", "PR", created.PrNumber);
             Record($"smallPo.{small.Key}.po", "PO", created.PoNumber);
         }
@@ -150,22 +164,26 @@ public static class ScenarioLoader
         string currency,
         string item,
         decimal quantity,
-        decimal unitPrice,
         string vendor,
         CancellationToken ct)
     {
         var pr = await erp.CreatePrAsync(
-            requester, RecordSource.P2pAgent,
-            [new PurchaseRequisitionLine(item, quantity, "EA")], ct).ConfigureAwait(false);
-        await erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, ct).ConfigureAwait(false);
-        await erp.RecordApprovalAsync(new ApprovalDto(
-            "PR", pr.PrNumber, approver, approver, false,
-            DateTimeOffset.UtcNow, true, "scenario seed", quantity * unitPrice), ct).ConfigureAwait(false);
-        var po = await erp.CreatePoAsync(pr.PrNumber, vendor, currency, RecordSource.P2pAgent, ct).ConfigureAwait(false);
-        foreach (var line in po.Lines)
+            requester, RecordSource.P2pAgent, requester,
+            [new PurchaseRequisitionLine(item, quantity, "EA")], Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        if (pr.Status == PrStatus.Draft)
         {
-            erp.SetPoLinePrice(po.PoNumber, line.PoLineRef, unitPrice);
+            await erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            await erp.RecordApprovalAsync("PR", pr.PrNumber, approver, true, "scenario seed", Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         }
+        var po = await erp.CreatePoAsync(pr.PrNumber, vendor, RecordSource.P2pAgent, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        if (po.ApprovalStatus == PoApprovalStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PO", po.PoNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            await erp.RecordApprovalAsync("PO", po.PoNumber, approver, true, "scenario seed", Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        }
+        await erp.RecordVendorConfirmationAsync(po.PoNumber, DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime),
+            RecordSource.Vendor, vendor, po.Lines.Select(l => new VendorConfirmLine(l.PoLineRef, l.QtyOrdered, null)).ToList(),
+            Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
 
         return (pr.PrNumber, po.PoNumber);
     }

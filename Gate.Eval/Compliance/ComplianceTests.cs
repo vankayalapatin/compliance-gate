@@ -11,7 +11,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task Corp02BlocksCheaperVendorOverCap()
     {
-        var vendor = new VendorDto("V-A", "Cheap Cells Ltd", "CN", false, null);
+        var vendor = new VendorDto("V-A", "Cheap Cells Ltd", "CN", false, null, "NET0");
         var docs = new[]
         {
             new VendorDocumentDto("V-A", "UN38.3", "un383-a", true),
@@ -34,7 +34,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task Corp02PassesCompliantVendor()
     {
-        var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null);
+        var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0");
         var docs = new[]
         {
             new VendorDocumentDto("V-B", "UN38.3", "un383-b", true),
@@ -55,7 +55,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task MissingUn383Blocks()
     {
-        var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null);
+        var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0");
         var docs = new[] { new VendorDocumentDto("V-B", "SDS", "sds-b", true) };
         var history = new[]
         {
@@ -70,7 +70,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task OpenHoldBlocksPayment()
     {
-        var holds = new[] { new HoldDto("HLD-1", "DOCK", "Mark missing.", "BAT-LI-03", "case-1", "agent", DateTimeOffset.UtcNow) };
+        var holds = new[] { new HoldDto("HLD-1", "DOCK", "Mark missing.", "BAT-LI-03", "case-1", "agent", DateTimeOffset.UtcNow, HoldStatus.Set, "Shipment", "RCT-1", "PO-L1", "LOT-1", "CTN-07") };
         var verdicts = await _engine.EvaluatePaymentAsync(holds);
         Assert.Single(verdicts);
         Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
