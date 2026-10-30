@@ -70,12 +70,20 @@ public sealed class SparkModelClient : IModelClient
 
     private static ChatMessage[] BuildMessages(ModelRequest request)
     {
+        object userContent = request.ImageJpeg is null
+            ? request.Prompt
+            : new object[]
+            {
+                new TextPart("text", request.Prompt),
+                new ImagePart("image_url", new ImageUrl(
+                    $"data:{request.ImageMimeType ?? "image/jpeg"};base64,{Convert.ToBase64String(request.ImageJpeg)}"))
+            };
         if (string.IsNullOrEmpty(request.SystemPrompt))
         {
-            return [new ChatMessage("user", request.Prompt)];
+            return [new ChatMessage("user", userContent)];
         }
 
-        return [new ChatMessage("system", request.SystemPrompt), new ChatMessage("user", request.Prompt)];
+        return [new ChatMessage("system", request.SystemPrompt), new ChatMessage("user", userContent)];
     }
 
     private sealed record ChatRequest(
@@ -83,11 +91,21 @@ public sealed class SparkModelClient : IModelClient
         ChatMessage[] Messages,
         [property: JsonPropertyName("max_tokens")] int MaxTokens);
 
-    private sealed record ChatMessage(string Role, string Content);
+    private sealed record ChatMessage(string Role, object Content);
+
+    private sealed record TextPart(string Type, string Text);
+
+    private sealed record ImagePart(
+        string Type,
+        [property: JsonPropertyName("image_url")] ImageUrl ImageUrl);
+
+    private sealed record ImageUrl(string Url);
 
     private sealed record ChatResponse(ChatChoice[]? Choices);
 
     private sealed record ChatChoice(
-        ChatMessage? Message,
+        ChatResponseMessage? Message,
         [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+    private sealed record ChatResponseMessage(string? Content);
 }

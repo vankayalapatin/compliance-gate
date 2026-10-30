@@ -1,0 +1,14 @@
+carton_id,expected_mark,read_mark,mark_match,expected_verdict,actual_verdict,verdict_match,rule_expected,rule_actual,cite_match,images_seen_in,notes
+CTN-01,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-01|IMG-03,
+CTN-02,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-01|IMG-03,
+CTN-03,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-01,
+CTN-04,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:HumanReview,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:HumanReview,yes,BAT-LI-05,BAT-LI-05,yes,IMG-01|IMG-03,damage routes to human review
+CTN-05,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-01|IMG-02,
+CTN-06,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-02|IMG-03,
+CTN-07,false,false,yes,BAT-LI-03:Hold|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Hold|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-01|IMG-02,missing mark pre-reshot; IMG-04 flips to true
+CTN-08,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-02,
+CTN-09,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-02|IMG-03,
+CTN-10,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-03,
+CTN-11,true,unread,yes,BAT-LI-03:HumanReview|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:HumanReview|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,(none),hidden by design; reconciliation review
+CTN-12,true,true,yes,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,BAT-LI-03:Pass|BAT-LI-04:Pass|BAT-LI-05:Pass,yes,BAT-LI-03,BAT-LI-03,yes,IMG-03,
+SUMMARY,verdict 12/12,cite 12/12,fully-read 11/12 (CTN-11 excepted by design),IMG-04 flip true,,,,,,,

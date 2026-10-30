@@ -10,4 +10,9 @@
     <ProjectReference Include="..\Gate.Contracts\Gate.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Screening\*.json" />
+    <EmbeddedResource Include="Packs\*.json" />
+  </ItemGroup>
+
 </Project>

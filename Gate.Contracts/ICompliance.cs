@@ -20,9 +20,13 @@ public interface IComplianceEngine
 {
     /// <summary>Evaluates a vendor for a proposed award. The engine computes
     /// every share itself as (country history + award) / (total history +
-    /// award) from the trailing-12-month rows; callers never pass shares.</summary>
+    /// award) from the trailing-12-month rows; callers never pass shares.
+    /// Document packs (BAT-LI, ELEC) apply to critical parts only; for
+    /// non-critical parts those rules return not-applicable passes so the
+    /// straight-through path needs no pack documents.</summary>
     Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor,
+        ItemDto item,
         IReadOnlyList<VendorDocumentDto> documents,
         ProposedAward award,
         IReadOnlyList<VolumeHistory> history,

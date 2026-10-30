@@ -19,6 +19,11 @@ public static class ScenarioEndpoints
         ?? Environment.GetEnvironmentVariable("GATE_SQLITE")
         ?? "data/gate.db";
 
+    public static string ErpSqlitePath(IConfiguration config) =>
+        config["Scenario:ErpSqlite"]
+        ?? Environment.GetEnvironmentVariable("GATE_ERP_SQLITE")
+        ?? "data/erp.db";
+
     public static string ManifestPath(IConfiguration config) =>
         config["Scenario:Manifest"]
         ?? Environment.GetEnvironmentVariable("GATE_MANIFEST")

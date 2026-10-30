@@ -14,10 +14,15 @@ public sealed class CorpOriginCapTests
     private static VendorDto Vendor(string id, string country) =>
         new(id, $"{id} Ltd", country, false, null, "NET0");
 
+    private static ItemDto CriticalCell() =>
+        new("BAT-1", "Test cell", true, 10, "EA");
+
     private static IReadOnlyList<VendorDocumentDto> Docs(string vendorId) =>
     [
         new VendorDocumentDto(vendorId, "UN38.3", "un383", true),
-        new VendorDocumentDto(vendorId, "SDS", "sds", true)
+        new VendorDocumentDto(vendorId, "SDS", "sds", true),
+        new VendorDocumentDto(vendorId, "RoHS", "rohs", true),
+        new VendorDocumentDto(vendorId, "REACH", "reach", true)
     ];
 
     // Demo history in cells: CN 5900, MX 3800, OTHER 300, total 10000.
@@ -34,7 +39,7 @@ public sealed class CorpOriginCapTests
     {
         // (5900 + 1200) / (10000 + 1200) = 63.4%: the cheaper CN award breaches.
         var verdicts = await _engine.EvaluateVendorAsync(
-            Vendor("V-A", "CN"), Docs("V-A"), new ProposedAward("BAT-1", 1200, "CN"), DemoHistory());
+            Vendor("V-A", "CN"), CriticalCell(), Docs("V-A"), new ProposedAward("BAT-1", 1200, "CN"), DemoHistory());
         var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Block, corp.Kind);
         Assert.Contains("exceeding", corp.Reason);
@@ -45,7 +50,7 @@ public sealed class CorpOriginCapTests
     {
         // (3800 + 1200) / (10000 + 1200) = 44.6%: the compliant MX award passes.
         var verdicts = await _engine.EvaluateVendorAsync(
-            Vendor("V-B", "MX"), Docs("V-B"), new ProposedAward("BAT-1", 1200, "MX"), DemoHistory());
+            Vendor("V-B", "MX"), CriticalCell(), Docs("V-B"), new ProposedAward("BAT-1", 1200, "MX"), DemoHistory());
         var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Pass, corp.Kind);
         Assert.Contains("within", corp.Reason);
@@ -61,7 +66,7 @@ public sealed class CorpOriginCapTests
             new VolumeHistory("Other", "OTHER", 440)
         };
         var verdicts = await _engine.EvaluateVendorAsync(
-            Vendor("V-A", "CN"), Docs("V-A"), new ProposedAward("BAT-1", 100, "CN"), history);
+            Vendor("V-A", "CN"), CriticalCell(), Docs("V-A"), new ProposedAward("BAT-1", 100, "CN"), history);
         var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Pass, corp.Kind);
     }
@@ -76,7 +81,7 @@ public sealed class CorpOriginCapTests
             new VolumeHistory("Other", "OTHER", 440)
         };
         var verdicts = await _engine.EvaluateVendorAsync(
-            Vendor("V-A", "CN"), Docs("V-A"), new ProposedAward("BAT-1", 101, "CN"), history);
+            Vendor("V-A", "CN"), CriticalCell(), Docs("V-A"), new ProposedAward("BAT-1", 101, "CN"), history);
         var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Block, corp.Kind);
     }
@@ -87,7 +92,7 @@ public sealed class CorpOriginCapTests
         // No trailing history for the part: CORP-02 has no denominator, so it
         // passes as not applicable instead of blocking history-free parts.
         var verdicts = await _engine.EvaluateVendorAsync(
-            Vendor("V-C", "TW"), Docs("V-C"), new ProposedAward("SCR-9", 100, "TW"), []);
+            Vendor("V-C", "TW"), new ItemDto("SCR-9", "Test screw", false, 1, "EA"), Docs("V-C"), new ProposedAward("SCR-9", 100, "TW"), []);
         var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Pass, corp.Kind);
         Assert.Contains("not applicable", corp.Reason);

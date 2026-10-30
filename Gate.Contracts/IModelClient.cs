@@ -7,7 +7,11 @@ public sealed record ModelRequest(
     string? SystemPrompt = null,
     /// <summary>Cap for this call. Zero means the client default
     /// (SparkOptions.MaxTokens, 2000 for the live client).</summary>
-    int MaxTokens = 0);
+    int MaxTokens = 0,
+    /// <summary>Optional image bytes for vision reads. Null means text-only.
+    /// MimeType defaults to image/jpeg when bytes are present.</summary>
+    byte[]? ImageJpeg = null,
+    string? ImageMimeType = null);
 
 public sealed record ModelResult(string Text);
 

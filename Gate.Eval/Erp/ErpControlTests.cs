@@ -144,6 +144,38 @@ public sealed class ErpControlTests
     }
 
     [Fact]
+    public async Task ReceivingAgainstClosedPoRefused()
+    {
+        var erp = SeededErp.Create();
+        var (_, poNumber) = await ConfirmedPoAsync(erp);
+        var po = await erp.GetPurchaseOrderAsync(poNumber);
+        Assert.NotNull(po);
+        await erp.ClosePoAsync(poNumber, "planner", Idem());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.PostReceiptAsync(poNumber, "PACK-1", RecordSource.P2pAgent, "planner",
+                [new ReceiptLine(po.Lines[0].PoLineRef, 1, 0, 0, "LOT-C1", "ok")], Idem()));
+    }
+
+    [Fact]
+    public async Task FullyHeldInvoicePaymentRefused()
+    {
+        var erp = SeededErp.Create();
+        var (_, poNumber) = await ConfirmedPoAsync(erp, qty: 2);
+        var po = await erp.GetPurchaseOrderAsync(poNumber);
+        Assert.NotNull(po);
+        var lineRef = po.Lines[0].PoLineRef;
+        await erp.CreateInvoiceAsync("INV-1", "V-B", poNumber, "vendor", "planner",
+            [new InvoiceLineInput(lineRef, 2, 12)], Idem());
+        await erp.RecordMatchResultAsync("V-B", "INV-1", [new LineMatchResult(lineRef, true, "Matched.")], Idem());
+        var invKey = InvoiceDoc("V-B", "INV-1");
+        await erp.SubmitForApprovalAsync("Invoice", invKey, "approver", "planner", Idem());
+        await erp.RecordApprovalAsync("Invoice", invKey, "approver", true, "ok", Idem());
+        await erp.PostInvoiceAsync("V-B", "INV-1", "planner", Idem());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.CreatePaymentDraftAsync([new InvoiceKey("V-B", "INV-1")], RecordSource.P2pAgent, "planner", Idem()));
+    }
+
+    [Fact]
     public async Task HeldValueExcludedFromPayment()
     {
         var erp = SeededErp.Create();

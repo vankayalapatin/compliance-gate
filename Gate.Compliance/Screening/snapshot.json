@@ -1,0 +1,21 @@
+{
+  "$comment": "Fictional compliance-side screening snapshot for demo and tests. NOT real sanctions data. Matches no demo vendor, so SCR-01 passes silently on the seed.",
+  "snapshotId": "screening-demo-v1",
+  "asOf": "2026-10-29",
+  "entries": [
+    {
+      "list": "OFAC SDN (fictional test entry)",
+      "program": "DEMO-TEST",
+      "name": "Blocked Test Entity Ltd",
+      "aliases": ["BTE Ltd"],
+      "notes": "Fictional. Exists so screening match logic has a positive case in tests."
+    },
+    {
+      "list": "BIS Entity List (fictional test entry)",
+      "program": "DEMO-TEST",
+      "name": "Denied Test Components Inc",
+      "aliases": [],
+      "notes": "Fictional. Exists so screening match logic has a positive case in tests."
+    }
+  ]
+}

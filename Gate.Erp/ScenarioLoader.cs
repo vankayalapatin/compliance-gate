@@ -8,6 +8,7 @@
 // scenario file.
 using System.Text.Json;
 using Gate.Contracts;
+using Microsoft.EntityFrameworkCore;
 
 namespace Gate.Erp;
 
@@ -28,11 +29,6 @@ public static class ScenarioLoader
         string manifestPath,
         CancellationToken ct = default)
     {
-        if (adapter is not InMemoryErpAdapter erp)
-        {
-            throw new InvalidOperationException("ScenarioLoader seeds the mini-ERP adapter only.");
-        }
-
         var file = ResolvePath(scenarioPath);
         var json = await File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
         var scenario = JsonSerializer.Deserialize<ScenarioFile>(json, JsonOpts)
@@ -52,73 +48,93 @@ public static class ScenarioLoader
             documents.Add(new ManifestDocument(eventKey, docType, number));
         }
 
-        erp.SeedBaseCurrency(scenario.Currency);
-        erp.SeedAutoApproveThreshold(scenario.AutoApproveUnder);
-        foreach (var item in scenario.Items)
-        {
-            erp.SeedItem(new ItemDto(item.Id, item.Description, item.Critical, item.PackSize, item.Unit));
-        }
-        foreach (var terms in scenario.PaymentTerms)
-        {
-            erp.SeedPaymentTerms(new PaymentTermsDto(terms.Id, terms.NetDays));
-        }
-
         var soNumber = store.NextNumber("SO");
-        erp.SeedSalesOrder(new SalesOrder(
-            soNumber,
-            SalesOrderStatus.Created,
-            scenario.Currency,
-            [new SalesOrderLine(scenario.SalesOrder.Item, scenario.SalesOrder.Quantity)]));
+        if (adapter is EfCoreErpAdapter ef)
+        {
+            await ef.Db.Database.MigrateAsync(ct).ConfigureAwait(false);
+            ErpSeeder.SeedMasters(ef.Db, scenario, soNumber, now);
+        }
+        else if (adapter is InMemoryErpAdapter erp)
+        {
+            erp.SeedBaseCurrency(scenario.Currency);
+            erp.SeedAutoApproveThreshold(scenario.AutoApproveUnder);
+            foreach (var item in scenario.Items)
+            {
+                erp.SeedItem(new ItemDto(item.Id, item.Description, item.Critical, item.PackSize, item.Unit));
+            }
+            foreach (var terms in scenario.PaymentTerms)
+            {
+                erp.SeedPaymentTerms(new PaymentTermsDto(terms.Id, terms.NetDays));
+            }
+
+            erp.SeedSalesOrder(new SalesOrder(
+                soNumber,
+                SalesOrderStatus.Created,
+                scenario.Currency,
+                [new SalesOrderLine(scenario.SalesOrder.Item, scenario.SalesOrder.Quantity)]));
+
+            foreach (var group in scenario.Bom.GroupBy(b => b.Item))
+            {
+                erp.SeedBom(group.Key, group.Select(b => new BomLine(b.Component, b.QtyPer)));
+            }
+
+            foreach (var s in scenario.Stock)
+            {
+                erp.SeedStock(s.Item, s.Quantity);
+            }
+
+            foreach (var v in scenario.Vendors)
+            {
+                erp.SeedVendor(new VendorDto(v.Id, v.Name, v.Country, false, null, v.Terms));
+                erp.SeedVendorDocuments(v.Id, v.Documents.Select(d => new VendorDocumentDto(v.Id, d.Kind, d.Reference, d.Present)));
+                erp.SeedVendorBank(new VendorBankDto(v.Id, v.BankAccount, true, now));
+                erp.SeedVendorPrice(v.Id, v.Item, v.UnitPrice);
+            }
+
+            // Raw trailing history only. Shares are computed by compliance at
+            // evaluation time; nothing is precomputed here.
+            erp.SeedVolumeHistory(
+                scenario.HistoryPart,
+                scenario.HistoryCells.Select(h => new VolumeHistory(h.Source, h.Country, h.Cells)));
+
+            foreach (var u in scenario.Users)
+            {
+                erp.SeedUser(new UserDto(u.Name, u.Role, u.SigningLimit, scenario.Currency));
+            }
+            foreach (var d in scenario.Delegations)
+            {
+                erp.SeedDelegation(new DelegationDto(d.From, d.To, DateOnly.Parse(d.Start), DateOnly.Parse(d.End)));
+            }
+        }
+        else
+        {
+            throw new InvalidOperationException("ScenarioLoader seeds the mini-ERP adapter only.");
+        }
         Record("salesOrder", "SO", soNumber);
-
-        foreach (var group in scenario.Bom.GroupBy(b => b.Item))
-        {
-            erp.SeedBom(group.Key, group.Select(b => new BomLine(b.Component, b.QtyPer)));
-        }
-
-        foreach (var s in scenario.Stock)
-        {
-            erp.SeedStock(s.Item, s.Quantity);
-        }
-
-        foreach (var v in scenario.Vendors)
-        {
-            erp.SeedVendor(new VendorDto(v.Id, v.Name, v.Country, false, null, v.Terms));
-            erp.SeedVendorDocuments(v.Id, v.Documents.Select(d => new VendorDocumentDto(v.Id, d.Kind, d.Reference, d.Present)));
-            erp.SeedVendorBank(new VendorBankDto(v.Id, v.BankAccount, true, now));
-            erp.SeedVendorPrice(v.Id, v.Item, v.UnitPrice);
-        }
-
-        // Raw trailing history only. Shares are computed by compliance at
-        // evaluation time; nothing is precomputed here.
-        erp.SeedVolumeHistory(
-            scenario.HistoryPart,
-            scenario.HistoryCells.Select(h => new VolumeHistory(h.Source, h.Country, h.Cells)));
-
-        foreach (var u in scenario.Users)
-        {
-            erp.SeedUser(new UserDto(u.Name, u.Role, u.SigningLimit, scenario.Currency));
-        }
-        foreach (var d in scenario.Delegations)
-        {
-            erp.SeedDelegation(new DelegationDto(d.From, d.To, DateOnly.Parse(d.Start), DateOnly.Parse(d.End)));
-        }
 
         var requester = scenario.Users.FirstOrDefault(u => u.Role == "requester")?.Name ?? "scenario";
         var approver = scenario.Users.FirstOrDefault(u => u.Role == "approver")?.Name ?? "scenario";
+        string UnitFor(string itemId) => scenario.Items.First(i => i.Id == itemId).Unit;
 
         var inbound = scenario.OpenPoInbound;
         var inboundPo = await CreateApprovedPoAsync(
-            erp, requester, approver, scenario.Currency,
+            adapter, requester, approver, UnitFor(inbound.Item),
             inbound.Item, inbound.Quantity, inbound.Vendor, ct).ConfigureAwait(false);
         Record("openPoInbound.pr", "PR", inboundPo.PrNumber);
         Record("openPoInbound.po", "PO", inboundPo.PoNumber);
 
         foreach (var small in scenario.SmallPos)
         {
-            erp.SeedVendorPrice(small.Vendor, small.Item, small.UnitPrice);
+            if (adapter is InMemoryErpAdapter mem)
+            {
+                mem.SeedVendorPrice(small.Vendor, small.Item, small.UnitPrice);
+            }
+            else if (adapter is EfCoreErpAdapter efPrices)
+            {
+                ErpSeeder.UpsertVendorPrice(efPrices.Db, small.Vendor, small.Item, small.UnitPrice);
+            }
             var created = await CreateApprovedPoAsync(
-                erp, requester, approver, scenario.Currency,
+                adapter, requester, approver, UnitFor(small.Item),
                 small.Item, small.Quantity, small.Vendor, ct).ConfigureAwait(false);
             Record($"smallPo.{small.Key}.pr", "PR", created.PrNumber);
             Record($"smallPo.{small.Key}.po", "PO", created.PoNumber);
@@ -143,12 +159,20 @@ public static class ScenarioLoader
         string manifestPath,
         CancellationToken ct = default)
     {
-        if (adapter is not InMemoryErpAdapter erp)
+        if (adapter is InMemoryErpAdapter erp)
+        {
+            erp.Clear();
+        }
+        else if (adapter is EfCoreErpAdapter ef)
+        {
+            await ef.Db.Database.EnsureDeletedAsync(ct).ConfigureAwait(false);
+            ef.Db.ChangeTracker.Clear();
+            await ef.Db.Database.MigrateAsync(ct).ConfigureAwait(false);
+        }
+        else
         {
             throw new InvalidOperationException("ScenarioLoader seeds the mini-ERP adapter only.");
         }
-
-        erp.Clear();
         using (var store = ScenarioSqliteStore.Open(sqlitePath))
         {
             store.Clear();
@@ -158,10 +182,10 @@ public static class ScenarioLoader
     }
 
     private static async Task<(string PrNumber, string PoNumber)> CreateApprovedPoAsync(
-        InMemoryErpAdapter erp,
+        IErpAdapter erp,
         string requester,
         string approver,
-        string currency,
+        string unit,
         string item,
         decimal quantity,
         string vendor,
@@ -169,7 +193,7 @@ public static class ScenarioLoader
     {
         var pr = await erp.CreatePrAsync(
             requester, RecordSource.P2pAgent, requester,
-            [new PurchaseRequisitionLine(item, quantity, "EA")], Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            [new PurchaseRequisitionLine(item, quantity, unit)], Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         if (pr.Status == PrStatus.Draft)
         {
             await erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);

@@ -14,3 +14,5 @@ scenarios/run-manifest.json
 .agent-checks/outbox/*.log
 .agent-checks/archive/*.json
 .agent-checks/.lock
+# Image-tool scratch (see DECISIONS.md 35); deliverables live in assets/.
+generated_images/

@@ -63,7 +63,10 @@ public sealed class P2pAgent
         }
 
         var pr = await _erp.CreatePrAsync(requester, source, requester, lines, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
-        await _erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        if (pr.Status is PrStatus.Draft or PrStatus.Rejected)
+        {
+            await _erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        }
         return await _erp.GetPrAsync(pr.PrNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"PR {pr.PrNumber} vanished after submit.");
     }
@@ -116,9 +119,11 @@ public sealed class P2pAgent
             var verdicts = new List<Verdict>();
             foreach (var line in pr.Lines)
             {
+                var item = await _erp.GetItemAsync(line.ItemId, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Unknown item {line.ItemId}.");
                 var award = new ProposedAward(line.ItemId, line.Quantity, vendor.CountryOfOrigin);
                 var history = await _erp.GetVolumeHistoryAsync(line.ItemId, ct).ConfigureAwait(false);
-                verdicts.AddRange(await _compliance.EvaluateVendorAsync(vendor, docs, award, history, ct).ConfigureAwait(false));
+                verdicts.AddRange(await _compliance.EvaluateVendorAsync(vendor, item, docs, award, history, ct).ConfigureAwait(false));
             }
             var passed = verdicts.All(v => v.Kind == VerdictKind.Pass);
             screenings.Add(new VendorScreening(vendorId, passed, verdicts));

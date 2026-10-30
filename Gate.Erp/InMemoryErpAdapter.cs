@@ -117,7 +117,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             .Where(i => i.PoNumber == poNumber)
             .SelectMany(i => i.Lines)
             .Where(l => l.PoLineRef == poLineRef && l.Disposition == LineDisposition.Accepted)
-            .Sum(l => l.Quantity * l.UnitPrice);
+            .Sum(l => l.Quantity);
     }
 
     private static void ThrowIfTerminal(string what, bool terminal)

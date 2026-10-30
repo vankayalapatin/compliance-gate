@@ -1,0 +1,54 @@
+{
+  "poNumber": "PO-2",
+  "lots": {
+    "CTN-01": "LOT-PO-2-A",
+    "CTN-02": "LOT-PO-2-A",
+    "CTN-03": "LOT-PO-2-A",
+    "CTN-04": "LOT-PO-2-A",
+    "CTN-05": "LOT-PO-2-A",
+    "CTN-06": "LOT-PO-2-A",
+    "CTN-07": "LOT-PO-2-A",
+    "CTN-08": "LOT-PO-2-A",
+    "CTN-09": "LOT-PO-2-A",
+    "CTN-10": "LOT-PO-2-A",
+    "CTN-11": "LOT-PO-2-A",
+    "CTN-12": "LOT-PO-2-A"
+  },
+  "generatedAtUtc": "2026-10-30T04:17:21.594267+00:00",
+  "labeler": "meta-images-edits",
+  "reader": "muse-spark-1.3-contributor",
+  "images": [
+    {
+      "id": "IMG-01",
+      "sha256": "07929D48960AF47A9EEB4FB52589FA4FA1EC240EED6AB5EB633A10B864AEC05F",
+      "path": "Composited",
+      "labelAttempts": 1,
+      "readFromCache": true,
+      "fallbackReason": "verify read mismatched the label manifest on at least one field"
+    },
+    {
+      "id": "IMG-02",
+      "sha256": "99E75E5D32C39F8B4B61D0AFD0A050F57FBB2EDFC15BB71AE1F4D5621CBB49CB",
+      "path": "Composited",
+      "labelAttempts": 1,
+      "readFromCache": true,
+      "fallbackReason": "verify read mismatched the label manifest on at least one field"
+    },
+    {
+      "id": "IMG-03",
+      "sha256": "E01C935F4831CF20D9057B80A9D45555362887D460B2650A17944B26478FCFD9",
+      "path": "Composited",
+      "labelAttempts": 1,
+      "readFromCache": true,
+      "fallbackReason": "verify read mismatched the label manifest on at least one field"
+    },
+    {
+      "id": "IMG-04",
+      "sha256": "8B2A199782E23A0A66132F6E8E66D6B5552DB1032A0E87D1BD4178487B454598",
+      "path": "AiLabeled",
+      "labelAttempts": 1,
+      "readFromCache": false,
+      "fallbackReason": null
+    }
+  ]
+}

@@ -36,9 +36,9 @@ internal static class SeededErp
         erp.SeedVendorPrice("V-B", Battery, 12m);
         erp.SeedVendorPrice("V-B", Screw, 1m);
         erp.SeedVendorPrice("V-C", Screw, 1m);
-        erp.SeedVendorDocuments("V-A", [new VendorDocumentDto("V-A", "UN38.3", "un383-a", true), new VendorDocumentDto("V-A", "SDS", "sds-a", true)]);
-        erp.SeedVendorDocuments("V-B", [new VendorDocumentDto("V-B", "UN38.3", "un383-b", true), new VendorDocumentDto("V-B", "SDS", "sds-b", true)]);
-        erp.SeedVendorDocuments("V-C", [new VendorDocumentDto("V-C", "UN38.3", "n/a", true), new VendorDocumentDto("V-C", "SDS", "n/a", true)]);
+        erp.SeedVendorDocuments("V-A", [new VendorDocumentDto("V-A", "UN38.3", "un383-a", true), new VendorDocumentDto("V-A", "SDS", "sds-a", true), new VendorDocumentDto("V-A", "RoHS", "rohs-a", true), new VendorDocumentDto("V-A", "REACH", "reach-a", true)]);
+        erp.SeedVendorDocuments("V-B", [new VendorDocumentDto("V-B", "UN38.3", "un383-b", true), new VendorDocumentDto("V-B", "SDS", "sds-b", true), new VendorDocumentDto("V-B", "RoHS", "rohs-b", true), new VendorDocumentDto("V-B", "REACH", "reach-b", true)]);
+        // V-C carries no pack documents: SCR-9 is non-critical, so no pack applies.
         // Raw trailing-12-month history in cells (total 10000, CN 6000).
         // The 90-cell test award puts CN at 6090/10090 = 60.4% (blocks V-A)
         // and MX at 3790/10090 = 37.6% (passes V-B). Test-double data only.

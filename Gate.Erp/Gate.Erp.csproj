@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Gate.Contracts\Gate.Contracts.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

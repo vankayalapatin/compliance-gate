@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -12,7 +14,16 @@ var builder = WebApplication.CreateBuilder(args);
 var spark = new SparkOptions();
 builder.Configuration.GetSection("MetaApi").Bind(spark);
 builder.Services.AddSingleton(spark);
-builder.Services.AddSingleton<IErpAdapter, InMemoryErpAdapter>();
+// Real ERP: EF Core over sqlite, one context per scope. The in-memory fake
+// stays for unit tests only and never backs the app.
+var erpSqlite = Path.GetFullPath(ScenarioEndpoints.ErpSqlitePath(builder.Configuration));
+var erpDir = Path.GetDirectoryName(erpSqlite);
+if (!string.IsNullOrEmpty(erpDir))
+{
+    Directory.CreateDirectory(erpDir);
+}
+builder.Services.AddDbContext<ErpDbContext>(options => options.UseSqlite($"Data Source={erpSqlite}"));
+builder.Services.AddScoped<IErpAdapter, EfCoreErpAdapter>();
 builder.Services.AddSingleton<IComplianceEngine, ComplianceEngine>();
 builder.Services.AddSingleton<IModelClient>(sp =>
 {
@@ -23,7 +34,7 @@ builder.Services.AddSingleton<IModelClient>(sp =>
         ?? Path.Combine(Path.GetTempPath(), "gate-model-cache");
     return new CachedModelClient(inner, cacheDir);
 });
-builder.Services.AddSingleton<P2pAgent>();
+builder.Services.AddScoped<P2pAgent>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -47,9 +58,15 @@ app.UseAntiforgery();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-// Scenario seed (additive): fills sqlite + ERP from GATE_SCENARIO on startup
-// when the store is empty; no-op when no scenario file resolves.
-await ScenarioEndpoints.EnsureLoadedAsync(app.Services, builder.Configuration);
+// Scenario seed (additive): migrates the ERP database, then fills sqlite +
+// ERP from GATE_SCENARIO on startup when the store is empty; no-op when no
+// scenario file resolves.
+using (var startup = app.Services.CreateScope())
+{
+    var db = startup.ServiceProvider.GetRequiredService<ErpDbContext>();
+    await db.Database.MigrateAsync();
+    await ScenarioEndpoints.EnsureLoadedAsync(startup.ServiceProvider, builder.Configuration);
+}
 app.MapScenarioReset();
 
 app.Run();

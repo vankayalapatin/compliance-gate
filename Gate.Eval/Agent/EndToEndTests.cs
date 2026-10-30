@@ -61,6 +61,26 @@ public sealed class EndToEndTests
     }
 
     [Fact]
+    public async Task NonCriticalPartRunsStraightThroughVendorC()
+    {
+        var erp = SeededErp.Create();
+        var agent = new P2pAgent(erp, new FakeModelClient(), new ComplianceEngine());
+
+        var shortfall = await agent.ComputeShortfallAsync("SO-1001");
+        var screws = shortfall.Where(s => s.ItemId == SeededErp.Screw).ToList();
+        Assert.Single(screws);
+
+        var pr = await agent.RaisePrAsync("planner", "approver", RecordSource.P2pAgent, screws);
+        Assert.Equal(PrStatus.Approved, pr.Status);
+
+        var (po, screenings) = await agent.ScreenAndOrderAsync(pr.PrNumber, ["V-C"], RecordSource.P2pAgent, "case-screw");
+        Assert.Equal("V-C", po.VendorId);
+        var screening = Assert.Single(screenings);
+        Assert.True(screening.Passed);
+        Assert.All(screening.Verdicts, v => Assert.Equal(VerdictKind.Pass, v.Kind));
+    }
+
+    [Fact]
     public async Task HeldLinesStayOutOfPayment()
     {
         var erp = SeededErp.Create();

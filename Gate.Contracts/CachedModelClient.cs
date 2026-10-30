@@ -23,7 +23,10 @@ public sealed class CachedModelClient : IModelClient
 
     public static string CacheKey(string modelName, ModelRequest request)
     {
-        var normalized = modelName + "\n" + (request.SystemPrompt ?? string.Empty) + "\n" + request.Prompt;
+        var imageHash = request.ImageJpeg is null
+            ? string.Empty
+            : Convert.ToHexString(SHA256.HashData(request.ImageJpeg));
+        var normalized = modelName + "\n" + (request.SystemPrompt ?? string.Empty) + "\n" + request.Prompt + "\n" + imageHash;
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
     }
 
