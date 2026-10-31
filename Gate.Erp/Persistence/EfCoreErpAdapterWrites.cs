@@ -340,6 +340,35 @@ public sealed partial class EfCoreErpAdapter
         return asn;
     }
 
+    public async Task<SalesOrder> CreateSalesOrderAsync(string currency, IReadOnlyList<SalesOrderLine> lines, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        var replay = await ReplayAsync<SalesOrder>($"so:{idempotencyKey}", ct).ConfigureAwait(false);
+        if (replay is not null) return replay;
+        using var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(currency)) throw new InvalidOperationException("Sales order currency is required.");
+        if (lines.Count == 0) throw new InvalidOperationException("Sales order needs at least one line.");
+        foreach (var l in lines) if (l.Quantity <= 0) throw new InvalidOperationException($"Sales order line {l.ItemId} quantity must be positive.");
+        var soNumber = await NextAsync("SO", ct).ConfigureAwait(false);
+        _db.SalesOrders.Add(new SalesOrderRow
+        {
+            SoNumber = soNumber, Status = SalesOrderStatus.Created.ToString(), Currency = currency
+        });
+        var lineNo = 0;
+        foreach (var l in lines)
+        {
+            lineNo++;
+            _db.SalesOrderLines.Add(new SalesOrderLineRow
+            {
+                SoNumber = soNumber, LineNo = lineNo, ItemId = l.ItemId, Quantity = l.Quantity
+            });
+        }
+        var so = new SalesOrder(soNumber, SalesOrderStatus.Created, currency, lines.ToList());
+        RecordReplay($"so:{idempotencyKey}", so);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+        return so;
+    }
+
     public async Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default)
     {
         var replay = await ReplayAsync<string>($"sostatus:{idempotencyKey}", ct).ConfigureAwait(false);
@@ -796,7 +825,10 @@ public sealed partial class EfCoreErpAdapter
         await tx.CommitAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        CreatePaymentDraftAsync(invoices, null, source, createdBy, idempotencyKey, ct);
+
+    public async Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
     {
         var replay = await ReplayAsync<Payment>($"paydraft:{idempotencyKey}", ct).ConfigureAwait(false);
         if (replay is not null) return replay;
@@ -823,6 +855,7 @@ public sealed partial class EfCoreErpAdapter
             if (terms is null) throw new InvalidOperationException($"No payment terms for vendor {inv.VendorId}.");
             var postedAt = inv.PostedAt is null ? DateTimeOffset.UtcNow : DateTime(inv.PostedAt);
             var dueDate = DateOnly.FromDateTime(postedAt.DateTime).AddDays(terms.NetDays);
+            if (payUpToDate.HasValue && dueDate > payUpToDate.Value) continue;
             if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
             // Terms set the due date shown on the draft; like D365, the ERP
             // does not refuse early payment (PROJECT.md Done needs same-day pay runs).

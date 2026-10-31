@@ -100,6 +100,7 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<bool>("IsBlocked").HasColumnType("INTEGER");
             b.Property<string>("BlockReason").HasColumnType("TEXT");
             b.Property<string>("PaymentTermsId").HasColumnType("TEXT");
+            b.Property<string>("Email").HasColumnType("TEXT");
             b.HasKey("VendorId");
             b.ToTable("Vendors", (string)null);
         });

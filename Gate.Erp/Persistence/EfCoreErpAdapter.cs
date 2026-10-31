@@ -188,7 +188,7 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
     {
         var rows = await _db.Vendors.OrderBy(v => v.VendorId).ToListAsync(ct).ConfigureAwait(false);
         return rows.Select(v => new VendorDto(v.VendorId, v.Name, v.CountryOfOrigin,
-            v.IsBlocked, v.BlockReason, v.PaymentTermsId)).ToList();
+            v.IsBlocked, v.BlockReason, v.PaymentTermsId, v.Email)).ToList();
     }
 
     public async Task<IReadOnlyList<VendorDocumentDto>> GetVendorDocumentsAsync(string vendorId, CancellationToken ct = default)

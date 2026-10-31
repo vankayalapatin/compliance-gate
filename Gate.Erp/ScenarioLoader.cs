@@ -85,7 +85,7 @@ public static class ScenarioLoader
 
             foreach (var v in scenario.Vendors)
             {
-                erp.SeedVendor(new VendorDto(v.Id, v.Name, v.Country, false, null, v.Terms));
+                erp.SeedVendor(new VendorDto(v.Id, v.Name, v.Country, false, null, v.Terms, v.Email));
                 erp.SeedVendorDocuments(v.Id, v.Documents.Select(d => new VendorDocumentDto(v.Id, d.Kind, d.Reference, d.Present)));
                 erp.SeedVendorBank(new VendorBankDto(v.Id, v.BankAccount, true, now));
                 erp.SeedVendorPrice(v.Id, v.Item, v.UnitPrice);

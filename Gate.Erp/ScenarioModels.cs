@@ -29,7 +29,8 @@ public sealed record ScenarioVendor(
     decimal UnitPrice,
     string Terms,
     string BankAccount,
-    IReadOnlyList<ScenarioVendorDoc> Documents);
+    IReadOnlyList<ScenarioVendorDoc> Documents,
+    string? Email = null);
 
 public sealed record ScenarioHistoryCells(string Source, string Country, decimal Cells);
 

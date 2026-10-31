@@ -73,6 +73,7 @@ public sealed class VendorRow
     public bool IsBlocked { get; set; }
     public string? BlockReason { get; set; }
     public string PaymentTermsId { get; set; } = string.Empty;
+    public string? Email { get; set; }
 }
 
 public sealed class VendorDocumentRow

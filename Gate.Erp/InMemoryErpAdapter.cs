@@ -414,6 +414,17 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             return asn;
         }));
 
+    public Task<SalesOrder> CreateSalesOrderAsync(string currency, IReadOnlyList<SalesOrderLine> lines, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"so:{idempotencyKey}", () =>
+        {
+            if (string.IsNullOrWhiteSpace(currency)) throw new InvalidOperationException("Sales order currency is required.");
+            if (lines.Count == 0) throw new InvalidOperationException("Sales order needs at least one line.");
+            foreach (var l in lines) if (l.Quantity <= 0) throw new InvalidOperationException($"Sales order line {l.ItemId} quantity must be positive.");
+            var so = new SalesOrder(Next("SO"), SalesOrderStatus.Created, currency, lines.ToList());
+            _salesOrders[so.SoNumber] = so;
+            return so;
+        }));
+
     public Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default)
     {
         Idem<object?>($"sostatus:{idempotencyKey}", () =>
@@ -726,6 +737,9 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     }
 
     public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        CreatePaymentDraftAsync(invoices, null, source, createdBy, idempotencyKey, ct);
+
+    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
         Task.FromResult(Idem($"paydraft:{idempotencyKey}", () =>
         {
             if (invoices.Count == 0) throw new InvalidOperationException("Payment needs at least one invoice.");
@@ -748,6 +762,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                     throw new InvalidOperationException($"No payment terms for vendor {inv.VendorId}.");
                 var postedAt = _invoicePostedAt.GetValueOrDefault(InvoiceDoc(inv.VendorId, inv.SupplierInvoiceNumber), DateTimeOffset.UtcNow);
                 var dueDate = DateOnly.FromDateTime(postedAt.DateTime).AddDays(terms.NetDays);
+                if (payUpToDate.HasValue && dueDate > payUpToDate.Value) continue;
                 if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
                 // Terms set the due date shown on the draft; like D365, the ERP
                 // does not refuse early payment (PROJECT.md Done needs same-day pay runs).

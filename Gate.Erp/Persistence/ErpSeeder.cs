@@ -55,7 +55,7 @@ public static class ErpSeeder
             db.Vendors.Add(new VendorRow
             {
                 VendorId = v.Id, Name = v.Name, CountryOfOrigin = v.Country,
-                IsBlocked = false, BlockReason = null, PaymentTermsId = v.Terms
+                IsBlocked = false, BlockReason = null, PaymentTermsId = v.Terms, Email = v.Email
             });
             foreach (var d in v.Documents)
             {
