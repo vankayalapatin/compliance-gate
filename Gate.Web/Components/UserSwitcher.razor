@@ -1,0 +1,109 @@
+@using Gate.Contracts
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject CaseViewService Views
+@inject ActingUserState State
+@inject IJSRuntime JS
+@inject ILogger<UserSwitcher> Log
+
+<div class="gate-acting">
+    <label class="gate-acting-label" for="gate-acting-select">Acting as</label>
+    @if (_users is null)
+    {
+        <span class="gate-meta">…</span>
+    }
+    else if (_users.Count == 0)
+    {
+        <span class="gate-meta">no ERP users</span>
+    }
+    else
+    {
+        <select id="gate-acting-select" class="gate-select" value="@_selected" @onchange="OnChanged">
+            @foreach (var user in _users)
+            {
+                <option value="@user.UserId">@user.UserId (@user.Role)</option>
+            }
+        </select>
+    }
+</div>
+
+@code {
+    private const string StorageKey = "gate.actingAs";
+
+    private IReadOnlyList<UserDto>? _users;
+    private string? _selected;
+    private bool _restored;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _users = await Views.ListUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Acting-as user list failed to load.");
+            _users = [];
+            return;
+        }
+
+        _selected = State.CurrentUserId;
+        if (_selected is null
+            || !_users.Any(u => string.Equals(u.UserId, _selected, StringComparison.Ordinal)))
+        {
+            _selected = DecisionBoard.PickDefaultUserId(_users);
+            State.SetCurrent(_selected);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _restored)
+        {
+            return;
+        }
+
+        _restored = true;
+        if (_users is null || _users.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+            if (!string.IsNullOrWhiteSpace(saved)
+                && _users.Any(u => string.Equals(u.UserId, saved, StringComparison.Ordinal))
+                && !string.Equals(_selected, saved, StringComparison.Ordinal))
+            {
+                _selected = saved;
+                State.SetCurrent(saved);
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug(ex, "Acting-as restore from local storage failed; keeping the default.");
+        }
+    }
+
+    private async Task OnChanged(Microsoft.AspNetCore.Components.ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        _selected = value;
+        State.SetCurrent(value);
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", StorageKey, value);
+        }
+        catch (Exception ex)
+        {
+            Log.LogDebug(ex, "Acting-as persist to local storage failed for {User}.", value);
+        }
+    }
+}
