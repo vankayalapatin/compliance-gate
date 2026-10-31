@@ -143,12 +143,16 @@ public sealed class MemoRunner
         var prompt = MemoPrompts.BuildProposalPrompt(
             file.Memo, file.FullText, snapshot, PriorAnswers(file));
         // Propose calls need headroom: the prompt carries the whole KB
-        // snapshot, and reasoning models can burn a 4000-token budget
-        // thinking (observed live) and starve the answer.
+        // snapshot, and reasoning models can burn an 8000-token budget
+        // thinking (observed live: truncated JSON, full starvation on
+        // long reasoning) before answering. 16000 tokens with an
+        // explicit 5-minute per-attempt timeout matches the proven demo
+        // wrapper; the 2-minute ResilientCalls default starves long
+        // reasoning completions.
         var result = await ResilientCalls.CompleteWithRetryAsync(
             _models,
-            new ModelRequest(prompt, MemoPrompts.SystemPrompt, MaxTokens: 8000),
-            _logger, $"memo proposal for {memoId}", ct).ConfigureAwait(false);
+            new ModelRequest(prompt, MemoPrompts.SystemPrompt, MaxTokens: 16000),
+            _logger, $"memo proposal for {memoId}", TimeSpan.FromMinutes(5), ct).ConfigureAwait(false);
 
         RuleProposal draft;
         string owner;
