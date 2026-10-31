@@ -159,7 +159,7 @@ else
     {
         try
         {
-            _detail = await Views.GetCaseDetailAsync(CaseId).ConfigureAwait(false);
+            _detail = await Views.GetCaseDetailAsync(CaseId);
             if (_detail is null)
             {
                 _loadError = $"Case {CaseId} has no case file.";
