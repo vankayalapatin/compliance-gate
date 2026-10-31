@@ -7,14 +7,14 @@
 // It bit SendOrderForm.SubmitAsync (the POST succeeded, then OnChanged
 // crashed and the catch misreported failure).
 //
-// SendOrderThroughPageThenSwitchUser drives the real Simulate page through
-// bUnit (a test-only package ref, documented in Gate.Eval.csproj): it sends
-// an order through the page and then switches the acting user mid-run,
-// asserting no dispatcher throw, the outcome renders, and Decisions
-// filtering follows the new user. The stubbed POST yields asynchronously,
-// like a live POST, so the old pattern genuinely leaves the sync context.
-// RazorComponents_MustNotUseConfigureAwaitFalse pins the pattern itself
-// across every .razor under Gate.Web.
+// SendOrderThroughPageThenSwitchUser drives the real Outside page shop tab
+// through bUnit (a test-only package ref, documented in Gate.Eval.csproj):
+// it places an order through the page and then switches the acting user
+// mid-run, asserting no dispatcher throw, the outcome renders, and
+// Decisions filtering follows the new user. The stubbed POST yields
+// asynchronously, like a live POST, so the old pattern genuinely leaves
+// the sync context. RazorComponents_MustNotUseConfigureAwaitFalse pins the
+// pattern itself across every .razor under Gate.Web.
 //
 // All data is local to this file; nothing depends on the demo numbers. No
 // live calls.
@@ -156,13 +156,14 @@ public sealed class BlazorDispatcherTests
         ctx.Services.AddSingleton(h.Replay);
         ctx.Services.AddSingleton(h.Acting);
 
-        // 1. Send an order through the Simulate page. On the old pattern the
-        // POST succeeds and then OnChanged crashes off the Dispatcher, so the
-        // catch misreports failure instead of rendering the outcome.
-        using var page = ctx.RenderComponent<Simulate>();
+        // 1. Place an order through the Outside page shop tab. On the old
+        // pattern the POST succeeds and then OnChanged crashes off the
+        // Dispatcher, so the catch misreports failure instead of rendering
+        // the outcome.
+        using var page = ctx.RenderComponent<Outside>();
         page.WaitForAssertion(() => page.Find("#order-so"), TimeSpan.FromSeconds(10));
         page.Find("#order-so").Change("SO-D1");
-        page.Find("#order button.btn-primary").Click();
+        page.Find("#shop button.gate-btn-primary").Click();
         page.WaitForAssertion(
             () => Assert.Contains("Order accepted: 1 case(s).", page.Markup),
             TimeSpan.FromSeconds(10));
