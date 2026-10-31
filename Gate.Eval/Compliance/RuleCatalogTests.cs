@@ -1,6 +1,7 @@
 // Catalog integrity: tier assignments, enforcement flags, and citations
 // match PROJECT.md section 6 (catalog v0.2). Deterministic by construction.
 using Gate.Compliance;
+using Gate.Contracts;
 
 namespace Gate.Eval;
 
