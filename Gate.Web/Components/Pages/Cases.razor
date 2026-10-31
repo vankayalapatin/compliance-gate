@@ -1,11 +1,17 @@
 @page "/cases"
 @using Gate.Contracts
 @using Gate.Web.Services
+@using Gate.Web.ViewModels
 @inject CaseCacheStore CaseStore
 
 <PageTitle>Cases</PageTitle>
 
-<h1>Cases</h1>
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Cases</p>
+        <p class="gate-page-sub">One order-to-payment chain per case. The dark step is the current stage.</p>
+    </div>
+</div>
 
 @if (_loadError is not null)
 {
@@ -13,39 +19,40 @@
 }
 else if (_files is null)
 {
-    <p>Loading cases…</p>
+    <p class="gate-meta">Loading cases…</p>
 }
 else if (_files.Count == 0)
 {
-    <p>No cases in the cache yet. Run the agent or reset-and-replay from Home.</p>
+    <p class="gate-meta">No cases in the cache yet. Place an order from the outside world, or reset-and-replay from Demo.</p>
 }
 else
 {
-    <table class="table">
-        <thead>
-            <tr>
-                <th>Case</th>
-                <th>SO</th>
-                <th>Item</th>
-                <th>Stage</th>
-                <th>Pending</th>
-                <th>Blocked by</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var file in _files)
+    @foreach (var file in _files)
+    {
+        var pending = file.Decisions.Count(d => d.Status == DecisionStatus.Pending);
+        <section class="gate-card">
+            <div class="gate-card-head">
+                <p class="gate-card-title"><a href="cases/@file.Case.CaseId">@file.Case.CaseId</a></p>
+                <div class="gate-card-badges">
+                    <span class="gate-badge">@file.Case.Stage</span>
+                    @if (pending > 0)
+                    {
+                        <span class="gate-badge gate-badge-dark">@pending pending</span>
+                    }
+                </div>
+            </div>
+            <p class="gate-meta">SO @file.Case.SoNumber · item @file.Case.ItemId · scenario @file.Case.ScenarioName</p>
+            <ChainStrip Steps="@CaseChain.Strip(file.Case)" />
+            @if (file.Case.BlockedByRuleId is null)
             {
-                <tr>
-                    <td><a href="cases/@file.Case.CaseId">@file.Case.CaseId</a></td>
-                    <td>@file.Case.SoNumber</td>
-                    <td>@file.Case.ItemId</td>
-                    <td>@file.Case.Stage</td>
-                    <td>@file.Decisions.Count(d => d.Status == DecisionStatus.Pending)</td>
-                    <td>@(file.Case.BlockedByRuleId is null ? "—" : $"{file.Case.BlockedByRuleId}: {file.Case.BlockedReason}")</td>
-                </tr>
+                <p class="gate-meta">Not blocked.</p>
             }
-        </tbody>
-    </table>
+            else
+            {
+                <div class="gate-notice" role="alert">Blocked by rule <strong>@file.Case.BlockedByRuleId</strong>: @(file.Case.BlockedReason ?? "—")</div>
+            }
+        </section>
+    }
 }
 
 @code {
