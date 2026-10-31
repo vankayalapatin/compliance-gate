@@ -1,0 +1,30 @@
+{
+  "eval_id": "dock-eval-hard",
+  "generatedAtUtc": "2026-10-31T18:11:52.262997+00:00",
+  "labeler": "code-compositor-hard-v1",
+  "scene_bases": 6,
+  "finals": 30,
+  "cartons": 170,
+  "by_problem": {
+    "clean": 110,
+    "missing_mark": 13,
+    "wrong_po": 13,
+    "wrong_part": 12,
+    "smudged_lot": 12,
+    "subtle_dent": 10
+  },
+  "by_base": {
+    "bases/pallet-01.jpg": 5,
+    "bases/pallet-02.jpg": 5,
+    "bases/pallet-03.jpg": 5,
+    "bases/pallet-04.jpg": 5,
+    "bases/pallet-05.jpg": 5,
+    "bases/pallet-06.jpg": 5
+  },
+  "by_effect": {
+    "glare": 6,
+    "none": 10,
+    "blur": 7,
+    "cool": 7
+  }
+}

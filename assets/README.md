@@ -79,3 +79,14 @@ its own `read-cache-<model>/`. Scoring is model-agnostic
 type to `accuracy-by-type.csv` plus `spark-report.md`. Crush/hide truth
 is photographic: see `manual-check.md` (14 images) and tick before
 trusting damage/hidden scores.
+
+## Dock eval hard
+
+`dock-eval-hard/`: 30 pallet photos, 170 cartons, scored per carton.
+Same oracle-first rules on realistic density: 5-6 small rotated labels
+per photo over 6 text-free Muse pallet scenes, photo effects
+(none/blur/glare/cool) applied after labeling, subtle dents photographic
+only. Spark: one read per photo at 4000 max tokens (6-label reads
+truncated at 2000), results to `accuracy-by-carton.csv` plus
+`spark-report.md`. Manual checks: `manual-check.md` (10 dent photos plus
+a per-base placement spot check).

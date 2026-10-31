@@ -163,6 +163,7 @@ internal static class DockEval50Scoring
             "clean" => "clean fully transcribed",
             "missing_mark" => "missing mark read false",
             "crushed" => "damage read true",
+            "subtle_dent" => "subtle dent read true",
             _ => "transcribed"
         });
     }

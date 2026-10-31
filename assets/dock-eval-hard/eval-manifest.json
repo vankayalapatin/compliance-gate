@@ -1,0 +1,156 @@
+{
+  "eval_id": "dock-eval-hard",
+  "prompt_version": "carton-read-v1",
+  "images": [
+    {
+      "image": "HARD-01.jpg",
+      "sha256": "EAFA003E0FCB97C96F0D7C981D59EF32AAA4CA6C717D0E5E4322CF99D3638EE2",
+      "base": "bases/pallet-01.jpg"
+    },
+    {
+      "image": "HARD-02.jpg",
+      "sha256": "C9AAA5C4834FB97DF7DB0ADBB52FA254F97610022A6C4C3FC43BFAD306B3C6B6",
+      "base": "bases/pallet-02.jpg"
+    },
+    {
+      "image": "HARD-03.jpg",
+      "sha256": "13FA1A786F19960F72D840BC0D3E7F306371190E027C76AA5C5FE441EF789A4A",
+      "base": "bases/pallet-03.jpg"
+    },
+    {
+      "image": "HARD-04.jpg",
+      "sha256": "64F2D50D9E5EC4634EB3FDDF16751BDCD070BDA6F5F548B2FCC99995117A5EF0",
+      "base": "bases/pallet-04.jpg"
+    },
+    {
+      "image": "HARD-05.jpg",
+      "sha256": "E529DA6854B5F381ADF0B08529C75379D0004AB6DA727C7825F038DFAA172609",
+      "base": "bases/pallet-05.jpg"
+    },
+    {
+      "image": "HARD-06.jpg",
+      "sha256": "96B6567A179A0DED9317FBEB24E084EFB357E785F3DCB5CD07953A9E8AE1D72C",
+      "base": "bases/pallet-06.jpg"
+    },
+    {
+      "image": "HARD-07.jpg",
+      "sha256": "7A0D84BCD5105478E758F47A1C135C208D63A3B7E3C4916FAF91D1CB732F78AF",
+      "base": "bases/pallet-01.jpg"
+    },
+    {
+      "image": "HARD-08.jpg",
+      "sha256": "3B1E494532E079ABBDD9F5F05D2A421E49A809304D24C69E2D8A66FB817AAD2D",
+      "base": "bases/pallet-02.jpg"
+    },
+    {
+      "image": "HARD-09.jpg",
+      "sha256": "4F30AB330D9D94392E2F0645805E386CDF99C3E9D1F282DEBB74768D6AF115E9",
+      "base": "bases/pallet-03.jpg"
+    },
+    {
+      "image": "HARD-10.jpg",
+      "sha256": "B9489D749904293FCBF587C30D11BB18A8870471F07EAECE1F76DE29132BC052",
+      "base": "bases/pallet-04.jpg"
+    },
+    {
+      "image": "HARD-11.jpg",
+      "sha256": "8018292D34DA39752649AC53E5FE4551CD4F58217C3527194BD6C4C83B8BBA75",
+      "base": "bases/pallet-05.jpg"
+    },
+    {
+      "image": "HARD-12.jpg",
+      "sha256": "01E7896586B63AE4E383A127220A5ADAD488549DC5CEE53C4D1E208F36656590",
+      "base": "bases/pallet-06.jpg"
+    },
+    {
+      "image": "HARD-13.jpg",
+      "sha256": "3C826545706D0A9BA3D7DC62A508BE99F05FCECE3BF8E375AB481AB3D098E150",
+      "base": "bases/pallet-01.jpg"
+    },
+    {
+      "image": "HARD-14.jpg",
+      "sha256": "9E67E80CD938BF03143D592F675CEB1DA34F2B547B43EB3988C44ECCF52D78A3",
+      "base": "bases/pallet-02.jpg"
+    },
+    {
+      "image": "HARD-15.jpg",
+      "sha256": "B39247CF5842BB621FD028A0FE36B5C21411C9177963B99BEAF139066C719321",
+      "base": "bases/pallet-03.jpg"
+    },
+    {
+      "image": "HARD-16.jpg",
+      "sha256": "3D4BFC1F599C02FC21328D9C67932E476D62508543AAF70B638302B53E00BAEC",
+      "base": "bases/pallet-04.jpg"
+    },
+    {
+      "image": "HARD-17.jpg",
+      "sha256": "9B171DB2CD06ED2F6F4EC376CD4B86C67EE25E010E8E7D2D4EC31B93A179BBE2",
+      "base": "bases/pallet-05.jpg"
+    },
+    {
+      "image": "HARD-18.jpg",
+      "sha256": "ED01C41DCDF3F40792457B0FD068B3015292194F5716067A429677B520536CBA",
+      "base": "bases/pallet-06.jpg"
+    },
+    {
+      "image": "HARD-19.jpg",
+      "sha256": "5B59DAE808C06806581ADBBCF58ED58641773C98808D1DAA6D458609931777C8",
+      "base": "bases/pallet-01.jpg"
+    },
+    {
+      "image": "HARD-20.jpg",
+      "sha256": "F089F14A7795CBF89C708693DD446C8DE99B29E5CC0E29D56EFFA98CED5C0A7D",
+      "base": "bases/pallet-02.jpg"
+    },
+    {
+      "image": "HARD-21.jpg",
+      "sha256": "23B0C0C8AF2A28A412F32BAEE1393C0254E2DCE871F394CA25DB674F3FDCAFDA",
+      "base": "bases/pallet-03.jpg"
+    },
+    {
+      "image": "HARD-22.jpg",
+      "sha256": "4A9FF99D80394939863B6D9A0A043DEABEF0B7873835FBFC52CA8490A6D8C816",
+      "base": "bases/pallet-04.jpg"
+    },
+    {
+      "image": "HARD-23.jpg",
+      "sha256": "53B0ABE14E6DF89DAFAE97170CE1A2F25BEA6058A3B16067E91ACA8681D78902",
+      "base": "bases/pallet-05.jpg"
+    },
+    {
+      "image": "HARD-24.jpg",
+      "sha256": "75A275585A7CC54EC33E6C1257996A6324F4F9187E1F10525C5FB760EC6E905C",
+      "base": "bases/pallet-06.jpg"
+    },
+    {
+      "image": "HARD-25.jpg",
+      "sha256": "4DFDDF257A701382D48100560D075850C1F6C9CBCDC88BB0B8E6B928EC0C9C7E",
+      "base": "bases/pallet-01.jpg"
+    },
+    {
+      "image": "HARD-26.jpg",
+      "sha256": "088CD3CD10C7C9CF383B8DDD5B9CC5E88E35C35BE2A445C43BBE3F46673A744E",
+      "base": "bases/pallet-02.jpg"
+    },
+    {
+      "image": "HARD-27.jpg",
+      "sha256": "3A51DC2EDAFC38018D0420038F0E75C93E18DE4B5D89759187A74DC3869C0BB7",
+      "base": "bases/pallet-03.jpg"
+    },
+    {
+      "image": "HARD-28.jpg",
+      "sha256": "9AACCFAC4B5557306E4A8AD15392E37014629B2C040B8EF92F689EA656DECECF",
+      "base": "bases/pallet-04.jpg"
+    },
+    {
+      "image": "HARD-29.jpg",
+      "sha256": "69CE81538618C261B7E2C533F28DFFF1C4803FA914D28795408FB6558BA35FC9",
+      "base": "bases/pallet-05.jpg"
+    },
+    {
+      "image": "HARD-30.jpg",
+      "sha256": "C6F8F81B3C603394E911C0EF50CE5DB2E48A9E318036158F43E53116B3844F19",
+      "base": "bases/pallet-06.jpg"
+    }
+  ]
+}
