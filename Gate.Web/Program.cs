@@ -57,6 +57,7 @@ builder.Services.AddSingleton(sp => new DockPhotoService(
     DockPhotoService.ResolveImageDir(), DockPhotoService.ResolveVisionCacheDir()));
 builder.Services.AddSingleton<ReplayState>();
 builder.Services.AddScoped<CaseViewService>();
+builder.Services.AddScoped<ActingUserState>();
 builder.Services.AddScoped<DecisionOutcomeService>();
 builder.Services.AddScoped<PolicyViewService>();
 builder.Services.AddScoped<PolicyOutcomeService>();
