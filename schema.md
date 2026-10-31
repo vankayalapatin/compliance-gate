@@ -7,7 +7,9 @@ adapter interface, and this file change in the lead session only.
 
 - `Gate.Contracts/IErpAdapter.cs` — the data-only boundary. Reads return raw
   ERP data (SO, BOM, stock, open POs, vendors, documents, history, ASN,
-  receipts, invoices). Writes take intent plus audit actor plus idempotency
+  receipts, invoices) plus pipeline list queries (open PRs, draft POs, open
+  invoices, open payments, unreceived ASNs) for what-if gather.
+  Writes take intent plus audit actor plus idempotency
   key; ERP reads limits, amounts, dates, statuses, vouchers, and bank
   snapshots itself.
 - `Gate.Contracts/Documents.cs` — canonical plain-DTO P2P model (vendor, PR,
@@ -23,12 +25,17 @@ adapter interface, and this file change in the lead session only.
 - `Gate.Contracts/Cases.cs` — agent-side case store shapes (one case per
   SO shortfall item): `Case` stage plus document links plus block, `CaseEvent`
   append-only timeline, `Decision` human card with evidence refs. Kinds
-  include `VendorIdentity` (confirm a proposed vendor-master match) and
-  `PolicyApproval` (approve a memo-to-rule proposal).
+  include `VendorIdentity` (confirm a proposed vendor-master match),
+  `PolicyApproval` (approve a memo-to-rule proposal), and `PolicyQuestion`
+  (answer one blocking proposal question). The `IComplianceEngine` memo
+  seam (snapshot load, hash, validate, conflicts, what-if, approval check,
+  three publish paths) is the agent's only route to the Memo core.
 - `Gate.Contracts/MemoRules.cs` — memo-to-rule shapes mirroring
   `docs/company-kb/`: `RuleProposal` with `KbCitation` plus `OpenQuestion`,
   `WhatIfReport` impact, `RuleApproval` pin, `RuleActivation` publish
-  record. Spark proposes, C# validates, human approves, C# publishes.
+  record, plus the promoted what-if rows, validation outcomes, tier, new-
+  rule spec, and publication shapes the engine seam passes. Spark proposes,
+  C# validates, human approves, C# publishes.
 - `Gate.Contracts/ModelTools.cs` — tool-calling wire format: flat tool
   schemas, tool calls, conversation messages. Requests add tools plus
   history; results add tool calls; the cache key extends only when present.
