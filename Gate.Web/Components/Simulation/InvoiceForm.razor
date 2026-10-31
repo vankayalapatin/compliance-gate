@@ -183,7 +183,7 @@
         _poNumber = e.Value?.ToString();
         _poLines = string.IsNullOrWhiteSpace(_poNumber)
             ? []
-            : await Simulate.GetPoLinesAsync(_poNumber).ConfigureAwait(false);
+            : await Simulate.GetPoLinesAsync(_poNumber);
     }
 
     private static decimal ParseDecimal(string? text) =>
@@ -198,7 +198,7 @@
             {
                 using var stream = file.OpenReadStream(MaxUploadBytes);
                 using var buffer = new MemoryStream();
-                await stream.CopyToAsync(buffer).ConfigureAwait(false);
+                await stream.CopyToAsync(buffer);
                 _uploads.Add(new UploadRow { FileName = file.Name, Bytes = buffer.ToArray() });
             }
             catch (Exception ex)
@@ -219,7 +219,7 @@
                 var photos = _uploads
                     .Select(u => new SimulationPhoto(u.FileName, u.Bytes, null))
                     .ToList();
-                _outcome = await Simulate.SendInvoicePhotosAsync(_caseId, photos).ConfigureAwait(false);
+                _outcome = await Simulate.SendInvoicePhotosAsync(_caseId, photos);
             }
             else
             {
@@ -227,13 +227,12 @@
                     .Select(l => new InvoiceLineForm(l.PoLineRef, l.Quantity, l.UnitPrice))
                     .ToList();
                 _outcome = await Simulate
-                    .SendInvoiceAsync(_caseId, _number, _vendorId, _poNumber, lines, _bankRef)
-                    .ConfigureAwait(false);
+                    .SendInvoiceAsync(_caseId, _number, _vendorId, _poNumber, lines, _bankRef);
             }
 
             if (_outcome.Ok)
             {
-                await OnChanged.InvokeAsync().ConfigureAwait(false);
+                await OnChanged.InvokeAsync();
             }
         }
         catch (Exception ex)
