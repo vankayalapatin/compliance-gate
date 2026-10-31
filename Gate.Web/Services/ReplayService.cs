@@ -1,4 +1,4 @@
-// Reset-to-start plus offline replay behind the Home button. Reset wipes
+// Reset-to-start plus offline replay behind the Decisions reset section. Reset wipes
 // and reloads the ERP scenario (every number regenerated) and clears the
 // case cache; replay mode then pins Ask-why to cached answers so the rest
 // of the session makes zero live model calls. Agent re-execution stays in
