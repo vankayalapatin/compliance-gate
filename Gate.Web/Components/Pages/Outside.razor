@@ -1,0 +1,83 @@
+@page "/outside"
+@rendermode InteractiveServer
+@using Gate.Web.Components.Outside
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Sim
+
+<PageTitle>Outside world</PageTitle>
+
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Outside world</p>
+        <p class="gate-page-sub">The other side of the counter: the customer shop, the supplier inbox, and the dock camera.</p>
+    </div>
+    <div>
+        <button class="gate-btn" disabled="@_busy" @onclick="ReloadAsync">Reload options</button>
+    </div>
+</div>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_options is null)
+{
+    <p class="gate-meta">Loading options…</p>
+}
+else
+{
+    @foreach (var note in _options.Notes)
+    {
+        <div class="gate-notice" role="alert">@note</div>
+    }
+
+    <div class="gate-tabs" role="tablist" aria-label="Outside world">
+        <button role="tab" class="gate-tab @(_tab == "shop" ? "active" : "")" @onclick='() => _tab = "shop"'>Customer shop</button>
+        <button role="tab" class="gate-tab @(_tab == "inbox" ? "active" : "")" @onclick='() => _tab = "inbox"'>Supplier inbox</button>
+        <button role="tab" class="gate-tab @(_tab == "camera" ? "active" : "")" @onclick='() => _tab = "camera"'>Dock camera</button>
+    </div>
+
+    @if (_tab == "shop")
+    {
+        <ShopForm Options="@_options" OnChanged="ReloadAsync" />
+    }
+    @if (_tab == "inbox")
+    {
+        <SupplierInbox Options="@_options" OnChanged="ReloadAsync" />
+    }
+    @if (_tab == "camera")
+    {
+        <DockCamera Options="@_options" OnChanged="ReloadAsync" />
+    }
+}
+
+@code {
+    private SimulateOptions? _options;
+    private string? _loadError;
+    private bool _busy;
+    private string _tab = "shop";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _busy = true;
+        try
+        {
+            _options = await Sim.GetOptionsAsync();
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Outside-world options failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
