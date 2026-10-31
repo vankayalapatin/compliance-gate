@@ -146,7 +146,7 @@ public sealed class CaseViewService
         }
 
         var kase = file.Case;
-        var chain = new List<ChainStepVm>
+        var chain = CaseChain.MarkCurrent(new List<ChainStepVm>
         {
             await SoStepAsync(kase, ct).ConfigureAwait(false),
             PrStep(kase),
@@ -155,7 +155,7 @@ public sealed class CaseViewService
             ReceiptStep(kase),
             InvoicesStep(kase),
             PaymentsStep(kase),
-        };
+        }, kase.Stage);
 
         IReadOnlyList<HoldDto> holds = [];
         try
@@ -181,7 +181,9 @@ public sealed class CaseViewService
             _log.LogWarning(ex, "Vendor-mail lookup failed for case {CaseId}.", kase.CaseId);
         }
 
-        return new CaseDetailVm(kase, chain, file.Events, file.Decisions, holds, mail);
+        return new CaseDetailVm(
+            kase, chain, file.Events, file.Decisions, holds, mail,
+            AgentSummary.Build(kase, file.Events, file.Decisions, holds));
     }
 
     private async Task<ChainStepVm> SoStepAsync(Case kase, CancellationToken ct)
@@ -190,62 +192,62 @@ public sealed class CaseViewService
         {
             var so = await _erp.GetSalesOrderAsync(kase.SoNumber, ct).ConfigureAwait(false);
             return so is null
-                ? new ChainStepVm("Sales order", kase.SoNumber, "missing", "SO not found in ERP.")
-                : new ChainStepVm("Sales order", so.SoNumber, so.Status.ToString(),
+                ? new ChainStepVm(CaseChain.SoLabel, kase.SoNumber, "missing", "SO not found in ERP.")
+                : new ChainStepVm(CaseChain.SoLabel, so.SoNumber, so.Status.ToString(),
                     $"{so.Lines.Count} line(s), {so.Currency}.");
         }
         catch (Exception ex)
         {
-            return new ChainStepVm("Sales order", kase.SoNumber, "error", ex.Message);
+            return new ChainStepVm(CaseChain.SoLabel, kase.SoNumber, "error", ex.Message);
         }
     }
 
     private ChainStepVm PrStep(Case kase) =>
         kase.PrNumber is null
-            ? new ChainStepVm("Purchase requisition", null, "not created", null)
-            : new ChainStepVm("Purchase requisition", kase.PrNumber, "linked", "Detail on Records.");
+            ? new ChainStepVm(CaseChain.PrLabel, null, "not created", null)
+            : new ChainStepVm(CaseChain.PrLabel, kase.PrNumber, "linked", "Detail on Records.");
 
     private async Task<ChainStepVm> PoStepAsync(Case kase, CancellationToken ct)
     {
         if (kase.PoNumber is null)
         {
-            return new ChainStepVm("Purchase order", null, "not placed", null);
+            return new ChainStepVm(CaseChain.PoLabel, null, "not placed", null);
         }
 
         try
         {
             var po = await _erp.GetPurchaseOrderAsync(kase.PoNumber, ct).ConfigureAwait(false);
             return po is null
-                ? new ChainStepVm("Purchase order", kase.PoNumber, "missing", "PO not found in ERP.")
-                : new ChainStepVm("Purchase order", po.PoNumber,
+                ? new ChainStepVm(CaseChain.PoLabel, kase.PoNumber, "missing", "PO not found in ERP.")
+                : new ChainStepVm(CaseChain.PoLabel, po.PoNumber,
                     $"{po.ApprovalStatus} / {po.DocStatus}", $"Vendor {po.VendorId}, {po.Currency}.");
         }
         catch (Exception ex)
         {
-            return new ChainStepVm("Purchase order", kase.PoNumber, "error", ex.Message);
+            return new ChainStepVm(CaseChain.PoLabel, kase.PoNumber, "error", ex.Message);
         }
     }
 
     private static ChainStepVm AsnStep(Case kase) =>
         kase.AsnNumber is null
-            ? new ChainStepVm("ASN", null, "not recorded", null)
-            : new ChainStepVm("ASN", kase.AsnNumber, "recorded", null);
+            ? new ChainStepVm(CaseChain.AsnLabel, null, "not recorded", null)
+            : new ChainStepVm(CaseChain.AsnLabel, kase.AsnNumber, "recorded", null);
 
     private static ChainStepVm ReceiptStep(Case kase) =>
         kase.ReceiptNumber is null
-            ? new ChainStepVm("Receipt", null, "not posted", null)
-            : new ChainStepVm("Receipt", kase.ReceiptNumber, "posted", "Detail on Records.");
+            ? new ChainStepVm(CaseChain.ReceiptLabel, null, "not posted", null)
+            : new ChainStepVm(CaseChain.ReceiptLabel, kase.ReceiptNumber, "posted", "Detail on Records.");
 
     private static ChainStepVm InvoicesStep(Case kase) =>
         kase.Invoices.Count == 0
-            ? new ChainStepVm("Invoices", null, "none", null)
-            : new ChainStepVm("Invoices", string.Join("; ", kase.Invoices.Select(i => $"{i.VendorId}/{i.SupplierInvoiceNumber}")),
+            ? new ChainStepVm(CaseChain.InvoicesLabel, null, "none", null)
+            : new ChainStepVm(CaseChain.InvoicesLabel, string.Join("; ", kase.Invoices.Select(i => $"{i.VendorId}/{i.SupplierInvoiceNumber}")),
                 $"{kase.Invoices.Count} invoice(s)", "Detail on Records.");
 
     private static ChainStepVm PaymentsStep(Case kase) =>
         kase.PaymentNumbers.Count == 0
-            ? new ChainStepVm("Payments", null, "none", null)
-            : new ChainStepVm("Payments", string.Join("; ", kase.PaymentNumbers),
+            ? new ChainStepVm(CaseChain.PaymentsLabel, null, "none", null)
+            : new ChainStepVm(CaseChain.PaymentsLabel, string.Join("; ", kase.PaymentNumbers),
                 $"{kase.PaymentNumbers.Count} payment(s)", "Detail on Records.");
 
     public async Task<IReadOnlyList<UserDto>> ListUsersAsync(CancellationToken ct = default) =>
@@ -267,14 +269,30 @@ public sealed class CaseViewService
         var invoiceKeys = new SortedSet<string>(StringComparer.Ordinal);
         var paymentNumbers = new SortedSet<string>(StringComparer.Ordinal);
 
+        var opening = new SortedSet<string>(StringComparer.Ordinal);
+        var smallPoVendors = ReadSmallPoVendors(notes);
         foreach (var doc in ReadManifestDocuments(notes))
         {
+            opening.Add(doc.Number);
             switch (doc.DocType)
             {
                 case "SO": soNumbers.Add(doc.Number); break;
                 case "PR": prNumbers.Add(doc.Number); break;
                 case "PO": poNumbers.Add(doc.Number); break;
-                default: notes.Add($"Manifest entry {doc.Event} has DocType {doc.DocType}; no reader."); break;
+                case "INV":
+                    var vendor = VendorForSeedInvoice(doc, smallPoVendors);
+                    if (vendor is null)
+                    {
+                        notes.Add(
+                            $"Seeded invoice {doc.Number} (event '{doc.Event}') names no resolvable vendor; " +
+                            "it stays tracked as opening data but cannot be fetched.");
+                    }
+                    else
+                    {
+                        invoiceKeys.Add($"{vendor}/{doc.Number}");
+                    }
+                    break;
+                default: break;
             }
         }
 
@@ -415,7 +433,61 @@ public sealed class CaseViewService
             notes.Add($"Vendor list failed: {ex.Message}.");
         }
 
-        return new RecordsVm(salesOrders, prs, pos, asns, receipts, invoices, payments, inventory, holds, approvals, vendors, notes);
+        return new RecordsVm(salesOrders, prs, pos, asns, receipts, invoices, payments, inventory, holds, approvals, vendors, notes, opening);
+    }
+
+    /// <summary>Maps scenario small-PO keys to their vendors so seeded INV
+    /// manifest entries (event 'smallPo.&lt;key&gt;.invoice') resolve to a
+    /// vendor for fetching. Empty when the scenario file is absent.</summary>
+    private Dictionary<string, string> ReadSmallPoVendors(List<string> notes)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            var path = Gate.Erp.ScenarioLoader.ResolvePath(ScenarioEndpoints.ScenarioPath(_config));
+            if (!File.Exists(path))
+            {
+                return map;
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (!doc.RootElement.TryGetProperty("smallPos", out var smallPos)
+                || smallPos.ValueKind != JsonValueKind.Array)
+            {
+                return map;
+            }
+
+            foreach (var row in smallPos.EnumerateArray())
+            {
+                var key = row.TryGetProperty("key", out var k) ? k.GetString() : null;
+                var vendor = row.TryGetProperty("vendor", out var v) ? v.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(vendor))
+                {
+                    map[key] = vendor;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            notes.Add($"Scenario small-PO map read failed: {ex.Message}.");
+        }
+
+        return map;
+    }
+
+    private static string? VendorForSeedInvoice(
+        ManifestDoc doc, IReadOnlyDictionary<string, string> smallPoVendors)
+    {
+        const string prefix = "smallPo.";
+        const string suffix = ".invoice";
+        if (!doc.Event.StartsWith(prefix, StringComparison.Ordinal)
+            || !doc.Event.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var key = doc.Event[prefix.Length..^suffix.Length];
+        return smallPoVendors.TryGetValue(key, out var vendor) ? vendor : null;
     }
 
     private async Task<IReadOnlyList<ApprovalVm>> ApprovalsForAsync(string docType, string docNumber, CancellationToken ct)
