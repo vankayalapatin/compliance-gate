@@ -120,7 +120,6 @@ public sealed class DockEval50BuildTests
             new
             {
                 eval_id = "dock-eval-50",
-                generatedAtUtc = DateTimeOffset.UtcNow,
                 labeler = "code-compositor-v1",
                 scene_bases = 10,
                 finals = photos.Count,

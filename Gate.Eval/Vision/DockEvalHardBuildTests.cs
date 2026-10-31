@@ -124,7 +124,6 @@ public sealed class DockEvalHardBuildTests
             new
             {
                 eval_id = "dock-eval-hard",
-                generatedAtUtc = DateTimeOffset.UtcNow,
                 labeler = "code-compositor-hard-v1",
                 scene_bases = 6,
                 finals = photos.Count,
