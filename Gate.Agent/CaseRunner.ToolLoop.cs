@@ -27,7 +27,7 @@ public partial class CaseRunner
             var file = CaseStore.Load(_cacheDir, caseId)
                 ?? throw new InvalidOperationException($"Unknown case {caseId}.");
             var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
-            var (step, reason) = CasePicker.Pick(file, view);
+            var (step, reason) = CasePicker.Pick(file, view, payUpToDate);
             _logger.LogInformation(
                 "Case {CaseId} at {Stage}: next step {Step} ({Reason}).",
                 caseId, file.Case.Stage, step, reason);
@@ -36,10 +36,14 @@ public partial class CaseRunner
                 return new CaseAdvanceOutcome(caseId, file.Case.Stage, step, step == CaseNextStep.Done, reason);
             }
 
-            var legal = CasePicker.LegalTools(file, view);
+            var legal = CasePicker.LegalTools(file, view, payUpToDate);
+            // Tool turns need headroom: reasoning models can burn a 2000-token
+            // budget thinking (observed on a pay-vs-email turn) and starve the
+            // answer, failing the advance after retry.
             var request = new ModelRequest(
                 AgentTools.BuildTurnPrompt(file, view),
                 AgentTools.SystemPrompt,
+                MaxTokens: 4000,
                 Tools: AgentTools.Catalog,
                 History: history.Count == 0 ? null : history.ToList());
             ModelResult result;
@@ -203,14 +207,14 @@ public partial class CaseRunner
         var file = CaseStore.Load(_cacheDir, caseId)
             ?? throw new InvalidOperationException($"Unknown case {caseId}.");
         var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
-        var (freshStep, freshReason) = CasePicker.Pick(file, view);
+        var (freshStep, freshReason) = CasePicker.Pick(file, view, payUpToDate);
         if (freshStep.IsWaiting())
         {
             return (ToolCallVerdict.Blocked,
                 $"Case now waits ({freshStep}: {freshReason}); no action runs.", false);
         }
 
-        var freshLegal = CasePicker.LegalTools(file, view);
+        var freshLegal = CasePicker.LegalTools(file, view, payUpToDate);
         if (!freshLegal.Contains(call.Name))
         {
             return (ToolCallVerdict.Blocked, IllegalDetail(caseId, call.Name, freshLegal), false);

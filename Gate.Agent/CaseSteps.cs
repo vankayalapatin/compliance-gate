@@ -63,19 +63,49 @@ public static class CasePicker
 {
     /// <summary>Note-event marker the pre-pay step records when the ERP
     /// refuses a draft for due-date/terms reasons although accepted value
-    /// exists. While the marker stands, the picker parks in AwaitDueDate
-    /// instead of re-attempting the draft every advance.</summary>
+    /// exists. The marker carries the refusing run date: runs on that date
+    /// or earlier keep parking in AwaitDueDate, while a later-dated or
+    /// undated run (a wider window) re-attempts the draft. An undated
+    /// marker (a refusal outside any run date) stays sticky.</summary>
     public const string PaymentNotDueMarker = "payment-not-due";
 
-    public static bool HasPaymentNotDueMarker(CaseFile file) =>
+    public static string PaymentNotDueMarkerFor(DateOnly? runDate) =>
+        runDate.HasValue
+            ? $"{PaymentNotDueMarker}:{runDate.Value:yyyy-MM-dd}"
+            : PaymentNotDueMarker;
+
+    public static bool HasPaymentNotDueMarker(CaseFile file, DateOnly? runDate = null) =>
         file.Events.Any(e => e.Kind == CaseEventKind.Note
             && e.DocumentType == "Payment"
-            && (e.Summary ?? string.Empty).StartsWith(PaymentNotDueMarker, StringComparison.Ordinal));
+            && MarkerBlocksRun(e.Summary, runDate));
+
+    private static bool MarkerBlocksRun(string? summary, DateOnly? runDate)
+    {
+        var text = summary ?? string.Empty;
+        if (!text.StartsWith(PaymentNotDueMarker, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rest = text[PaymentNotDueMarker.Length..];
+        if (!rest.StartsWith(":", StringComparison.Ordinal)
+            || rest.Length < 11
+            || !DateOnly.TryParseExact(rest.Substring(1, 10), "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var markedDate))
+        {
+            return true;
+        }
+
+        return runDate.HasValue && runDate.Value <= markedDate;
+    }
 
     /// <summary>Picks the next tool for the case. Terminal stages return Done;
     /// anything needing a human, supplier, or camera input returns a waiting
-    /// step naming it; otherwise the next runnable agent tool.</summary>
-    public static (CaseNextStep Step, string Reason) Pick(CaseFile file, CaseErpView view)
+    /// step naming it; otherwise the next runnable agent tool. runDate is the
+    /// payment run date behind this pick: a not-due marker blocks only runs
+    /// on its date or earlier.</summary>
+    public static (CaseNextStep Step, string Reason) Pick(CaseFile file, CaseErpView view, DateOnly? runDate = null)
     {
         var current = file.Case;
         if (current.Stage is CaseStage.Resolved or CaseStage.Closed or CaseStage.Cancelled)
@@ -182,7 +212,7 @@ public static class CasePicker
 
         if (view.PaidTotal < view.AcceptedTotal)
         {
-            return HasPaymentNotDueMarker(file)
+            return HasPaymentNotDueMarker(file, runDate)
                 ? (CaseNextStep.AwaitDueDate, "ERP refused the draft on terms although value is payable; parked until due.")
                 : (CaseNextStep.EvaluatePrePay, "Payable value exceeds paid value; run the pre-pay gate.");
         }
@@ -236,7 +266,7 @@ public static class CasePicker
     /// tools always, the picked step's action tool when runnable, and
     /// send_vendor_email while an unemailed invoice problem stands. Waiting
     /// steps end the advance, so they contribute no action tool.</summary>
-    public static IReadOnlySet<string> LegalTools(CaseFile file, CaseErpView view)
+    public static IReadOnlySet<string> LegalTools(CaseFile file, CaseErpView view, DateOnly? runDate = null)
     {
         var legal = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -244,7 +274,7 @@ public static class CasePicker
             AgentTools.GetErpView,
             AgentTools.GetMail,
         };
-        var action = AgentTools.ToToolName(Pick(file, view).Step);
+        var action = AgentTools.ToToolName(Pick(file, view, runDate).Step);
         if (action is not null)
         {
             legal.Add(action);

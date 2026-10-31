@@ -445,7 +445,7 @@ public partial class CaseRunner
         {
             _logger.LogWarning(ex, "Case {CaseId}: ERP refused the payment draft.", current.CaseId);
             work.AddEvent(CaseEventKind.Note,
-                $"{CasePicker.PaymentNotDueMarker}: ERP refused the draft: {ex.Message}",
+                $"{CasePicker.PaymentNotDueMarkerFor(payUpToDate)}: ERP refused the draft: {ex.Message}",
                 documentType: "Payment");
             work.Save(_cacheDir);
             return;

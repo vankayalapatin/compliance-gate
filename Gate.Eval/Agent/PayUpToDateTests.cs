@@ -93,8 +93,67 @@ public sealed class PayUpToDateTests
 
         Assert.Equal(CaseNextStep.AwaitDueDate, outcome.Step);
         var file = CaseStore.Load(h.CaseDir, caseId)!;
-        Assert.True(CasePicker.HasPaymentNotDueMarker(file));
+        Assert.True(CasePicker.HasPaymentNotDueMarker(file, today.AddDays(-1)));
         Assert.Contains(file.Events, e =>
             (e.Summary ?? string.Empty).StartsWith(CasePicker.PaymentNotDueMarker, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LaterRunDateReattemptsAndPaysAfterEarlyRefusal()
+    {
+        var h = Create();
+        var caseId = await SetupPostedInvoiceAsync(h);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var parked = await h.Runner.AdvanceAsync(caseId, payUpToDate: today.AddDays(-1));
+        Assert.Equal(CaseNextStep.AwaitDueDate, parked.Step);
+
+        var drafted = await h.Runner.AdvanceAsync(caseId, payUpToDate: today.AddDays(1));
+        Assert.Equal(CaseNextStep.AwaitDecision, drafted.Step);
+        var pay = CaseStore.Load(h.CaseDir, caseId)!.Decisions
+            .Single(d => d.Kind == DecisionKind.PaymentApproval && d.Status == DecisionStatus.Pending);
+        await h.Runner.ResolveDecisionAsync(caseId, pay.DecisionId, true, pay.RequestedTo, "ok");
+
+        var done = await h.Runner.AdvanceAsync(caseId);
+        Assert.True(done.Complete);
+        Assert.Equal(CaseStage.Resolved, CaseStore.Load(h.CaseDir, caseId)!.Case.Stage);
+        var invoice = (await h.Erp.GetInvoiceAsync("V-B", "INV-P1"))!;
+        var accepted = invoice.Lines
+            .Where(l => l.Disposition == LineDisposition.Accepted)
+            .Sum(l => l.Quantity * l.UnitPrice);
+        var settlements = await h.Erp.GetSettlementsAsync("V-B", "INV-P1");
+        Assert.Equal(accepted, settlements.Sum(s => s.SettledAmount));
+    }
+
+    [Fact]
+    public async Task UndatedRunPaysAfterDatedRefusal()
+    {
+        var h = Create();
+        var caseId = await SetupPostedInvoiceAsync(h);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var parked = await h.Runner.AdvanceAsync(caseId, payUpToDate: today.AddDays(-1));
+        Assert.Equal(CaseNextStep.AwaitDueDate, parked.Step);
+
+        var drafted = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, drafted.Step);
+        Assert.Contains(CaseStore.Load(h.CaseDir, caseId)!.Decisions, d =>
+            d.Kind == DecisionKind.PaymentApproval && d.Status == DecisionStatus.Pending);
+    }
+
+    [Fact]
+    public async Task SameOrEarlierRunDateStaysParked()
+    {
+        var h = Create();
+        var caseId = await SetupPostedInvoiceAsync(h);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var early = today.AddDays(-1);
+
+        var parked = await h.Runner.AdvanceAsync(caseId, payUpToDate: early);
+        Assert.Equal(CaseNextStep.AwaitDueDate, parked.Step);
+
+        Assert.Equal(CaseNextStep.AwaitDueDate, (await h.Runner.AdvanceAsync(caseId, payUpToDate: early)).Step);
+        Assert.Equal(CaseNextStep.AwaitDueDate, (await h.Runner.AdvanceAsync(caseId, payUpToDate: early.AddDays(-1))).Step);
     }
 }
