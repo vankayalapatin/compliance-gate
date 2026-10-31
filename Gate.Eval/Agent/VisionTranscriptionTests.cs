@@ -181,7 +181,8 @@ public sealed class VisionTranscriptionTests
         var h = Create();
         var caseId = await OpenBatteryCaseAsync(h);
         h.Models.QueueResponse(
-            """{"supplier_invoice_number":"INV-STRANGE","vendor_id_or_name":"V-404","po_number":"PO-404","lines":[{"po_line_ref":null,"quantity":5,"unit_price":10}],"bank_account_ref":null}""");
+            """{"supplier_invoice_number":"INV-STRANGE","vendor_id_or_name":"Strange Supplier Co","po_number":"PO-404","lines":[{"po_line_ref":null,"quantity":5,"unit_price":10}],"bank_account_ref":null}""");
+        h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
 
         var invoice = await h.Runner.TranscribeInvoicePhotosAsync(
             caseId, [new InvoicePhoto("INV-IMG-1", [3, 3])]);
@@ -189,13 +190,13 @@ public sealed class VisionTranscriptionTests
         Assert.Equal("INV-STRANGE", invoice.SupplierInvoiceNumber);
         Assert.Null(invoice.VendorIdOrName);
         Assert.Null(invoice.PoNumber);
-        var outcome = await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
-            caseId, invoice.SupplierInvoiceNumber!, invoice.VendorIdOrName, invoice.PoNumber,
-            invoice.Lines, invoice.BankAccountRef));
-        Assert.False(outcome.Persisted);
-        Assert.Equal(50m, outcome.HeldValue);
+        var proposed = CaseStore.Load(h.CaseDir, caseId)!;
+        var card = Assert.Single(proposed.Decisions, d => d.Kind == DecisionKind.VendorIdentity);
+        Assert.Equal("V-B", card.DocumentNumber);
+        await h.Runner.ResolveDecisionAsync(caseId, card.DecisionId, false, card.RequestedTo, "not our vendor");
         var file = CaseStore.Load(h.CaseDir, caseId)!;
         Assert.Contains(file.Events, e => (e.Summary ?? string.Empty).Contains("AP-C3", StringComparison.Ordinal));
+        Assert.Contains(file.Decisions, d => d.Kind == DecisionKind.ApReview);
     }
 
     [Fact]
