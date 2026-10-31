@@ -249,7 +249,8 @@ public partial class CaseRunner
         var prompt =
             $"Read this vendor reply and extract corrected invoice fields. Reply:\n{reply.Body}\n" +
             "Return a JSON object with exactly these keys: supplier_invoice_number (string or null), " +
-            "vendor_id_or_name (string or null), po_number (string or null), " +
+            "vendor_id_or_name (string or null: the supplier id code such as V-B when one is stated, " +
+            "else the supplier name as printed), po_number (string or null), " +
             "lines (array of {po_line_ref (string or null), quantity (number), unit_price (number)}), " +
             "bank_account_ref (string or null), summary (one sentence). " +
             "Transcribe only what the reply states; never guess; use null. " +

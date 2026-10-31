@@ -82,18 +82,19 @@ public sealed class ToolLoopTests
     public void ToolCatalogMirrorsExecutorsReadsAndVendorEmail()
     {
         var names = AgentTools.Catalog.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
-        Assert.Equal(11, names.Count);
+        Assert.Equal(14, names.Count);
         foreach (var action in new[]
             {
                 AgentTools.ComputeShortfall, AgentTools.RaisePr, AgentTools.ScreenVendors,
-                AgentTools.SubmitPoApproval, AgentTools.EvaluatePrePay, AgentTools.NotifyCustomer,
+                AgentTools.AwardSupplier, AgentTools.CreatePo,
+                AgentTools.SubmitPoApproval, AgentTools.DraftPayment, AgentTools.NotifyCustomer,
                 AgentTools.FinishCase, AgentTools.SendVendorEmail,
             })
         {
             Assert.Contains(action, names);
         }
 
-        foreach (var read in new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail })
+        foreach (var read in new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail, AgentTools.CheckPrePay })
         {
             Assert.Contains(read, names);
         }
@@ -311,6 +312,129 @@ public sealed class ToolLoopTests
         Assert.NotNull(result.ToolCalls);
         Assert.Single(result.ToolCalls);
         Assert.Equal(1, models.CallCount);
+    }
+
+    private static string AwardArgs(string caseId, string vendorId) =>
+        $$"""{"case_id":"{{caseId}}","vendor_id":"{{vendorId}}"}""";
+
+    private static async Task<string> OpenApprovedPrCaseAsync(Harness h, IReadOnlyDictionary<string, IReadOnlyList<string>>? candidates = null)
+    {
+        var cases = await h.Runner.OnOrderWebhookAsync(
+            new OrderWebhookInput("test", "SO-1001", "planner", candidates ?? Candidates()));
+        var caseId = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
+        h.Models.QueueToolCalls("shortfall", ("c1", AgentTools.ComputeShortfall, Args(caseId)));
+        h.Models.QueueToolCalls("raise", ("c2", AgentTools.RaisePr, Args(caseId)));
+        await h.Runner.AdvanceAsync(caseId);
+        var file = CaseStore.Load(h.CaseDir, caseId)!;
+        var pr = file.Decisions.Single(d => d.Kind == DecisionKind.PrApproval);
+        await h.Runner.ResolveDecisionAsync(caseId, pr.DecisionId, true, pr.RequestedTo, "ok");
+        return caseId;
+    }
+
+    [Fact]
+    public async Task AwardToPassingVendorRecordsChoiceAndReasonThenCreatesPo()
+    {
+        var h = Create();
+        var caseId = await OpenApprovedPrCaseAsync(h);
+        h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
+        h.Models.QueueToolCalls("V-B passed while V-A is blocked by CORP-02.",
+            ("c4", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
+        h.Models.QueueToolCalls("create", ("c5", AgentTools.CreatePo, Args(caseId)));
+        h.Models.QueueToolCalls("submit", ("c6", AgentTools.SubmitPoApproval, Args(caseId)));
+
+        var outcome = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, outcome.Step);
+        var awarded = CaseStore.Load(h.CaseDir, caseId)!;
+        Assert.Equal("V-B", awarded.Case.AwardedVendorId);
+        Assert.NotNull(awarded.Case.PoNumber);
+        var award = awarded.Events.Single(e => e.Kind == CaseEventKind.SupplierAwarded);
+        Assert.Contains("V-B passed while V-A is blocked", award.Summary, StringComparison.Ordinal);
+        var turns = CaseTranscript.ReadTurns(h.CaseDir, caseId);
+        Assert.All(turns.Skip(2).SelectMany(t => t.Calls), c => Assert.Equal(ToolCallVerdict.Executed, c.Verdict));
+    }
+
+    [Fact]
+    public async Task AwardToBlockedVendorIsRefusedWithPassingList()
+    {
+        var h = Create();
+        var caseId = await OpenApprovedPrCaseAsync(h);
+        h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
+        h.Models.QueueToolCalls("award V-A", ("c4", AgentTools.AwardSupplier, AwardArgs(caseId, "V-A")));
+        h.Models.QueueToolCalls("award V-B instead", ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
+        h.Models.QueueToolCalls("create", ("c6", AgentTools.CreatePo, Args(caseId)));
+        h.Models.QueueToolCalls("submit", ("c7", AgentTools.SubmitPoApproval, Args(caseId)));
+
+        var outcome = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, outcome.Step);
+        var turns = CaseTranscript.ReadTurns(h.CaseDir, caseId);
+        var refused = turns[3].Calls[0];
+        Assert.Equal(ToolCallVerdict.Blocked, refused.Verdict);
+        Assert.Contains("did not pass screening", refused.Detail, StringComparison.Ordinal);
+        Assert.Contains("V-B", refused.Detail, StringComparison.Ordinal);
+        Assert.Equal(ToolCallVerdict.Executed, turns[4].Calls[0].Verdict);
+        Assert.Equal("V-B", CaseStore.Load(h.CaseDir, caseId)!.Case.AwardedVendorId);
+    }
+
+    [Fact]
+    public async Task AwardWithoutVendorIdIsBlocked()
+    {
+        var h = Create();
+        var caseId = await OpenApprovedPrCaseAsync(h);
+        h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
+        h.Models.QueueToolCalls("award?", ("c4", AgentTools.AwardSupplier, Args(caseId)));
+        h.Models.QueueToolCalls("award V-B", ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
+        h.Models.QueueToolCalls("create", ("c6", AgentTools.CreatePo, Args(caseId)));
+        h.Models.QueueToolCalls("submit", ("c7", AgentTools.SubmitPoApproval, Args(caseId)));
+
+        var outcome = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, outcome.Step);
+        var turns = CaseTranscript.ReadTurns(h.CaseDir, caseId);
+        Assert.Equal(ToolCallVerdict.Blocked, turns[3].Calls[0].Verdict);
+        Assert.Contains("needs vendor_id", turns[3].Calls[0].Detail, StringComparison.Ordinal);
+        Assert.Equal(ToolCallVerdict.Executed, turns[4].Calls[0].Verdict);
+    }
+
+    [Fact]
+    public async Task AwardWithNoPassingVendorFailsLoud()
+    {
+        var h = Create();
+        var onlyBlocked = new Dictionary<string, IReadOnlyList<string>>
+        {
+            [SeededErp.Battery] = ["V-A"],
+            [SeededErp.Screw] = ["V-C"]
+        };
+        var caseId = await OpenApprovedPrCaseAsync(h, onlyBlocked);
+        h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
+        h.Models.QueueToolCalls("award V-A", ("c4", AgentTools.AwardSupplier, AwardArgs(caseId, "V-A")));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.AdvanceAsync(caseId));
+
+        Assert.Contains("No compliant vendor", ex.Message, StringComparison.Ordinal);
+        var turns = CaseTranscript.ReadTurns(h.CaseDir, caseId);
+        Assert.Equal(ToolCallVerdict.Failed, turns[^1].Calls[0].Verdict);
+    }
+
+    [Fact]
+    public async Task CheckPrePayReadsGateWithoutChangingState()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        h.Models.QueueToolCalls("check gate",
+            ("c1", AgentTools.CheckPrePay, Args(caseId)));
+        h.Models.QueueToolCalls("shortfall", ("c2", AgentTools.ComputeShortfall, Args(caseId)));
+        h.Models.QueueToolCalls("raise", ("c3", AgentTools.RaisePr, Args(caseId)));
+
+        var outcome = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, outcome.Step);
+        var turns = CaseTranscript.ReadTurns(h.CaseDir, caseId);
+        Assert.Equal(ToolCallVerdict.Executed, turns[0].Calls[0].Verdict);
+        Assert.Contains("openHolds", turns[0].Calls[0].Detail, StringComparison.Ordinal);
+        var file = CaseStore.Load(h.CaseDir, caseId)!;
+        Assert.DoesNotContain(file.Events, e => string.Equals(e.DocumentType, "Payment", StringComparison.Ordinal));
     }
 
     [Fact]

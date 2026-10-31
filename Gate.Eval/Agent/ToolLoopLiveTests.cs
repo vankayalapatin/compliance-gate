@@ -105,7 +105,9 @@ public sealed class ToolLoopLiveTests
             Assert.Contains(AgentTools.ComputeShortfall, executed);
             Assert.Contains(AgentTools.RaisePr, executed);
             Assert.Contains(AgentTools.ScreenVendors, executed);
-            Assert.Contains(AgentTools.EvaluatePrePay, executed);
+            Assert.Contains(AgentTools.AwardSupplier, executed);
+            Assert.Contains(AgentTools.CreatePo, executed);
+            Assert.Contains(AgentTools.DraftPayment, executed);
             Assert.Contains(AgentTools.FinishCase, executed);
         }
     }
@@ -212,9 +214,12 @@ public sealed class ToolLoopLiveTests
         var batLine = (await erp.GetPurchaseOrderAsync(batPo))!.Lines.Single();
         var unmarked = cartons.Single(c => !c.MarkPresent);
         var acceptedUnits = cartons.Sum(c => c.Units) - unmarked.Units;
+        // The vendor under-bills by 5 units on the main invoice; the missing 5
+        // arrive later as a misaddressed invoice, corrected over vendor email.
+        var shortQty = 5m;
         var transcribed = await TranscribeLiveInvoiceAsync(
             runner, erp, bat, $"INV-{batPo}", mainVendor, batPo,
-            batLine.PoLineRef, mainQty, mainPrice);
+            batLine.PoLineRef, mainQty - shortQty, mainPrice);
         var intake = await runner.OnInvoiceAsync(new SupplierInvoiceInput(
             bat, transcribed.SupplierInvoiceNumber!, transcribed.VendorIdOrName, transcribed.PoNumber,
             transcribed.Lines, transcribed.BankAccountRef));
@@ -232,21 +237,118 @@ public sealed class ToolLoopLiveTests
         var reshot = await runner.OnReshotAsync(new ReshotInput(bat, [unmarked.Id], photoReads.ReshotReads));
         Assert.All(reshot[unmarked.Id], v => Assert.Equal(VerdictKind.Pass, v.Kind));
 
-        await runner.AdvanceAsync(bat);
-        var pay2 = Pending(Load(), DecisionKind.PaymentApproval);
-        Assert.NotEqual(pay1.DecisionId, pay2.DecisionId);
-        Assert.Equal(unmarked.Units * mainPrice, pay2.Amount);
-        await runner.ResolveDecisionAsync(bat, pay2.DecisionId, true, pay2.RequestedTo, "ok");
+        var tricky = await runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            bat, "INV-MISS", mainVendor, "PO-404",
+            [new SupplierInvoiceLineInput("PO-L9", shortQty, mainPrice)]));
+        Assert.False(tricky.Persisted);
+        var problem = Load().Decisions.Single(d =>
+            d.Kind == DecisionKind.ApReview && d.Status == DecisionStatus.Pending);
+        Assert.Equal($"{mainVendor}/INV-MISS", problem.DocumentNumber);
+        _output.WriteLine($"[mail-live] AP problem: {problem.DocumentNumber} :: {problem.Reason ?? problem.Title}");
 
-        var done = await runner.AdvanceAsync(bat);
+        var laterPays = new List<decimal>();
+        for (var round = 0; round < 6; round++)
+        {
+            await runner.AdvanceAsync(bat);
+            if (Load().Events.Any(e => e.Kind == CaseEventKind.VendorEmailed))
+            {
+                break;
+            }
+
+            var pendingPay = Load().Decisions.FirstOrDefault(d =>
+                d.Kind == DecisionKind.PaymentApproval && d.Status == DecisionStatus.Pending);
+            if (pendingPay is not null)
+            {
+                if (pendingPay.Amount is not decimal loopAmount)
+                {
+                    throw new InvalidOperationException("Pay decision carries no amount.");
+                }
+
+                laterPays.Add(loopAmount);
+                await runner.ResolveDecisionAsync(bat, pendingPay.DecisionId, true, pendingPay.RequestedTo, "ok");
+            }
+        }
+
+        var query = EmailStore.Load(caseDir, bat).Messages.SingleOrDefault();
+        Assert.True(query is not null, "Spark never emailed the vendor about the tricky invoice.");
+        Assert.Equal($"{mainVendor}/INV-MISS", query.InvoiceRef);
+        _output.WriteLine($"[mail-live] query to {query.To}: {query.Subject}");
+
+        var vendorMaster = (await erp.GetVendorsAsync()).Single(v =>
+            string.Equals(v.VendorId, mainVendor, StringComparison.Ordinal));
+        Assert.False(string.IsNullOrWhiteSpace(vendorMaster.Email));
+        var reply = await runner.OnVendorReplyAsync(new VendorReplyInput(
+            bat, vendorMaster.Email!, CorporateReplyBody(vendorMaster.Name, mainVendor, batPo, batLine.PoLineRef, mainPrice),
+            InReplyTo: query.EmailId, EmailId: $"{bat}-r-001"));
+        Assert.Equal(mainVendor, reply.VendorId);
+        var fixedInvoice = await erp.GetInvoiceAsync(mainVendor, "INV-FIX");
+        Assert.NotNull(fixedInvoice);
+        Assert.All(fixedInvoice.Lines, l => Assert.Equal(LineDisposition.Accepted, l.Disposition));
+        Assert.Contains(Load().Events, e =>
+            e.Kind == CaseEventKind.Note
+            && (e.Summary ?? string.Empty).Contains($"re-intaked as {mainVendor}/INV-FIX", StringComparison.Ordinal));
+
+        var fixApproval = Load().Decisions.Single(d =>
+            d.Kind == DecisionKind.InvoiceApproval
+            && d.Status == DecisionStatus.Pending
+            && string.Equals(d.DocumentNumber, $"{mainVendor}/INV-FIX", StringComparison.Ordinal));
+        await runner.ResolveDecisionAsync(bat, fixApproval.DecisionId, true, fixApproval.RequestedTo, "ok");
+        var apReview = Load().Decisions.Single(d =>
+            d.Kind == DecisionKind.ApReview && d.Status == DecisionStatus.Pending);
+        await runner.ResolveDecisionAsync(bat, apReview.DecisionId, true, apReview.RequestedTo, "correction accepted");
+
+        CaseAdvanceOutcome done;
+        for (var round = 0; ; round++)
+        {
+            done = await runner.AdvanceAsync(bat);
+            if (done.Complete)
+            {
+                break;
+            }
+
+            Assert.True(round < 6, "Pay rounds did not converge; see the transcript.");
+            var pay = Pending(Load(), DecisionKind.PaymentApproval);
+            if (round == 0)
+            {
+                Assert.NotEqual(pay1.DecisionId, pay.DecisionId);
+            }
+
+            if (pay.Amount is not decimal roundAmount)
+            {
+                throw new InvalidOperationException("Pay decision carries no amount.");
+            }
+
+            laterPays.Add(roundAmount);
+            await runner.ResolveDecisionAsync(bat, pay.DecisionId, true, pay.RequestedTo, "ok");
+        }
+
         Assert.Equal(CaseNextStep.Done, done.Step);
-        Assert.True(done.Complete);
+        Assert.Equal(unmarked.Units * mainPrice, laterPays.Sum());
         var final = Load();
         Assert.Equal(CaseStage.Resolved, final.Case.Stage);
-        Assert.Equal(2, final.Case.PaymentNumbers.Count);
-        var settlements = await erp.GetSettlementsAsync(mainVendor, $"INV-{batPo}");
-        Assert.Equal(mainQty * mainPrice, settlements.Sum(s => s.SettledAmount));
+        Assert.InRange(final.Case.PaymentNumbers.Count, 2, 3);
+        var mainSettled = await erp.GetSettlementsAsync(mainVendor, $"INV-{batPo}");
+        var fixSettled = await erp.GetSettlementsAsync(mainVendor, "INV-FIX");
+        Assert.Equal(mainQty * mainPrice,
+            mainSettled.Sum(s => s.SettledAmount) + fixSettled.Sum(s => s.SettledAmount));
     }
+
+    private static string CorporateReplyBody(
+        string vendorName, string vendorId, string poNumber, string poLineRef, decimal unitPrice) =>
+        "Hi,\n" +
+        "\n" +
+        "Thanks for flagging this — you're right, INV-MISS went out with an old PO reference on our side. " +
+        "Sorry for the confusion.\n" +
+        "\n" +
+        $"Please book those 5 units as invoice INV-FIX under {vendorName} ({vendorId}) against your PO {poNumber}, " +
+        $"line {poLineRef}, at {unitPrice.ToString(CultureInfo.InvariantCulture)} per unit. " +
+        $"Everything else on the shipment stays as billed on INV-{poNumber}.\n" +
+        "\n" +
+        "Let me know if you need anything else from us.\n" +
+        "\n" +
+        "Best regards,\n" +
+        "Maria Santos\n" +
+        $"Accounts Receivable, {vendorName}";
 
     private sealed record LivePhotoReads(
         IReadOnlyList<DockCartonRead> DockReads,

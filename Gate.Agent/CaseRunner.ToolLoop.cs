@@ -129,7 +129,7 @@ public partial class CaseRunner
             try
             {
                 var (verdict, detail, actedNow) = await ExecuteOneCallAsync(
-                    caseId, call, legal, payUpToDate, ct).ConfigureAwait(false);
+                    caseId, call, legal, reasoning, payUpToDate, ct).ConfigureAwait(false);
                 acted |= actedNow;
                 transcriptCalls.Add(new TranscriptToolCall(
                     call.Id, call.Name, call.ArgumentsJson, verdict, detail));
@@ -178,7 +178,7 @@ public partial class CaseRunner
     /// before every action the case is re-loaded and re-picked, so a call is
     /// never executed against stale state.</summary>
     private async Task<(ToolCallVerdict Verdict, string Detail, bool Acted)> ExecuteOneCallAsync(
-        string caseId, ModelToolCall call, IReadOnlySet<string> turnLegal,
+        string caseId, ModelToolCall call, IReadOnlySet<string> turnLegal, string reasoning,
         DateOnly? payUpToDate, CancellationToken ct)
     {
         if (AgentTools.Catalog.All(t => !string.Equals(t.Name, call.Name, StringComparison.Ordinal)))
@@ -253,6 +253,37 @@ public partial class CaseRunner
                 $"Queried {email.To} about {invoiceRef} (mail {email.EmailId}): {before} -> {after}.", true);
         }
 
+        if (string.Equals(call.Name, AgentTools.AwardSupplier, StringComparison.Ordinal))
+        {
+            var vendorId = AgentTools.ReadStringArg(call.ArgumentsJson, "vendor_id");
+            if (vendorId is null)
+            {
+                return (ToolCallVerdict.Blocked, "award_supplier needs vendor_id of a passing vendor.", false);
+            }
+
+            var screenings = await _core.ScreenCandidatesAsync(
+                file.Case.PrNumber!, ReadCandidates(file, file.Case.ItemId), ct).ConfigureAwait(false);
+            var passing = screenings.Where(s => s.Passed).Select(s => s.VendorId).ToList();
+            if (passing.Count > 0 && !passing.Contains(vendorId, StringComparer.Ordinal))
+            {
+                return (ToolCallVerdict.Blocked,
+                    $"Vendor {vendorId} did not pass screening; passing: {string.Join(", ", passing)}.", false);
+            }
+
+            try
+            {
+                await AwardSupplierStepAsync(file, vendorId, reasoning, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Case {CaseId} award_supplier failed.", caseId);
+                RecordFailureNote(caseId, AgentTools.AwardSupplier, ex);
+                throw;
+            }
+
+            return (ToolCallVerdict.Executed, $"Awarded {file.Case.ItemId} to {vendorId}.", true);
+        }
+
         var mapped = AgentTools.ToStep(call.Name);
         if (mapped is null || mapped != freshStep)
         {
@@ -292,6 +323,15 @@ public partial class CaseRunner
             var file = CaseStore.Load(_cacheDir, caseId)
                 ?? throw new InvalidOperationException($"Unknown case {caseId}.");
             return AgentTools.ErpViewJson(await BuildViewAsync(file, ct).ConfigureAwait(false));
+        }
+
+        if (string.Equals(name, AgentTools.CheckPrePay, StringComparison.Ordinal))
+        {
+            var file = CaseStore.Load(_cacheDir, caseId)
+                ?? throw new InvalidOperationException($"Unknown case {caseId}.");
+            var state = await BuildPrePayStateAsync(file, ct).ConfigureAwait(false);
+            var verdicts = await _compliance.EvaluatePaymentAsync(state, ct).ConfigureAwait(false);
+            return AgentTools.PrePayJson(state, verdicts);
         }
 
         return AgentTools.MailJson(EmailStore.Load(_cacheDir, caseId));

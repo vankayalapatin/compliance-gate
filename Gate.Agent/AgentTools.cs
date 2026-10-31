@@ -16,8 +16,11 @@ public static class AgentTools
     public const string ComputeShortfall = "compute_shortfall";
     public const string RaisePr = "raise_pr";
     public const string ScreenVendors = "screen_vendors";
+    public const string AwardSupplier = "award_supplier";
+    public const string CreatePo = "create_po";
     public const string SubmitPoApproval = "submit_po_approval";
-    public const string EvaluatePrePay = "evaluate_pre_pay";
+    public const string CheckPrePay = "check_pre_pay";
+    public const string DraftPayment = "draft_payment";
     public const string NotifyCustomer = "notify_customer";
     public const string FinishCase = "finish_case";
     public const string SendVendorEmail = "send_vendor_email";
@@ -36,11 +39,20 @@ public static class AgentTools
             [new("case_id", "Case id, e.g. demo-v1-SO-1-BAT-1.", ModelToolParameterType.String)]),
         new(RaisePr, "Raise (or reuse) the purchase requisition for the computed shortfall and route it for approval.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
-        new(ScreenVendors, "Screen the candidate vendors against compliance packs and place the PO with a passing vendor.",
+        new(ScreenVendors, "Screen the candidate vendors against compliance packs. Losers are blocked; winners await award.",
+            [new("case_id", "Case id.", ModelToolParameterType.String)]),
+        new(AwardSupplier, "Award the buy to one screened-passing vendor. Name the vendor and say why in your one-line reason.",
+            [
+                new("case_id", "Case id.", ModelToolParameterType.String),
+                new("vendor_id", "Passing vendor id to award, e.g. V-B.", ModelToolParameterType.String),
+            ]),
+        new(CreatePo, "Create the purchase order with the awarded vendor.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
         new(SubmitPoApproval, "Submit a draft PO for human approval.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
-        new(EvaluatePrePay, "Run the pre-pay gate over holds, quarantine, and reviews, then draft the next payment for accepted value.",
+        new(CheckPrePay, "Read the pre-pay gate verdicts over holds, quarantine, and open reviews. Read-only: drafts nothing.",
+            [new("case_id", "Case id.", ModelToolParameterType.String)]),
+        new(DraftPayment, "Draft the next payment for accepted value and route it for human approval.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
         new(NotifyCustomer, "Notify the customer that materials are secured.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
@@ -62,7 +74,8 @@ public static class AgentTools
     public static bool IsReadTool(string name) =>
         string.Equals(name, GetCase, StringComparison.Ordinal)
         || string.Equals(name, GetErpView, StringComparison.Ordinal)
-        || string.Equals(name, GetMail, StringComparison.Ordinal);
+        || string.Equals(name, GetMail, StringComparison.Ordinal)
+        || string.Equals(name, CheckPrePay, StringComparison.Ordinal);
 
     /// <summary>Maps a runnable picker step to its action tool. Waiting steps
     /// have no tool: they end the advance instead of executing.</summary>
@@ -71,9 +84,12 @@ public static class AgentTools
         CaseNextStep.ComputeShortfall => ComputeShortfall,
         CaseNextStep.RaisePr => RaisePr,
         CaseNextStep.ScreenVendors => ScreenVendors,
+        CaseNextStep.AwardSupplier => AwardSupplier,
+        CaseNextStep.CreatePo => CreatePo,
         CaseNextStep.SubmitPoApproval => SubmitPoApproval,
-        CaseNextStep.EvaluatePrePay => EvaluatePrePay,
+        CaseNextStep.DraftPayment => DraftPayment,
         CaseNextStep.NotifyCustomer => NotifyCustomer,
+        CaseNextStep.QueryVendor => SendVendorEmail,
         CaseNextStep.FinishCase => FinishCase,
         _ => null,
     };
@@ -83,8 +99,10 @@ public static class AgentTools
         ComputeShortfall => CaseNextStep.ComputeShortfall,
         RaisePr => CaseNextStep.RaisePr,
         ScreenVendors => CaseNextStep.ScreenVendors,
+        AwardSupplier => CaseNextStep.AwardSupplier,
+        CreatePo => CaseNextStep.CreatePo,
         SubmitPoApproval => CaseNextStep.SubmitPoApproval,
-        EvaluatePrePay => CaseNextStep.EvaluatePrePay,
+        DraftPayment => CaseNextStep.DraftPayment,
         NotifyCustomer => CaseNextStep.NotifyCustomer,
         FinishCase => CaseNextStep.FinishCase,
         _ => null,
@@ -95,10 +113,11 @@ public static class AgentTools
         "drive the case forward by calling tools. Prefer exactly one action " +
         "tool per turn; you may call read tools first when you need fresher " +
         "detail. Only call send_vendor_email when a held invoice problem has " +
-        "no other path forward. Never invent ids, quantities, prices, or " +
-        "dates: every value you use must come from the case state, the ERP " +
-        "view, or a tool result. Illegal calls are blocked and the refusal " +
-        "is fed back to you; adjust and continue.";
+        "no other path forward. For a supplier award, name a vendor that " +
+        "passed screening and say why in your one-line reason. Never invent " +
+        "ids, quantities, prices, or dates: every value you use must come " +
+        "from the case state, the ERP view, or a tool result. Illegal calls " +
+        "are blocked and the refusal is fed back to you; adjust and continue.";
 
     /// <summary>Builds one turn prompt: stable case JSON plus the ERP view.
     /// No timestamps anywhere, so replays reproduce the prompt byte for byte.
@@ -130,6 +149,22 @@ public static class AgentTools
     /// <summary>Stable ERP-view JSON for the get_erp_view tool.</summary>
     public static string ErpViewJson(CaseErpView view) =>
         JsonSerializer.Serialize(ErpViewProjection(view), JsonOpts);
+
+    /// <summary>Stable pre-pay gate JSON for the check_pre_pay tool: counts
+    /// plus verdicts, no timestamps, so reads replay byte for byte.</summary>
+    public static string PrePayJson(PrePayState state, IReadOnlyList<Verdict> verdicts) =>
+        JsonSerializer.Serialize(new
+        {
+            OpenHolds = state.OpenHolds.Count,
+            state.QuarantinedLotRefs,
+            OpenReviews = state.OpenReviews.Count,
+            Verdicts = verdicts.Select(v => new
+            {
+                v.RuleId,
+                Kind = v.Kind.ToString(),
+                v.Reason,
+            }).ToList(),
+        }, JsonOpts);
 
     /// <summary>Stable mail-thread JSON for the get_mail tool: no sent times.</summary>
     public static string MailJson(CaseMail mail) =>

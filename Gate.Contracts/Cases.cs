@@ -43,7 +43,8 @@ public sealed record Case(
     IReadOnlyList<InvoiceKey> Invoices,
     IReadOnlyList<string> PaymentNumbers,
     string? BlockedByRuleId,
-    string? BlockedReason);
+    string? BlockedReason,
+    string? AwardedVendorId = null);
 
 public enum CaseEventKind
 {
@@ -72,7 +73,8 @@ public enum CaseEventKind
     CustomerNotified,
     Note,
     VendorEmailed,
-    VendorReplied
+    VendorReplied,
+    SupplierAwarded
 }
 
 /// <summary>One append-only timeline entry. Actor is a user id, vendor id, or

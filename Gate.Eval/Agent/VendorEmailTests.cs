@@ -324,6 +324,53 @@ public sealed class VendorEmailTests
     }
 
     [Fact]
+    public async Task DeferredQueryVendorEmailsFirstUnemailedProblem()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        SeedEmail(h, "V-B", "sales@cells.example");
+        await h.Runner.AdvanceAsync(caseId);
+        var raised = Load(h, caseId);
+        var pr = raised.Decisions.Single(d => d.Kind == DecisionKind.PrApproval);
+        await h.Runner.ResolveDecisionAsync(caseId, pr.DecisionId, true, pr.RequestedTo, "ok");
+        await h.Runner.AdvanceAsync(caseId);
+        var ordered = Load(h, caseId);
+        var poApproval = ordered.Decisions.Single(d => d.Kind == DecisionKind.PoApproval);
+        await h.Runner.ResolveDecisionAsync(caseId, poApproval.DecisionId, true, poApproval.RequestedTo, "ok");
+        await h.Runner.AdvanceAsync(caseId);
+        await h.Runner.OnSupplierAckAsync(new SupplierAckInput(caseId));
+        await h.Runner.AdvanceAsync(caseId);
+        var poNumber = Load(h, caseId).Case.PoNumber!;
+        var poLine = (await h.Erp.GetPurchaseOrderAsync(poNumber))!.Lines
+            .Single(l => l.ItemId == SeededErp.Battery);
+        await h.Runner.OnAsnAsync(new SupplierAsnInput(caseId, "ASN-Q1", "PACK-Q1",
+            [new AsnCartonInput("CTN-Q1", SeededErp.Battery, (int)poLine.QtyOrdered, "LOT-Q1")]));
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "INV-Q1", "V-B", poNumber,
+            [new SupplierInvoiceLineInput(poLine.PoLineRef, poLine.QtyOrdered, poLine.UnitPrice)]));
+        var invoiced = Load(h, caseId);
+        var approval = invoiced.Decisions.Single(d => d.Kind == DecisionKind.InvoiceApproval);
+        await h.Runner.ResolveDecisionAsync(caseId, approval.DecisionId, true, approval.RequestedTo, "ok");
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "INV-QMISS", "V-B", "PO-404",
+            [new SupplierInvoiceLineInput("PO-L9", 5, 10)]));
+        h.Models.QueueResponse("""{"subject":"Need PO ref","body":"Which PO is INV-QMISS for?"}""");
+        await h.Runner.AdvanceAsync(caseId);
+        var drafted = Load(h, caseId);
+        var pay = drafted.Decisions.Single(d =>
+            d.Kind == DecisionKind.PaymentApproval && d.Status == DecisionStatus.Pending);
+        await h.Runner.ResolveDecisionAsync(caseId, pay.DecisionId, true, pay.RequestedTo, "ok");
+
+        var outcome = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitVendorReply, outcome.Step);
+        var emailed = Load(h, caseId).Events.Single(e => e.Kind == CaseEventKind.VendorEmailed);
+        Assert.Equal("V-B/INV-QMISS", emailed.DocumentNumber);
+        var mail = EmailStore.Load(h.CaseDir, caseId);
+        Assert.Equal("sales@cells.example", Assert.Single(mail.Messages).To);
+    }
+
+    [Fact]
     public void AwaitVendorReplyParksUntilTheReplyArrives()
     {
         var now = DateTimeOffset.UtcNow;

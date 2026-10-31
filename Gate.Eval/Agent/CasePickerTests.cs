@@ -10,19 +10,24 @@ public sealed class CasePickerTests
     private static CaseFile File(
         CaseStage stage,
         string? pr = null, string? po = null, string? asn = null, string? receipt = null,
-        IReadOnlyList<Decision>? decisions = null, IReadOnlyList<CaseEvent>? events = null)
+        IReadOnlyList<Decision>? decisions = null, IReadOnlyList<CaseEvent>? events = null,
+        string? awarded = null)
     {
         var now = DateTimeOffset.UtcNow;
         return new CaseFile(
             new Case("case-1", "SO-1", "BAT-1", "test", stage, now, now,
-                pr, po, asn, receipt, [], [], null, null),
+                pr, po, asn, receipt, [], [], null, null, awarded),
             events ?? [], decisions ?? []);
     }
 
-    private static Decision Pending(DecisionKind kind, string doc = "DOC-1") =>
+    private static Decision Pending(DecisionKind kind, string doc = "DOC-1", string docType = "Doc") =>
         new("d1", "case-1", kind, "title", DecisionStatus.Pending, "someone",
-            DateTimeOffset.UtcNow, null, null, "Doc", doc, null, null, null,
+            DateTimeOffset.UtcNow, null, null, docType, doc, null, null, null,
             "reason", [], null);
+
+    private static CaseEvent MailEvent(CaseEventKind kind, string emailId) =>
+        new(emailId, "case-1", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
+            kind, kind.ToString(), null, "Invoice", "V-X/INV-9", $"mail:{emailId}", null, null);
 
     private static CaseErpView View(
         bool soExists = true,
@@ -72,6 +77,29 @@ public sealed class CasePickerTests
             CasePicker.Pick(File(CaseStage.PrSubmitted, pr: "PR-1"), View(prStatus: PrStatus.Approved)).Step);
         Assert.Equal(CaseNextStep.ScreenVendors,
             CasePicker.Pick(File(CaseStage.PrApproved, pr: "PR-1"), View(prStatus: PrStatus.Approved)).Step);
+    }
+
+    private static CaseEvent Screened(string vendorId) =>
+        new("e7", "case-1", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
+            CaseEventKind.VendorScreened, $"Vendor {vendorId} passed screening.",
+            null, null, null, null, null, null);
+
+    [Fact]
+    public void SourcingWalksScreenAwardCreate()
+    {
+        var view = View(prStatus: PrStatus.Approved);
+        var unscreened = File(CaseStage.PrApproved, pr: "PR-1");
+        Assert.Equal(CaseNextStep.ScreenVendors, CasePicker.Pick(unscreened, view).Step);
+        Assert.Contains(AgentTools.ScreenVendors, CasePicker.LegalTools(unscreened, view));
+        Assert.DoesNotContain(AgentTools.AwardSupplier, CasePicker.LegalTools(unscreened, view));
+
+        var screened = File(CaseStage.PrApproved, pr: "PR-1", events: [Screened("V-B")]);
+        Assert.Equal(CaseNextStep.AwardSupplier, CasePicker.Pick(screened, view).Step);
+        Assert.Contains(AgentTools.AwardSupplier, CasePicker.LegalTools(screened, view));
+
+        var awarded = File(CaseStage.PrApproved, pr: "PR-1", events: [Screened("V-B")], awarded: "V-B");
+        Assert.Equal(CaseNextStep.CreatePo, CasePicker.Pick(awarded, view).Step);
+        Assert.Contains(AgentTools.CreatePo, CasePicker.LegalTools(awarded, view));
     }
 
     [Fact]
@@ -143,7 +171,7 @@ public sealed class CasePickerTests
     public void PrePayRunsUntilPaidThenWaitsOrFinishes()
     {
         var file = File(CaseStage.InvoiceMatched, pr: "PR-1", po: "PO-1");
-        Assert.Equal(CaseNextStep.EvaluatePrePay,
+        Assert.Equal(CaseNextStep.DraftPayment,
             CasePicker.Pick(file, View(matched: 1, accepted: 100, paid: 60, held: true, notified: true)).Step);
 
         var parked = File(CaseStage.InvoiceMatched, pr: "PR-1", po: "PO-1", events: [DueMarker()]);
@@ -158,10 +186,23 @@ public sealed class CasePickerTests
         Assert.Equal(CaseNextStep.FinishCase,
             CasePicker.Pick(clean, View(matched: 1, accepted: 100, paid: 100, notified: true)).Step);
 
+        var cleanView = View(matched: 1, accepted: 100, paid: 100, notified: true);
         var apOnly = File(CaseStage.PaymentPartial, pr: "PR-1", po: "PO-1",
-            decisions: [Pending(DecisionKind.ApReview, "V-X/INV-9")]);
-        Assert.Equal(CaseNextStep.FinishCase,
-            CasePicker.Pick(apOnly, View(matched: 1, accepted: 100, paid: 100, notified: true)).Step);
+            decisions: [Pending(DecisionKind.ApReview, "V-X/INV-9", "Invoice")]);
+        Assert.Equal(CaseNextStep.QueryVendor, CasePicker.Pick(apOnly, cleanView).Step);
+        Assert.Contains(AgentTools.SendVendorEmail, CasePicker.LegalTools(apOnly, cleanView));
+
+        var emailed = apOnly with
+        {
+            Events = [MailEvent(CaseEventKind.VendorEmailed, "q1")]
+        };
+        Assert.Equal(CaseNextStep.AwaitVendorReply, CasePicker.Pick(emailed, cleanView).Step);
+
+        var answered = apOnly with
+        {
+            Events = [MailEvent(CaseEventKind.VendorEmailed, "q1"), MailEvent(CaseEventKind.VendorReplied, "r1")]
+        };
+        Assert.Equal(CaseNextStep.AwaitDecision, CasePicker.Pick(answered, cleanView).Step);
 
         var reviewStuck = File(CaseStage.PaymentPartial, pr: "PR-1", po: "PO-1",
             decisions: [Pending(DecisionKind.DamageReview, "RCT-1")]);

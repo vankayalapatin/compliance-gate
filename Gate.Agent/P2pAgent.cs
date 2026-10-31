@@ -103,16 +103,15 @@ public sealed class P2pAgent
         return outbound?.ToUser ?? chosen.UserId;
     }
 
-    public async Task<(PurchaseOrder Po, IReadOnlyList<VendorScreening> Screenings)> ScreenAndOrderAsync(
-        string prNumber, IReadOnlyList<string> candidateVendorIds, string source, string caseId, CancellationToken ct = default,
-        string? idempotencyScope = null)
+    /// <summary>Runs compliance screening over every candidate: verdicts only,
+    /// no blocks, no award, no PO. Pure reads plus compliance calls, so the
+    /// runner re-derives the passing set whenever it must validate a choice.</summary>
+    public async Task<IReadOnlyList<VendorScreening>> ScreenCandidatesAsync(
+        string prNumber, IReadOnlyList<string> candidateVendorIds, CancellationToken ct = default)
     {
-        string Key(string purpose) => idempotencyScope is null ? Guid.NewGuid().ToString("N") : $"{idempotencyScope}:{purpose}";
-
         var pr = await _erp.GetPrAsync(prNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Unknown PR {prNumber}.");
         var screenings = new List<VendorScreening>();
-        string? winner = null;
         foreach (var vendorId in candidateVendorIds)
         {
             var vendors = await _erp.GetVendorsAsync(ct).ConfigureAwait(false);
@@ -128,17 +127,33 @@ public sealed class P2pAgent
                 var history = await _erp.GetVolumeHistoryAsync(line.ItemId, ct).ConfigureAwait(false);
                 verdicts.AddRange(await _compliance.EvaluateVendorAsync(vendor, item, docs, award, history, ct).ConfigureAwait(false));
             }
-            var passed = verdicts.All(v => v.Kind == VerdictKind.Pass);
-            screenings.Add(new VendorScreening(vendorId, passed, verdicts));
-            if (passed && winner is null)
+            screenings.Add(new VendorScreening(vendorId, verdicts.All(v => v.Kind == VerdictKind.Pass), verdicts));
+        }
+
+        return screenings;
+    }
+
+    public async Task<(PurchaseOrder Po, IReadOnlyList<VendorScreening> Screenings)> ScreenAndOrderAsync(
+        string prNumber, IReadOnlyList<string> candidateVendorIds, string source, string caseId, CancellationToken ct = default,
+        string? idempotencyScope = null)
+    {
+        string Key(string purpose) => idempotencyScope is null ? Guid.NewGuid().ToString("N") : $"{idempotencyScope}:{purpose}";
+
+        var pr = await _erp.GetPrAsync(prNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Unknown PR {prNumber}.");
+        var screenings = await ScreenCandidatesAsync(prNumber, candidateVendorIds, ct).ConfigureAwait(false);
+        string? winner = null;
+        foreach (var screening in screenings)
+        {
+            if (screening.Passed && winner is null)
             {
-                winner = vendorId;
+                winner = screening.VendorId;
             }
-            else if (!passed)
+            else if (!screening.Passed)
             {
-                var block = verdicts.First(v => v.Kind is VerdictKind.Block);
-                await _erp.BlockVendorAsync(vendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Key($"block:{vendorId}"), ct).ConfigureAwait(false);
-                await _erp.AddPoNoteAsync(prNumber, $"Vendor {vendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Key($"note:{vendorId}"), ct).ConfigureAwait(false);
+                var block = screening.Verdicts.First(v => v.Kind is VerdictKind.Block);
+                await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Key($"block:{screening.VendorId}"), ct).ConfigureAwait(false);
+                await _erp.AddPoNoteAsync(prNumber, $"Vendor {screening.VendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Key($"note:{screening.VendorId}"), ct).ConfigureAwait(false);
             }
         }
 

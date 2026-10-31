@@ -13,9 +13,12 @@ public enum CaseNextStep
     ComputeShortfall,
     RaisePr,
     ScreenVendors,
+    AwardSupplier,
+    CreatePo,
     SubmitPoApproval,
-    EvaluatePrePay,
+    DraftPayment,
     NotifyCustomer,
+    QueryVendor,
     FinishCase,
     AwaitDecision,
     AwaitSupplierAck,
@@ -137,16 +140,27 @@ public static class CasePicker
                 : (CaseNextStep.AwaitDecision, "PR raised; approval decision is pending.");
         }
 
-        if (current.Stage == CaseStage.PrSubmitted)
+        if (current.Stage == CaseStage.PrSubmitted && view.PrStatus != Contracts.PrStatus.Approved)
         {
-            return view.PrStatus == Contracts.PrStatus.Approved
-                ? (CaseNextStep.ScreenVendors, "PR approved; vendors not yet screened.")
-                : (CaseNextStep.AwaitDecision, "PR submitted; approval decision is pending.");
+            return (CaseNextStep.AwaitDecision, "PR submitted; approval decision is pending.");
         }
 
-        if (current.Stage == CaseStage.PrApproved)
+        if (current.Stage is CaseStage.PrSubmitted or CaseStage.PrApproved)
         {
-            return (CaseNextStep.ScreenVendors, "PR approved; vendors not yet screened.");
+            if (!file.Events.Any(e => e.Kind == CaseEventKind.VendorScreened))
+            {
+                return (CaseNextStep.ScreenVendors, "PR approved; vendors not yet screened.");
+            }
+
+            if (current.AwardedVendorId is null)
+            {
+                return (CaseNextStep.AwardSupplier, "Vendors screened; no supplier awarded yet.");
+            }
+
+            if (current.PoNumber is null)
+            {
+                return (CaseNextStep.CreatePo, $"Supplier {current.AwardedVendorId} awarded; PO not yet created.");
+            }
         }
 
         if (pendingKinds.Contains(DecisionKind.PoApproval))
@@ -214,13 +228,23 @@ public static class CasePicker
         {
             return HasPaymentNotDueMarker(file, runDate)
                 ? (CaseNextStep.AwaitDueDate, "ERP refused the draft on terms although value is payable; parked until due.")
-                : (CaseNextStep.EvaluatePrePay, "Payable value exceeds paid value; run the pre-pay gate.");
+                : (CaseNextStep.DraftPayment, "Payable value exceeds paid value; draft the next payment.");
         }
 
-        var blocking = pending.Any(d => d.Kind is not (DecisionKind.ApReview or DecisionKind.BankVerification));
-        if (view.HasHeldLines || view.OpenHoldCount > 0 || blocking)
+        if (view.HasHeldLines || view.OpenHoldCount > 0)
         {
             return (CaseNextStep.AwaitDecision, "Nothing payable right now; held value waits on a review or reshot.");
+        }
+
+        if (UnemailedInvoiceProblems(file).Count > 0)
+        {
+            return (CaseNextStep.QueryVendor, "A held invoice problem has no vendor query yet; email the vendor.");
+        }
+
+        var blocking = pending.Any(d => d.Kind is not DecisionKind.BankVerification);
+        if (blocking)
+        {
+            return (CaseNextStep.AwaitDecision, "Nothing payable right now; an open problem waits on its human owner.");
         }
 
         return (CaseNextStep.FinishCase, "Paid in full with no open holds, held lines, or pending case reviews.");
@@ -273,6 +297,7 @@ public static class CasePicker
             AgentTools.GetCase,
             AgentTools.GetErpView,
             AgentTools.GetMail,
+            AgentTools.CheckPrePay,
         };
         var action = AgentTools.ToToolName(Pick(file, view, runDate).Step);
         if (action is not null)

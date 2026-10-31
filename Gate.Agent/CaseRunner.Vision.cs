@@ -17,7 +17,8 @@ public partial class CaseRunner
         "Transcribe this supplier invoice photo. " +
         "Return a JSON object with exactly these keys: " +
         "supplier_invoice_number (string or null), " +
-        "vendor_id_or_name (string or null: the supplier id or name as printed), " +
+        "vendor_id_or_name (string or null: the supplier id code such as V-B when one is stated, " +
+        "else the supplier name as printed), " +
         "po_number (string or null), " +
         "lines (array of {po_line_ref (string or null), quantity (number), unit_price (number)}), " +
         "bank_account_ref (string or null: the remittance account as printed). " +

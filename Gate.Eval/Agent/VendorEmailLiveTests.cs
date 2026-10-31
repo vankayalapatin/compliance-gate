@@ -146,12 +146,23 @@ public sealed class VendorEmailLiveTests
         var parked = await runner.AdvanceAsync(caseId);
         Assert.Equal(CaseNextStep.AwaitVendorReply, parked.Step);
 
-        var qty = "5";
         var price = poLine.UnitPrice.ToString(CultureInfo.InvariantCulture);
         var reply = await runner.OnVendorReplyAsync(new VendorReplyInput(
             caseId, "sales@cells.example",
-            $"INV-MISS was billed to the wrong PO; please book it as invoice INV-FIX for vendor V-B " +
-            $"against PO {poNumber}, line {poLine.PoLineRef}, quantity {qty}, unit price {price}.",
+            "Hi,\n" +
+            "\n" +
+            "Thanks for flagging this — you're right, INV-MISS went out with an old PO reference on our side. " +
+            "Sorry for the confusion.\n" +
+            "\n" +
+            $"Please book those 5 units as invoice INV-FIX under Compliant Cells (V-B) against your PO {poNumber}, " +
+            $"line {poLine.PoLineRef}, at {price} per unit. " +
+            "Everything else on the shipment stays as billed on INV-MAIN.\n" +
+            "\n" +
+            "Let me know if you need anything else from us.\n" +
+            "\n" +
+            "Best regards,\n" +
+            "Maria Santos\n" +
+            "Accounts Receivable, Compliant Cells Inc",
             InReplyTo: query.EmailId, EmailId: $"{caseId}-r-001"));
         Assert.Equal("V-B", reply.VendorId);
         var stored = await erp.GetInvoiceAsync("V-B", "INV-FIX");
@@ -168,6 +179,9 @@ public sealed class VendorEmailLiveTests
             && d.Status == DecisionStatus.Pending
             && string.Equals(d.DocumentNumber, "V-B/INV-FIX", StringComparison.Ordinal));
         await runner.ResolveDecisionAsync(caseId, fixApproval.DecisionId, true, fixApproval.RequestedTo, "ok");
+        var apReview = Load(caseDir, caseId).Decisions.Single(d =>
+            d.Kind == DecisionKind.ApReview && d.Status == DecisionStatus.Pending);
+        await runner.ResolveDecisionAsync(caseId, apReview.DecisionId, true, apReview.RequestedTo, "correction accepted");
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var early = await runner.AdvanceAsync(caseId, payUpToDate: today.AddDays(-1));

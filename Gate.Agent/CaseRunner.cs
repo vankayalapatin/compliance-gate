@@ -99,14 +99,23 @@ public partial class CaseRunner
             case CaseNextStep.ScreenVendors:
                 await ScreenVendorsStepAsync(file, ct).ConfigureAwait(false);
                 break;
+            case CaseNextStep.AwardSupplier:
+                await AwardSupplierStepAsync(file, vendorId: null, reason: null, ct).ConfigureAwait(false);
+                break;
+            case CaseNextStep.CreatePo:
+                await CreatePoStepAsync(file, ct).ConfigureAwait(false);
+                break;
             case CaseNextStep.SubmitPoApproval:
                 await SubmitPoApprovalStepAsync(file, ct).ConfigureAwait(false);
                 break;
-            case CaseNextStep.EvaluatePrePay:
-                await EvaluatePrePayStepAsync(file, view, payUpToDate, ct).ConfigureAwait(false);
+            case CaseNextStep.DraftPayment:
+                await DraftPaymentStepAsync(file, view, payUpToDate, ct).ConfigureAwait(false);
                 break;
             case CaseNextStep.NotifyCustomer:
                 await NotifyCustomerStepAsync(file, ct).ConfigureAwait(false);
+                break;
+            case CaseNextStep.QueryVendor:
+                await QueryVendorStepAsync(file, ct).ConfigureAwait(false);
                 break;
             case CaseNextStep.FinishCase:
                 await FinishCaseStepAsync(file, view, ct).ConfigureAwait(false);
@@ -285,10 +294,13 @@ public partial class CaseRunner
                 $"No candidate vendors recorded for {current.ItemId}: the order webhook must carry sourcing candidates per item.");
         }
 
-        var (po, screenings) = await _core.ScreenAndOrderAsync(
-            current.PrNumber, candidates, RecordSource.P2pAgent, current.CaseId, ct,
-            idempotencyScope: $"{current.CaseId}:screen").ConfigureAwait(false);
-        var rationale = await AwardRationaleAsync(current, po, screenings, ct).ConfigureAwait(false);
+        if (file.Events.Any(e => e.Kind == CaseEventKind.VendorScreened))
+        {
+            _logger.LogInformation("Case {CaseId}: vendors already screened; skipping re-screen.", current.CaseId);
+            return;
+        }
+
+        var screenings = await _core.ScreenCandidatesAsync(current.PrNumber, candidates, ct).ConfigureAwait(false);
         var work = new CaseWork(file);
         foreach (var screening in screenings)
         {
@@ -300,23 +312,83 @@ public partial class CaseRunner
                 ruleId: block?.RuleId);
             if (!screening.Passed && block is not null)
             {
+                await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}",
+                    RecordSource.P2pAgent, $"{current.CaseId}:screen:block:{screening.VendorId}", ct).ConfigureAwait(false);
+                await _erp.AddPoNoteAsync(current.PrNumber,
+                    $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
+                    RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
                 work.AddEvent(CaseEventKind.VendorBlocked,
                     $"Vendor {screening.VendorId} blocked: {block.RuleId}: {block.Reason}",
                     ruleId: block.RuleId);
             }
         }
 
-        work.AddEvent(CaseEventKind.PoCreated,
-            $"PO {po.PoNumber} to {po.VendorId} for {po.Lines.Sum(l => l.LineAmount)} {po.Currency}. {rationale.Text}",
-            documentType: "PO", documentNumber: po.PoNumber,
-            evidenceRef: $"model-cache:{rationale.CacheKey}");
-        work.Patch(current with { PoNumber = po.PoNumber });
-        work.Stage(CaseStage.PoPlaced);
-        if (po.ApprovalStatus == PoApprovalStatus.Draft)
+        work.Save(_cacheDir);
+    }
+
+    /// <summary>Records the supplier award: the winner must come from the
+    /// screened-passing set (re-derived, never trusted), and the reason is
+    /// the chooser's own words. A null vendor (C# fallback only) awards the
+    /// first passing vendor and says so.</summary>
+    private async Task AwardSupplierStepAsync(
+        CaseFile file, string? vendorId, string? reason, CancellationToken ct)
+    {
+        var current = file.Case;
+        if (current.PrNumber is null)
         {
-            await EnsurePoSubmittedAsync(work, po, ct).ConfigureAwait(false);
+            throw new InvalidOperationException($"Case {current.CaseId} has no PR to award.");
         }
 
+        var candidates = ReadCandidates(file, current.ItemId);
+        var screenings = await _core.ScreenCandidatesAsync(current.PrNumber, candidates, ct).ConfigureAwait(false);
+        var passing = screenings.Where(s => s.Passed).Select(s => s.VendorId).ToList();
+        if (passing.Count == 0)
+        {
+            throw new InvalidOperationException("No compliant vendor: PO refused.");
+        }
+
+        var winner = vendorId;
+        var why = reason;
+        if (winner is null)
+        {
+            winner = passing[0];
+            why = "C# executed the pick: first passing vendor.";
+        }
+        else if (!passing.Contains(winner, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Vendor {winner} did not pass screening for case {current.CaseId}; passing: {string.Join(", ", passing)}.");
+        }
+
+        var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false);
+        var qty = pr?.Lines.Sum(l => l.Quantity) ?? 0;
+        var work = new CaseWork(file);
+        work.AddEvent(CaseEventKind.SupplierAwarded,
+            $"Awarded {current.ItemId} x{qty} to {winner}: {why}",
+            documentType: "PR", documentNumber: current.PrNumber);
+        work.Patch(current with { AwardedVendorId = winner });
+        work.Save(_cacheDir);
+    }
+
+    private async Task CreatePoStepAsync(CaseFile file, CancellationToken ct)
+    {
+        var current = file.Case;
+        if (current.PrNumber is null || current.AwardedVendorId is null)
+        {
+            throw new InvalidOperationException(
+                $"Case {current.CaseId} has no awarded supplier to create a PO for.");
+        }
+
+        var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"PR {current.PrNumber} vanished before PO creation.");
+        var po = await _erp.CreatePoAsync(current.PrNumber, current.AwardedVendorId,
+            RecordSource.P2pAgent, pr.Requester, $"{current.CaseId}:create-po", ct).ConfigureAwait(false);
+        var work = new CaseWork(file);
+        work.AddEvent(CaseEventKind.PoCreated,
+            $"PO {po.PoNumber} to {po.VendorId} for {po.Lines.Sum(l => l.LineAmount)} {po.Currency}.",
+            documentType: "PO", documentNumber: po.PoNumber);
+        work.Patch(current with { PoNumber = po.PoNumber });
+        work.Stage(CaseStage.PoPlaced);
         work.Save(_cacheDir);
     }
 
@@ -359,37 +431,7 @@ public partial class CaseRunner
             $"PO {po.PoNumber} needs a human approval.");
     }
 
-    private async Task<(string Text, string CacheKey)> AwardRationaleAsync(
-        Case current, PurchaseOrder po, IReadOnlyList<VendorScreening> screenings, CancellationToken ct)
-    {
-        var losers = screenings.Where(s => !s.Passed).Select(s => s.VendorId).ToList();
-        var qty = po.Lines.Sum(l => l.QtyOrdered);
-        var outcomes = screenings.Select(s =>
-        {
-            if (s.Passed)
-            {
-                return $"{s.VendorId}: passed screening.";
-            }
-
-            var block = s.Verdicts.FirstOrDefault(v => v.Kind == VerdictKind.Block);
-            return block is null
-                ? $"{s.VendorId}: blocked."
-                : $"{s.VendorId}: blocked by {block.RuleId}: {block.Reason}";
-        }).ToList();
-        // Default token cap: reasoning models burn hundreds of tokens before
-        // answering (see SparkOptions), so a small cap starves this call.
-        var request = new ModelRequest(
-            $"In one short sentence, why award {current.ItemId} x{qty} to {po.VendorId}"
-            + (losers.Count == 0 ? "?" : $" over {string.Join(", ", losers)}?")
-            + $" Screening outcomes: {string.Join(" ", outcomes)}"
-            + " Ground your answer only in these screening outcomes; do not invent cost, quality, or delivery reasons.",
-            "You write one-sentence sourcing rationales grounded only in the given screening outcomes.");
-        var result = await ResilientCalls.CompleteWithRetryAsync(
-            _models, request, _logger, $"award rationale for {current.CaseId}", ct).ConfigureAwait(false);
-        return (result.Text.Trim(), CachedModelClient.CacheKey(_models.ModelName, request));
-    }
-
-    private async Task EvaluatePrePayStepAsync(
+    private async Task DraftPaymentStepAsync(
         CaseFile file, CaseErpView view, DateOnly? payUpToDate, CancellationToken ct)
     {
         var current = file.Case;
@@ -493,6 +535,17 @@ public partial class CaseRunner
         work.Patch(current with { BlockedByRuleId = block?.RuleId, BlockedReason = block?.Reason });
         work.Stage(partial ? CaseStage.PaymentPartial : CaseStage.PaymentRequested);
         work.Save(_cacheDir);
+    }
+
+    /// <summary>C# fallback for the vendor-query step: emails the first
+    /// unemailed invoice problem. The tool path carries Spark's own
+    /// invoice_ref instead and never reaches this default.</summary>
+    private async Task QueryVendorStepAsync(CaseFile file, CancellationToken ct)
+    {
+        var problem = CasePicker.UnemailedInvoiceProblems(file).FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                $"Case {file.Case.CaseId} has no unemailed invoice problem to query.");
+        await SendVendorEmailAsync(file.Case.CaseId, problem.DocumentNumber!, ct).ConfigureAwait(false);
     }
 
     private async Task NotifyCustomerStepAsync(CaseFile file, CancellationToken ct)
