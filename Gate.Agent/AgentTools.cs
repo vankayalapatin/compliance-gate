@@ -41,7 +41,7 @@ public static class AgentTools
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
         new(ScreenVendors, "Screen the candidate vendors against compliance packs. Losers are blocked; winners await award.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
-        new(AwardSupplier, "Award the buy to one screened-passing vendor. Name the vendor and say why in your one-line reason.",
+        new(AwardSupplier, "Award the buy to one screened-passing vendor. Name the vendor and say why in your one-line reason, naming each losing vendor and its blocking rule id.",
             [
                 new("case_id", "Case id.", ModelToolParameterType.String),
                 new("vendor_id", "Passing vendor id to award, e.g. V-B.", ModelToolParameterType.String),
@@ -114,7 +114,8 @@ public static class AgentTools
         "tool per turn; you may call read tools first when you need fresher " +
         "detail. Only call send_vendor_email when a held invoice problem has " +
         "no other path forward. For a supplier award, name a vendor that " +
-        "passed screening and say why in your one-line reason. Never invent " +
+        "passed screening and say why in your one-line reason, naming each " +
+        "other candidate and its blocking rule id from the screening events. Never invent " +
         "ids, quantities, prices, or dates: every value you use must come " +
         "from the case state, the ERP view, or a tool result. Illegal calls " +
         "are blocked and the refusal is fed back to you; adjust and continue.";
