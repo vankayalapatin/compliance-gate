@@ -1,0 +1,63 @@
+@page "/simulate"
+@rendermode InteractiveServer
+@using Gate.Web.Components.Simulation
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Sim
+
+<PageTitle>Simulate</PageTitle>
+
+<h1>Simulate</h1>
+
+<p>External inputs in: customer orders, dock camera photos, supplier invoices, and vendor replies. Each form posts to the matching simulation endpoint against the real app (EF Core ERP) and the runner advances; every approval stays completable from <a href="decisions">Decisions</a>.</p>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_options is null)
+{
+    <p>Loading options…</p>
+}
+else
+{
+    @foreach (var note in _options.Notes)
+    {
+        <div class="alert alert-warning" role="alert">@note</div>
+    }
+    <p><button class="btn btn-outline-secondary btn-sm" disabled="@_busy" @onclick="ReloadAsync">Reload options</button></p>
+
+    <SendOrderForm Options="@_options" OnChanged="ReloadAsync" />
+    <DockPhotosForm Options="@_options" OnChanged="ReloadAsync" />
+    <InvoiceForm Options="@_options" OnChanged="ReloadAsync" />
+    <VendorReplyForm Options="@_options" OnChanged="ReloadAsync" />
+}
+
+@code {
+    private SimulateOptions? _options;
+    private string? _loadError;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync().ConfigureAwait(false);
+    }
+
+    private async Task ReloadAsync()
+    {
+        _busy = true;
+        try
+        {
+            _options = await Sim.GetOptionsAsync().ConfigureAwait(false);
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Simulate options failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
