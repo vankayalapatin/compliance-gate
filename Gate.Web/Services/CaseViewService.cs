@@ -251,6 +251,9 @@ public sealed class CaseViewService
     public async Task<IReadOnlyList<UserDto>> ListUsersAsync(CancellationToken ct = default) =>
         await _erp.GetUsersAsync(ct).ConfigureAwait(false);
 
+    public async Task<IReadOnlyList<DelegationDto>> ListDelegationsAsync(CancellationToken ct = default) =>
+        await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);
+
     public async Task<RecordsVm> GetRecordsAsync(CancellationToken ct = default)
     {
         var notes = new List<string>();
