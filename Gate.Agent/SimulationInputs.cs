@@ -8,16 +8,20 @@ using Gate.Contracts;
 
 namespace Gate.Agent;
 
-/// <summary>Shopify-style order webhook. SOs are pre-seeded by the scenario
-/// loader: the runner matches the SO and starts one case per shortfall item,
-/// never mints SOs. Candidate vendors per item come from sourcing data (the
-/// scenario vendors in tests); the ERP exposes no vendors-for-item read.</summary>
+/// <summary>Shopify-style order webhook. Known SOs match the pre-seeded order
+/// and start one case per shortfall item. Unknown shop orders carry Lines
+/// plus Currency so the runner creates the SO through the ERP (which mints
+/// the number); without lines an unknown order is a gap error. Candidate
+/// vendors per item come from sourcing data (the scenario vendors in tests);
+/// the ERP exposes no vendors-for-item read.</summary>
 public sealed record OrderWebhookInput(
     string ScenarioName,
     string SoNumber,
     string? Requester = null,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? CandidateVendorsByItem = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    IReadOnlyList<SalesOrderLine>? Lines = null,
+    string? Currency = null);
 
 /// <summary>One ASN carton as the supplier declares it. Lot refs are the
 /// supplier's lot ids (tests derive them from the manifest PO plus carton).</summary>
@@ -70,4 +74,40 @@ public sealed record ReshotInput(
     string CaseId,
     IReadOnlyList<string> CartonIds,
     IReadOnlyList<DockCartonRead> Reads,
+    string? IdempotencyKey = null);
+
+/// <summary>One dock photo for transcription. ImageId travels onto every read
+/// from this photo; CartonHint is the carton the camera targets and fills in
+/// only when the transcription leaves a label id blank.</summary>
+public sealed record DockPhoto(
+    string ImageId,
+    byte[] Jpeg,
+    string? CartonHint);
+
+/// <summary>One supplier invoice photo for transcription (multi-page invoices
+/// arrive as one photo per page).</summary>
+public sealed record InvoicePhoto(
+    string ImageId,
+    byte[] Jpeg);
+
+/// <summary>One transcribed supplier invoice, validated against the ERP:
+/// VendorIdOrName is the resolved vendor id (or null when blank or unmatched)
+/// and PoNumber the resolved PO (or null when blank or unmatched), so
+/// unmatched values route to the missing-fields path, never invented.</summary>
+public sealed record TranscribedInvoice(
+    string? SupplierInvoiceNumber,
+    string? VendorIdOrName,
+    string? PoNumber,
+    IReadOnlyList<SupplierInvoiceLineInput> Lines,
+    string? BankAccountRef);
+
+/// <summary>Vendor reply to a case query, appended by simulation. The agent
+/// reads it via Spark and acts on any corrected invoice fields it carries.</summary>
+public sealed record VendorReplyInput(
+    string CaseId,
+    string From,
+    string Body,
+    string? Subject = null,
+    string? InReplyTo = null,
+    string? EmailId = null,
     string? IdempotencyKey = null);

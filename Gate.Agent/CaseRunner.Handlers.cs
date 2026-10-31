@@ -25,14 +25,40 @@ public partial class CaseRunner
         "Call the vendor at the number on file. Ask: (1) confirm the new account ref and bank name; " +
         "(2) confirm why the account changed; (3) confirm the effective date. Approve only after the callback confirms.";
 
-    /// <summary>Shopify-style order webhook. Matches the pre-seeded SO and
-    /// starts one case per shortfall item. Repeating the webhook returns the
-    /// existing cases.</summary>
+    /// <summary>Shopify-style order webhook. Matches the pre-seeded SO, or
+    /// creates it through the ERP when the shop order is unknown and carries
+    /// lines plus currency (the ERP mints the number; the idempotency key
+    /// comes from the shop order id). Then starts one case per shortfall
+    /// item. Repeating the webhook returns the existing cases.</summary>
     public async Task<IReadOnlyList<string>> OnOrderWebhookAsync(
         OrderWebhookInput input, CancellationToken ct = default)
     {
-        var so = await _erp.GetSalesOrderAsync(input.SoNumber, ct).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Unknown sales order {input.SoNumber}.");
+        var so = await _erp.GetSalesOrderAsync(input.SoNumber, ct).ConfigureAwait(false);
+        if (so is null)
+        {
+            if (input.Lines is null || input.Lines.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Unknown sales order {input.SoNumber}: the webhook carried no lines to create it.");
+            }
+
+            if (string.IsNullOrWhiteSpace(input.Currency))
+            {
+                throw new InvalidOperationException(
+                    $"Unknown sales order {input.SoNumber}: the webhook carried no currency to create it.");
+            }
+
+            var creator = input.Requester
+                ?? await DefaultRequesterAsync(ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"No requester for order {input.SoNumber}: the webhook carried none and the ERP has no requester-role user.");
+            so = await _erp.CreateSalesOrderAsync(
+                input.Currency, input.Lines, RecordSource.P2pAgent, creator,
+                input.IdempotencyKey ?? input.SoNumber, ct).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Order webhook created sales order {SoNumber} from shop order {ShopOrder}.",
+                so.SoNumber, input.SoNumber);
+        }
         await _erp.UpdateSalesOrderStatusAsync(
             so.SoNumber, SalesOrderStatus.Confirmed, RecordSource.P2pAgent,
             input.IdempotencyKey ?? $"{input.ScenarioName}:{so.SoNumber}:confirm", ct).ConfigureAwait(false);

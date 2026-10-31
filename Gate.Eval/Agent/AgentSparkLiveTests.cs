@@ -1,9 +1,9 @@
-// Live agent proof: one real Spark call behind the file cache while the case
-// runs from webhook to PO, then the identical advance served with zero new
-// HTTP. The key comes from user secrets (MetaApi:ApiKey) or the environment,
-// never from a file in the repo. Minimal tokens: the award rationale is
-// uses the client default cap (small caps starve the model's reasoning) and
-// is the only model call on the path.
+// Live agent proof: real Spark calls behind the file cache while the case
+// runs from webhook to PO through the tool loop (Spark picks compute, raise,
+// and screen; the award rationale rides along), then the identical advance
+// served with zero new HTTP. The key comes from user secrets (MetaApi:ApiKey)
+// or the environment, never from a file in the repo. Tool turns use the
+// client default cap: small caps starve the model's reasoning.
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -62,8 +62,11 @@ public sealed class AgentSparkLiveTests
         Assert.Contains(ordered.Events, e =>
             e.Kind == CaseEventKind.VendorBlocked && e.RuleId == ComplianceEngine.CorpOriginCapId);
 
-        Assert.True(counter.Count is >= 1 and <= 2, $"Expected one live rationale call, saw {counter.Count}.");
-        Assert.Single(Directory.GetFiles(cacheDir));
+        Assert.True(counter.Count >= 4, $"Expected at least the compute, raise, screen, and rationale calls, saw {counter.Count}.");
+        Assert.Equal(counter.Count, Directory.GetFiles(cacheDir).Length);
+        var turns = Gate.Agent.CaseTranscript.ReadTurns(caseDir, battery);
+        Assert.Contains(turns.SelectMany(t => t.Calls),
+            c => c.Verdict == Gate.Agent.ToolCallVerdict.Executed && c.Name == Gate.Agent.AgentTools.ScreenVendors);
         var callsAfterPo = counter.Count;
 
         var parked = await runner.AdvanceAsync(battery);

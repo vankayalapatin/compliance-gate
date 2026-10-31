@@ -21,8 +21,6 @@ public sealed record CaseAdvanceOutcome(
 
 public partial class CaseRunner
 {
-    private const int MaxAdvanceSteps = 50;
-
     private readonly IErpAdapter _erp;
     private readonly P2pAgent _core;
     private readonly IModelClient _models;
@@ -30,6 +28,7 @@ public partial class CaseRunner
     private readonly IDockEvaluator _dock;
     private readonly ILogger<CaseRunner> _logger;
     private readonly string _cacheDir;
+    private readonly string _visionReadCacheDir;
 
     public CaseRunner(
         IErpAdapter erp,
@@ -38,7 +37,8 @@ public partial class CaseRunner
         IComplianceEngine compliance,
         IDockEvaluator dock,
         string cacheDir,
-        ILogger<CaseRunner>? logger = null)
+        ILogger<CaseRunner>? logger = null,
+        string? visionReadCacheDir = null)
     {
         _erp = erp;
         _core = core;
@@ -47,43 +47,22 @@ public partial class CaseRunner
         _dock = dock;
         _cacheDir = cacheDir;
         _logger = logger ?? NullLogger<CaseRunner>.Instance;
+        _visionReadCacheDir = visionReadCacheDir ?? Path.Combine(cacheDir, "vision-reads");
     }
 
-    /// <summary>Advances the case through runnable agent tools until it parks
-    /// in a waiting step (human, supplier, camera, or due date) or finishes.
-    /// External inputs arrive via the simulation handlers between advances.</summary>
-    public async Task<CaseAdvanceOutcome> AdvanceAsync(string caseId, CancellationToken ct = default)
-    {
-        for (var i = 0; i < MaxAdvanceSteps; i++)
-        {
-            var file = CaseStore.Load(_cacheDir, caseId)
-                ?? throw new InvalidOperationException($"Unknown case {caseId}.");
-            var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
-            var (step, reason) = CasePicker.Pick(file, view);
-            _logger.LogInformation(
-                "Case {CaseId} at {Stage}: next step {Step} ({Reason}).",
-                caseId, file.Case.Stage, step, reason);
-            if (step.IsWaiting())
-            {
-                return new CaseAdvanceOutcome(caseId, file.Case.Stage, step, step == CaseNextStep.Done, reason);
-            }
+    /// <summary>Advances the case through the Spark-driven tool loop until it
+    /// parks in a waiting step (human, supplier, camera, vendor reply, or due
+    /// date) or finishes. External inputs arrive via the simulation handlers
+    /// between advances. payUpToDate caps the payment run date (null means no
+    /// limit); every turn is appended to the case transcript.</summary>
+    public async Task<CaseAdvanceOutcome> AdvanceAsync(
+        string caseId, CancellationToken ct = default, DateOnly? payUpToDate = null) =>
+        await AdvanceWithToolsAsync(caseId, payUpToDate, ct).ConfigureAwait(false);
 
-            try
-            {
-                await ExecuteStepAsync(file, view, step, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Case {CaseId} step {Step} failed.", caseId, step);
-                RecordFailureNote(caseId, step, ex);
-                throw;
-            }
-        }
+    private void RecordFailureNote(string caseId, CaseNextStep step, Exception ex) =>
+        RecordFailureNote(caseId, step.ToString(), ex);
 
-        throw new InvalidOperationException($"Case {caseId} did not settle within {MaxAdvanceSteps} steps.");
-    }
-
-    private void RecordFailureNote(string caseId, CaseNextStep step, Exception ex)
+    private void RecordFailureNote(string caseId, string action, Exception ex)
     {
         try
         {
@@ -97,7 +76,7 @@ public partial class CaseRunner
             events.Add(new CaseEvent(
                 $"{caseId}-e{events.Count + 1:000}", caseId, DateTimeOffset.UtcNow,
                 RecordSource.P2pAgent, CaseEventKind.Note,
-                $"Step {step} failed: {ex.Message}", null, null, null, null, null, null));
+                $"Step {action} failed: {ex.Message}", null, null, null, null, null, null));
             CaseStore.Save(_cacheDir, file with { Events = events });
         }
         catch (Exception noteEx)
@@ -106,7 +85,8 @@ public partial class CaseRunner
         }
     }
 
-    private async Task ExecuteStepAsync(CaseFile file, CaseErpView view, CaseNextStep step, CancellationToken ct)
+    private async Task ExecuteStepAsync(
+        CaseFile file, CaseErpView view, CaseNextStep step, DateOnly? payUpToDate, CancellationToken ct)
     {
         switch (step)
         {
@@ -123,7 +103,7 @@ public partial class CaseRunner
                 await SubmitPoApprovalStepAsync(file, ct).ConfigureAwait(false);
                 break;
             case CaseNextStep.EvaluatePrePay:
-                await EvaluatePrePayStepAsync(file, view, ct).ConfigureAwait(false);
+                await EvaluatePrePayStepAsync(file, view, payUpToDate, ct).ConfigureAwait(false);
                 break;
             case CaseNextStep.NotifyCustomer:
                 await NotifyCustomerStepAsync(file, ct).ConfigureAwait(false);
@@ -395,7 +375,8 @@ public partial class CaseRunner
         return (result.Text.Trim(), CachedModelClient.CacheKey(_models.ModelName, request));
     }
 
-    private async Task EvaluatePrePayStepAsync(CaseFile file, CaseErpView view, CancellationToken ct)
+    private async Task EvaluatePrePayStepAsync(
+        CaseFile file, CaseErpView view, DateOnly? payUpToDate, CancellationToken ct)
     {
         var current = file.Case;
         var state = await BuildPrePayStateAsync(file, ct).ConfigureAwait(false);
@@ -442,7 +423,8 @@ public partial class CaseRunner
         try
         {
             (draft, _) = await _core.RequestPaymentAsync(
-                payable, RecordSource.P2pAgent, ct, idempotencyScope: $"{current.CaseId}:pay{round}")
+                payable, RecordSource.P2pAgent, ct,
+                idempotencyScope: $"{current.CaseId}:pay{round}", payUpToDate: payUpToDate)
                 .ConfigureAwait(false);
         }
         catch (InvalidOperationException ex)

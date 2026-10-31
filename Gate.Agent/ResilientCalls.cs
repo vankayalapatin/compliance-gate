@@ -39,7 +39,7 @@ public static class ResilientCalls
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 attemptCts.CancelAfter(timeout);
                 var result = await client.CompleteAsync(request, attemptCts.Token).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(result.Text))
+                if (!string.IsNullOrWhiteSpace(result.Text) || (result.ToolCalls?.Count ?? 0) > 0)
                 {
                     return result;
                 }

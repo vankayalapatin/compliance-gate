@@ -53,3 +53,39 @@ internal sealed class EmptyModelClient : IModelClient
         return Task.FromResult(new ModelResult("  "));
     }
 }
+
+/// <summary>Scripted tool-loop double: returns queued results in order and
+/// records every request (prompt, tools, history) for choice-proof
+/// assertions. An empty queue throws instead of echoing, so tests prove
+/// exact call counts.</summary>
+internal sealed class RecordingModelClient : IModelClient
+{
+    private readonly Queue<ModelResult> _results = new();
+
+    public RecordingModelClient(string modelName = "fake") => ModelName = modelName;
+
+    public string ModelName { get; }
+
+    public int CallCount { get; private set; }
+
+    public List<ModelRequest> Requests { get; } = new();
+
+    public void QueueToolCalls(string reasoning, params (string Id, string Name, string Args)[] calls) =>
+        _results.Enqueue(new ModelResult(
+            reasoning, calls.Select(c => new ModelToolCall(c.Id, c.Name, c.Args)).ToList()));
+
+    public void QueueText(string text) => _results.Enqueue(new ModelResult(text));
+
+    public Task<ModelResult> CompleteAsync(ModelRequest request, CancellationToken ct = default)
+    {
+        _ = ct;
+        CallCount++;
+        Requests.Add(request);
+        if (_results.Count == 0)
+        {
+            throw new InvalidOperationException("No scripted response left.");
+        }
+
+        return Task.FromResult(_results.Dequeue());
+    }
+}

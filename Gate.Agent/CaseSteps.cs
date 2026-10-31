@@ -23,6 +23,7 @@ public enum CaseNextStep
     AwaitDockReads,
     AwaitInvoices,
     AwaitDueDate,
+    AwaitVendorReply,
     Done
 }
 
@@ -36,6 +37,7 @@ public static class CaseNextStepExtensions
         CaseNextStep.AwaitDockReads => true,
         CaseNextStep.AwaitInvoices => true,
         CaseNextStep.AwaitDueDate => true,
+        CaseNextStep.AwaitVendorReply => true,
         CaseNextStep.Done => true,
         _ => false
     };
@@ -163,6 +165,11 @@ public static class CasePicker
             return (CaseNextStep.AwaitDecision, "Invoice or payment approval decision is pending.");
         }
 
+        if (HasUnansweredVendorEmail(file))
+        {
+            return (CaseNextStep.AwaitVendorReply, "Vendor query sent; waiting on the vendor reply.");
+        }
+
         if (view.MatchedInvoices == 0)
         {
             return (CaseNextStep.AwaitInvoices, "Dock checked; waiting on the first matched invoice.");
@@ -187,5 +194,67 @@ public static class CasePicker
         }
 
         return (CaseNextStep.FinishCase, "Paid in full with no open holds, held lines, or pending case reviews.");
+    }
+
+    /// <summary>True when the latest mail event is an outbound query with no
+    /// vendor reply after it. Event order is time order (append-only).</summary>
+    public static bool HasUnansweredVendorEmail(CaseFile file)
+    {
+        CaseEvent? latest = null;
+        foreach (var e in file.Events)
+        {
+            if (e.Kind is CaseEventKind.VendorEmailed or CaseEventKind.VendorReplied)
+            {
+                latest = e;
+            }
+        }
+
+        return latest is not null && latest.Kind == CaseEventKind.VendorEmailed;
+    }
+
+    /// <summary>Held invoice problems the agent cannot resolve itself: pending
+    /// AP reviews on invoice docs the vendor has not been queried about yet.
+    /// Each is a legal send_vendor_email target.</summary>
+    public static IReadOnlyList<Decision> UnemailedInvoiceProblems(CaseFile file)
+    {
+        var emailed = file.Events
+            .Where(e => e.Kind == CaseEventKind.VendorEmailed
+                && string.Equals(e.DocumentType, "Invoice", StringComparison.Ordinal)
+                && e.DocumentNumber is not null)
+            .Select(e => e.DocumentNumber!)
+            .ToHashSet(StringComparer.Ordinal);
+        return file.Decisions
+            .Where(d => d.Kind == DecisionKind.ApReview
+                && d.Status == DecisionStatus.Pending
+                && string.Equals(d.DocumentType, "Invoice", StringComparison.Ordinal)
+                && d.DocumentNumber is not null
+                && !emailed.Contains(d.DocumentNumber))
+            .ToList();
+    }
+
+    /// <summary>Every tool Spark may legally call in this state: the read
+    /// tools always, the picked step's action tool when runnable, and
+    /// send_vendor_email while an unemailed invoice problem stands. Waiting
+    /// steps end the advance, so they contribute no action tool.</summary>
+    public static IReadOnlySet<string> LegalTools(CaseFile file, CaseErpView view)
+    {
+        var legal = new HashSet<string>(StringComparer.Ordinal)
+        {
+            AgentTools.GetCase,
+            AgentTools.GetErpView,
+            AgentTools.GetMail,
+        };
+        var action = AgentTools.ToToolName(Pick(file, view).Step);
+        if (action is not null)
+        {
+            legal.Add(action);
+        }
+
+        if (UnemailedInvoiceProblems(file).Count > 0)
+        {
+            legal.Add(AgentTools.SendVendorEmail);
+        }
+
+        return legal;
     }
 }

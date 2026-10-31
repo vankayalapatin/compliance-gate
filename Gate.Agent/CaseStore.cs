@@ -69,9 +69,11 @@ public static class CaseStore
             return [];
         }
 
+        // Mail files (<CaseId>.mail.json) share the dir but are not cases.
         return Directory.GetFiles(cacheDir, "*.json")
             .Select(Path.GetFileNameWithoutExtension)
             .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Where(id => !id!.EndsWith(".mail", StringComparison.Ordinal))
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList()!;
     }

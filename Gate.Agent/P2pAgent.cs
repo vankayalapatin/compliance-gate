@@ -209,9 +209,12 @@ public sealed class P2pAgent
             ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
     }
 
+    /// <summary>Drafts one payment run over the payable invoices. payUpToDate
+    /// caps the run date (invoices due later are skipped); null means no
+    /// limit. Held and skipped invoices are reported, never paid.</summary>
     public async Task<(Payment? Payment, IReadOnlyList<string> SkippedHeld)> RequestPaymentAsync(
         IReadOnlyList<InvoiceKey> invoiceKeys, string source, CancellationToken ct = default,
-        string? idempotencyScope = null)
+        string? idempotencyScope = null, DateOnly? payUpToDate = null)
     {
         var draftKey = idempotencyScope is null ? Guid.NewGuid().ToString("N") : $"{idempotencyScope}:draft";
 
@@ -231,7 +234,7 @@ public sealed class P2pAgent
             return (null, skipped);
         }
 
-        var draft = await _erp.CreatePaymentDraftAsync(payable, source, RecordSource.P2pAgent, draftKey, ct).ConfigureAwait(false);
+        var draft = await _erp.CreatePaymentDraftAsync(payable, payUpToDate, source, RecordSource.P2pAgent, draftKey, ct).ConfigureAwait(false);
         return (draft, skipped);
     }
 
