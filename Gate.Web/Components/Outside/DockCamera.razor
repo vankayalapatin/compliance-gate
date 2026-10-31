@@ -1,0 +1,232 @@
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Simulate
+
+<section class="gate-card" id="camera">
+    <div class="gate-card-head">
+        <p class="gate-card-title">Dock camera</p>
+    </div>
+    <p class="gate-meta">You are the dock camera. Images in, reads out: the run transcribes and judges every label. Send counter images, uploaded files, or both. A reshot covers the picked cartons only.</p>
+    <div class="gate-field">
+        <label class="gate-label" for="camera-case">Case</label>
+        <select class="gate-select" id="camera-case" @bind="_caseId">
+            <option value="">— pick a case —</option>
+            @foreach (var kase in Options.Cases)
+            {
+                <option value="@kase.CaseId">@kase.CaseId (SO @kase.SoNumber · @kase.ItemId · @kase.Stage)</option>
+            }
+        </select>
+    </div>
+    <label class="gate-checkline" for="camera-reshot">
+        <input type="checkbox" id="camera-reshot" @bind="_reshot" />
+        Reshot (follow-up reads for picked cartons)
+    </label>
+    @if (_reshot)
+    {
+        <p class="gate-row"><span class="gate-label">Cartons covered (from scenario):</span></p>
+        @if (Options.CartonIds.Count == 0)
+        {
+            <p class="gate-meta">No carton ids in the scenario; a reshot needs at least one.</p>
+        }
+        @foreach (var carton in Options.CartonIds)
+        {
+            <label class="gate-checkline" for="reshot-@carton">
+                <input type="checkbox" id="reshot-@carton"
+                       checked="@_cartons.Contains(carton, StringComparer.Ordinal)"
+                       @onchange="e => ToggleCarton(carton, e.Value is true)" />
+                @carton
+            </label>
+        }
+    }
+    <p class="gate-row"><span class="gate-label">Counter images</span></p>
+    @if (Options.DockImages.Count == 0)
+    {
+        <p class="gate-meta">No images on the counter; upload files below.</p>
+    }
+    @foreach (var image in Options.DockImages)
+    {
+        <div class="gate-field">
+            <label class="gate-checkline" for="dockimg-@image">
+                <input type="checkbox" id="dockimg-@image"
+                       checked="@IsPicked(image)"
+                       @onchange="e => ToggleServerImage(image, e.Value is true)" />
+                @image
+            </label>
+            <img src="dock-images/@image" alt="@image" class="gate-thumb" />
+            <select class="gate-select" value="@HintFor(image)" @onchange="e => SetHint(image, e.Value?.ToString())" disabled="@(!IsPicked(image))">
+                <option value="">— no carton hint —</option>
+                @foreach (var carton in Options.CartonIds)
+                {
+                    <option value="@carton">@carton</option>
+                }
+            </select>
+        </div>
+    }
+    <p class="gate-row"><span class="gate-label">Upload files</span></p>
+    <InputFile multiple accept=".jpg,.jpeg" OnChange="OnUploadAsync" />
+    @foreach (var row in _uploads)
+    {
+        <div class="gate-field">
+            <span class="gate-row">@row.FileName (@row.Bytes.Length bytes)</span>
+            <select class="gate-select" @bind="row.CartonHint">
+                <option value="">— no carton hint —</option>
+                @foreach (var carton in Options.CartonIds)
+                {
+                    <option value="@carton">@carton</option>
+                }
+            </select>
+            <div class="gate-actions">
+                <button class="gate-btn" disabled="@_busy" @onclick="() => _uploads.Remove(row)">Remove</button>
+            </div>
+        </div>
+    }
+    <div class="gate-actions">
+        <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="SubmitAsync">@(_reshot ? "Send reshot" : "Send dock photos")</button>
+        @if (_busy)
+        {
+            <span class="gate-meta">Transcribing and judging…</span>
+        }
+    </div>
+    @if (_uploadError is not null)
+    {
+        <ErrorBox Message="@_uploadError" />
+    }
+    <OutcomeBox Outcome="@_outcome" CaseId="@_caseId" />
+</section>
+
+@code {
+    private const long MaxUploadBytes = 15L * 1024 * 1024;
+
+    [Parameter]
+    public SimulateOptions Options { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private string? _caseId;
+    private bool _reshot;
+    private bool _busy;
+    private bool _prefilled;
+    private SimulationOutcome? _outcome;
+    private string? _uploadError;
+    private readonly HashSet<string> _cartons = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _serverPicks = new(StringComparer.Ordinal);
+    private readonly List<UploadRow> _uploads = [];
+
+    private sealed class UploadRow
+    {
+        public string FileName { get; set; } = string.Empty;
+        public byte[] Bytes { get; set; } = [];
+        public string? CartonHint { get; set; }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!_prefilled)
+        {
+            _prefilled = true;
+            // One click: the first case is picked and every counter image is
+            // already ticked; untick what the camera did not see.
+            _caseId = Options.Cases.FirstOrDefault()?.CaseId;
+            foreach (var image in Options.DockImages)
+            {
+                _serverPicks.TryAdd(image, null);
+            }
+        }
+    }
+
+    private bool IsPicked(string image) => _serverPicks.ContainsKey(image);
+
+    private string HintFor(string image) =>
+        _serverPicks.TryGetValue(image, out var hint) ? hint ?? string.Empty : string.Empty;
+
+    private void SetHint(string image, string? hint)
+    {
+        if (_serverPicks.ContainsKey(image))
+        {
+            _serverPicks[image] = string.IsNullOrWhiteSpace(hint) ? null : hint;
+        }
+    }
+
+    private void ToggleServerImage(string image, bool picked)
+    {
+        if (picked)
+        {
+            _serverPicks.TryAdd(image, null);
+        }
+        else
+        {
+            _serverPicks.Remove(image);
+        }
+    }
+
+    private void ToggleCarton(string carton, bool picked)
+    {
+        if (picked)
+        {
+            _cartons.Add(carton);
+        }
+        else
+        {
+            _cartons.Remove(carton);
+        }
+    }
+
+    private async Task OnUploadAsync(InputFileChangeEventArgs e)
+    {
+        _uploadError = null;
+        foreach (var file in e.GetMultipleFiles())
+        {
+            try
+            {
+                using var stream = file.OpenReadStream(MaxUploadBytes);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                _uploads.Add(new UploadRow { FileName = file.Name, Bytes = buffer.ToArray() });
+            }
+            catch (Exception ex)
+            {
+                _uploadError = $"Upload {file.Name} failed: {ex.Message}.";
+            }
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _outcome = null;
+        try
+        {
+            var photos = new List<SimulationPhoto>();
+            foreach (var pick in _serverPicks)
+            {
+                var (bytes, error) = await Simulate.TryReadDockImageAsync(pick.Key);
+                if (bytes is null)
+                {
+                    _outcome = new SimulationOutcome(false, error ?? $"Image {pick.Key} is not available.", [], []);
+                    return;
+                }
+
+                photos.Add(new SimulationPhoto(pick.Key, bytes, pick.Value));
+            }
+
+            photos.AddRange(_uploads.Select(u => new SimulationPhoto(u.FileName, u.Bytes, u.CartonHint)));
+
+            _outcome = _reshot
+                ? await Simulate.SendReshotAsync(_caseId, _cartons.ToList(), photos)
+                : await Simulate.SendDockPhotosAsync(_caseId, photos);
+            if (_outcome.Ok)
+            {
+                await OnChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _outcome = new SimulationOutcome(false, $"Dock photos failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

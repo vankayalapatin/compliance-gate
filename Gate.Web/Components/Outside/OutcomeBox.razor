@@ -1,0 +1,50 @@
+@using Gate.Web.ViewModels
+@{
+    var shown = Outcome is null ? null : OutsideWorldLabels.Sanitized(Outcome);
+}
+@if (shown is not null)
+{
+    <div class="gate-outcome">
+        @if (shown.Ok)
+        {
+            <div class="gate-notice gate-notice-ok" role="alert">@shown.Summary</div>
+        }
+        else
+        {
+            <div class="gate-notice gate-notice-error" role="alert"><strong>Not sent.</strong> @shown.Summary</div>
+        }
+        @if (shown.Details.Count > 0)
+        {
+            <ul class="gate-list">
+                @foreach (var detail in shown.Details)
+                {
+                    <li>@detail</li>
+                }
+            </ul>
+        }
+        @foreach (var caseId in shown.CaseIds)
+        {
+            <a class="gate-btn" href="cases/@caseId">Open @caseId</a>
+            <span> </span>
+        }
+        @if (shown.CaseIds.Count > 0)
+        {
+            <a class="gate-btn" href="decisions">Open Decisions</a>
+        }
+        @if (!string.IsNullOrEmpty(CaseId))
+        {
+            <span> </span>
+            <a class="gate-btn" href="cases/@CaseId">Open @CaseId</a>
+            <span> </span>
+            <a class="gate-btn" href="decisions">Open Decisions</a>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public SimulationOutcome? Outcome { get; set; }
+
+    [Parameter]
+    public string? CaseId { get; set; }
+}
