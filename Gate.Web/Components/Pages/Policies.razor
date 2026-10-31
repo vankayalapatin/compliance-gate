@@ -1,0 +1,824 @@
+@page "/policies"
+@rendermode InteractiveServer
+@using Gate.Agent
+@using Gate.Compliance
+@using Gate.Contracts
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject PolicyViewService Views
+@inject PolicyOutcomeService Outcomes
+@inject CaseViewService UsersSvc
+
+<PageTitle>Policies</PageTitle>
+
+<h1>Policies</h1>
+<p class="text-muted">Memo-to-rule human steps: answer blocking questions, approve proposals, review activations.</p>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_questions is null || _approvals is null || _activations is null)
+{
+    <p>Loading policies…</p>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <label class="form-label" for="actedBy">Acting as (ERP user)</label>
+            <select class="form-select" id="actedBy" @bind="_actedBy">
+                <option value="">— pick the approver —</option>
+                @foreach (var user in _users)
+                {
+                    <option value="@user.UserId">@user.UserId (@user.Role, limit @user.SigningLimit @user.LimitCurrency)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-8 d-flex align-items-end">
+            <p class="text-muted mb-2">
+                @_questions.Count(q => q.Decision.Status == DecisionStatus.Pending) pending question(s),
+                @_approvals.Count(a => a.Decision.Status == DecisionStatus.Pending) pending approval(s),
+                @_activations.Count activation(s).
+            </p>
+        </div>
+    </div>
+
+    <h2>Policy questions</h2>
+    @if (_questions.Count == 0)
+    {
+        <p>No policy questions in the memo files yet.</p>
+    }
+    @foreach (var card in _questions)
+    {
+        var d = card.Decision;
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between">
+                <span><strong>@d.Title</strong> <span class="badge bg-secondary">PolicyQuestion</span></span>
+                <span>
+                    @if (card.Question is not null && d.Status == DecisionStatus.Pending)
+                    {
+                        <span class="badge @(card.Question.Blocking ? "bg-danger" : "bg-info text-dark") me-1">@(card.Question.Blocking ? "Blocking — memo waits" : "Advisory")</span>
+                    }
+                    <span class="badge @(d.Status == DecisionStatus.Pending ? "bg-warning text-dark" : d.Status == DecisionStatus.Approved ? "bg-success" : "bg-danger")">@d.Status</span>
+                </span>
+            </div>
+            <div class="card-body">
+                <p class="card-text">
+                    Memo @card.MemoId · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
+                    · ref @(d.DocumentNumber ?? "—")
+                </p>
+                @if (d.Amount is not null)
+                {
+                    <p class="card-text"><strong>Amount:</strong> @d.Amount @d.Currency</p>
+                }
+                @if (card.Question is not null)
+                {
+                    <p class="card-text"><strong>Question [@card.Question.QuestionId]:</strong> @card.Question.Question</p>
+                }
+                else if (d.Reason is not null)
+                {
+                    <p class="card-text"><strong>Question (from decision card):</strong> @d.Reason</p>
+                }
+                @if (d.DecidedBy is not null)
+                {
+                    <p class="card-text">
+                        <strong>Decided:</strong> @d.DecidedBy at @(d.DecidedAt?.ToString("u") ?? "—")
+                        @(d.Comment is null ? "" : $" — {(d.Status == DecisionStatus.Approved ? "chosen option" : "note")}: {d.Comment}")
+                    </p>
+                }
+                @if (card.Notices.Count > 0)
+                {
+                    <ul class="text-muted">
+                        @foreach (var notice in card.Notices)
+                        {
+                            <li>@notice</li>
+                        }
+                    </ul>
+                }
+                @if (d.Status == DecisionStatus.Pending && card.Options.Count > 0)
+                {
+                    <div class="mt-2">
+                        @foreach (var option in card.Options)
+                        {
+                            var opt = option;
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="opt-@d.DecisionId" id="opt-@d.DecisionId-@opt"
+                                       checked="@(ChosenOptionFor(d.DecisionId) == opt)"
+                                       @onchange="() => _chosenOptions[d.DecisionId] = opt" />
+                                <label class="form-check-label" for="opt-@d.DecisionId-@opt">@opt</label>
+                            </div>
+                        }
+                    </div>
+                    @if (!card.OptionsVerified)
+                    {
+                        <p class="card-text text-muted">Options from the card's evidence refs, unverified against a proposal round.</p>
+                    }
+                    <div class="mt-2">
+                        <button class="btn btn-primary me-2" disabled="@_busy" @onclick="() => AnswerAsync(card)">Answer</button>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-md-6">
+                            <label class="form-label" for="decline-@d.DecisionId">Decline note (recorded on decline)</label>
+                            <input class="form-control" id="decline-@d.DecisionId"
+                                   value="@DeclineNoteFor(d.DecisionId)" @onchange="e => _declineNotes[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <button class="btn btn-outline-danger" disabled="@_busy" @onclick="() => DeclineAsync(card)">Decline (closes the memo)</button>
+                        </div>
+                    </div>
+                }
+                @if (_outcomes.TryGetValue(d.DecisionId, out var outcome))
+                {
+                    <div class="mt-2">
+                        <ErrorBox Message="@(outcome.Ok ? null : outcome.Message)" Warnings="@outcome.Warnings" />
+                        @if (outcome.Ok)
+                        {
+                            <div class="alert alert-success" role="alert">@outcome.Message</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <h2>Policy approvals</h2>
+    @if (_approvals.Count == 0)
+    {
+        <p>No policy approvals in the memo files yet.</p>
+    }
+    @foreach (var card in _approvals)
+    {
+        var d = card.Decision;
+        var current = card.Current;
+        var proposal = current?.Proposal;
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between">
+                <span>
+                    <strong>@d.Title</strong> <span class="badge bg-secondary">PolicyApproval</span>
+                    <AgentBanner Source="@RecordSource.P2pAgent" />
+                    @if (card.StaleCard)
+                    {
+                        <span class="badge bg-danger">stale</span>
+                    }
+                </span>
+                <span class="badge @(d.Status == DecisionStatus.Pending ? "bg-warning text-dark" : d.Status == DecisionStatus.Approved ? "bg-success" : "bg-danger")">@d.Status</span>
+            </div>
+            <div class="card-body">
+                <p class="card-text">
+                    Memo @card.MemoId · policy owner @card.PolicyOwner
+                    · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
+                </p>
+                @if (d.Amount is not null)
+                {
+                    <p class="card-text"><strong>Amount:</strong> @d.Amount @d.Currency</p>
+                }
+                <p class="card-text">
+                    <strong>Memo @card.Memo.MemoId</strong> from @card.Memo.Author,
+                    received @card.Memo.ReceivedAt.ToString("u")
+                </p>
+                <blockquote class="blockquote"><p class="mb-0 fs-6">@card.Memo.Excerpt</p></blockquote>
+                @if (proposal is not null && current is not null)
+                {
+                    <p class="card-text">
+                        <strong>Proposal @proposal.ProposalId</strong> · KB @proposal.KbVersion
+                        · proposed @proposal.ProposedAt.ToString("u")
+                        · hash <code>@proposal.ProposalHash</code>
+                    </p>
+                    <p class="card-text">
+                        <strong>Spark interpretation</strong> (@proposal.Statements.Count statement(s),
+                        @(proposal.Statements.Count - card.UnresolvedStatements.Count) resolved,
+                        @card.UnresolvedStatements.Count unresolved):
+                    </p>
+                    <ul>
+                        @foreach (var s in proposal.Statements)
+                        {
+                            var resolved = PolicyLabels.IsResolved(s, proposal.Resolutions);
+                            <li>
+                                “@s.Quote” → @s.Interpretation
+                                (confidence @s.Confidence)
+                                <span class="badge @(resolved ? "bg-success" : "bg-warning text-dark")">@(resolved ? "resolved" : "unresolved")</span>
+                            </li>
+                        }
+                    </ul>
+                    @if (proposal.Resolutions.Count > 0)
+                    {
+                        <p class="card-text"><strong>Resolved entities:</strong></p>
+                        <ul>
+                            @foreach (var r in proposal.Resolutions)
+                            {
+                                <li>“@r.Phrase” → @r.EntityId (<code>@PolicyLabels.Citation(r.Citation)</code>)</li>
+                            }
+                        </ul>
+                    }
+                    @if (proposal.Citations.Count > 0)
+                    {
+                        <p class="card-text">
+                            <strong>Citations:</strong>
+                            @foreach (var c in proposal.Citations)
+                            {
+                                <code class="me-2">@PolicyLabels.Citation(c)</code>
+                            }
+                        </p>
+                    }
+                    @if (proposal.ProposedRule is not null)
+                    {
+                        <p class="card-text">
+                            <strong>Proposed rule:</strong> @proposal.ProposedRule.RuleType
+                            at the @proposal.ProposedRule.Gate gate
+                        </p>
+                        <ul>
+                            @foreach (var kv in proposal.ProposedRule.Params.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                            {
+                                <li><code>@kv.Key</code> = <code>@kv.Value</code></li>
+                            }
+                        </ul>
+                    }
+                    else if (proposal.NotMappable is not null)
+                    {
+                        <div class="alert alert-warning" role="alert">
+                            <strong>NotMappable:</strong> nearest type @proposal.NotMappable.NearestType —
+                            @proposal.NotMappable.WhyNot
+                            (missing capability: @proposal.NotMappable.MissingCapability).
+                            Approval is refused; rejecting closes the memo.
+                        </div>
+                    }
+                    @if (proposal.Questions.Count > 0)
+                    {
+                        <p class="card-text"><strong>Open questions:</strong></p>
+                        <ul>
+                            @foreach (var q in proposal.Questions)
+                            {
+                                <li>
+                                    [@q.QuestionId] @(q.Blocking ? "blocking" : "advisory"): @q.Question
+                                    (options: @(q.Options.Count == 0 ? "none" : string.Join("; ", q.Options)))
+                                </li>
+                            }
+                        </ul>
+                    }
+                    @if (current.Validation.Ok)
+                    {
+                        <div class="alert alert-success" role="alert">Validation passed against the pinned KB.</div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-danger" role="alert">
+                            <strong>Validation refuses (@current.Validation.Errors.Count error(s)):</strong>
+                            <ul class="mb-0">
+                                @foreach (var error in current.Validation.Errors)
+                                {
+                                    <li>@error</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                    @if (current.Validation.Conflicts.Count > 0)
+                    {
+                        <p class="card-text"><strong>Live-pack conflicts:</strong></p>
+                        <ul>
+                            @foreach (var conflict in current.Validation.Conflicts)
+                            {
+                                <li><strong>@conflict.RuleId</strong> (@conflict.Kind): @conflict.Detail</li>
+                            }
+                        </ul>
+                    }
+                    else
+                    {
+                        <p class="card-text text-muted">No live-pack conflicts recorded.</p>
+                    }
+                    @if (current.WhatIf is not null)
+                    {
+                        var report = current.WhatIf;
+                        <p class="card-text">
+                            <strong>What-if</strong> (@report.HistoryLabel; @report.HistoryRowCount history row(s);
+                            computed @report.ComputedAt.ToString("u")):
+                        </p>
+                        @if (report.Unviable)
+                        {
+                            <div class="alert alert-danger" role="alert"><strong>Unviable:</strong> no award path passes under the proposed rule.</div>
+                        }
+                        @if (report.Flips.Count > 0)
+                        {
+                            <ul>
+                                @foreach (var flip in report.Flips)
+                                {
+                                    <li>
+                                        @flip.DocumentType @flip.DocumentNumber:
+                                        @flip.OldKind → @flip.NewKind
+                                        @(flip.BlockingRuleId is null ? "" : $"(blocked by {flip.BlockingRuleId})"),
+                                        qty @flip.Quantity, @PolicyLabels.FlipMoney(flip.Amount, flip.Currency)
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <p class="card-text text-muted">No verdict flips.</p>
+                        }
+                        @if (report.PipelineRows.Count > 0)
+                        {
+                            <p class="card-text"><strong>Pipeline rows:</strong></p>
+                            <ul>
+                                @foreach (var row in report.PipelineRows)
+                                {
+                                    <li>
+                                        @row.DocumentType @row.DocumentNumber:
+                                        @row.OldKind → @row.NewKind
+                                        @(row.BlockingRuleId is null ? "" : $"(blocked by {row.BlockingRuleId})")
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        <p class="card-text">
+                            <strong>Totals:</strong> @report.Totals.DocumentsEvaluated evaluated,
+                            @report.Totals.FlipsToBlock flip(s) to block, @report.Totals.FlipsToPass flip(s) to pass,
+                            qty @report.Totals.QuantityFlipped,
+                            @PolicyLabels.TotalsMoney(report.Totals.AmountFlipped, report.Totals.Currency)
+                        </p>
+                    }
+                }
+                <div class="alert alert-info" role="alert">
+                    <strong>Approval pin:</strong> @PolicyLabels.DecisionPin(d, proposal?.KbVersion)<br />
+                    @if (card.Activation is not null)
+                    {
+                        <span>Published @card.Activation.RuleId in pack @card.Activation.PackId
+                        @card.Activation.PriorPackVersion → @card.Activation.NewPackVersion,
+                        effective @card.Activation.EffectiveAt.ToString("u") · @card.Activation.Applicability.</span>
+                    }
+                </div>
+                @if (card.Notices.Count > 0)
+                {
+                    <ul class="text-muted">
+                        @foreach (var notice in card.Notices)
+                        {
+                            <li>@notice</li>
+                        }
+                    </ul>
+                }
+                @if (d.Status == DecisionStatus.Pending && proposal is not null)
+                {
+                    <div class="row mt-2">
+                        <div class="col-md-4">
+                            <label class="form-label" for="applic-@d.DecisionId">Applicability mode</label>
+                            <select class="form-select" id="applic-@d.DecisionId" value="@ApplicabilityFor(d.DecisionId)" @onchange="e => _applicability[d.DecisionId] = Enum.Parse<RuleApplicability>(e.Value?.ToString() ?? nameof(RuleApplicability.ProspectiveOnly))">
+                                @foreach (var mode in Enum.GetValues<RuleApplicability>())
+                                {
+                                    <option value="@mode">@mode</option>
+                                }
+                            </select>
+                            <div class="form-text">@PolicyLabels.ApplicabilityBlurb(ApplicabilityFor(d.DecisionId))</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="effective-@d.DecisionId">Effective datetime (UTC, mandatory)</label>
+                            <input class="form-control" type="datetime-local" id="effective-@d.DecisionId"
+                                   value="@EffectiveFor(d.DecisionId)" @onchange="e => _effective[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+                            <div class="form-text">Never backdated without a recorded reason in the comment.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="comment-@d.DecisionId">Comment / reason</label>
+                            <input class="form-control" id="comment-@d.DecisionId"
+                                   value="@CommentFor(d.DecisionId)" @onchange="e => _comments[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                    </div>
+                    @if (proposal.ProposedRule is not null)
+                    {
+                        <div class="mt-2">
+                            <p class="card-text"><strong>Parameters (registry: @proposal.ProposedRule.RuleType):</strong></p>
+                            @foreach (var key in ParamKeysFor(card))
+                            {
+                                var k = key;
+                                var known = card.RuleSpec is not null
+                                    && (card.RuleSpec.RequiredParams.Contains(k) || card.RuleSpec.OptionalParams.Contains(k));
+                                <div class="row mb-1">
+                                    <label class="col-sm-4 col-form-label" for="param-@d.DecisionId-@k">
+                                        <code>@k</code>
+                                        @if (!known)
+                                        {
+                                            <span class="badge bg-warning text-dark">not in registry</span>
+                                        }
+                                    </label>
+                                    <div class="col-sm-8">
+                                        <input class="form-control" id="param-@d.DecisionId-@k"
+                                               value="@ParamValueFor(card, k)" @onchange="e => SetParamValue(card, k, e.Value?.ToString() ?? string.Empty)" />
+                                    </div>
+                                </div>
+                            }
+                            <div class="form-text">Blank optional values are omitted; the registry judges the rest. Unchanged params approve as proposed.</div>
+                        </div>
+                    }
+                    @if (card.NeedsNewRuleSpec)
+                    {
+                        <div class="mt-2">
+                            <p class="card-text"><strong>New rule (no live rule to update): title, tier, and label are the approver's call.</strong></p>
+                            <div class="row">
+                                <div class="col-md-5">
+                                    <label class="form-label" for="title-@d.DecisionId">Title</label>
+                                    <input class="form-control" id="title-@d.DecisionId"
+                                           value="@NewRuleTitleFor(d.DecisionId)" @onchange="e => _newRuleTitles[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label" for="tier-@d.DecisionId">Tier</label>
+                                    <select class="form-select" id="tier-@d.DecisionId" value="@NewRuleTierFor(d.DecisionId)" @onchange="e => _newRuleTiers[d.DecisionId] = Enum.Parse<RuleTier>(e.Value?.ToString() ?? nameof(RuleTier.Tier2))">
+                                        @foreach (var tier in Enum.GetValues<RuleTier>())
+                                        {
+                                            <option value="@tier">@tier</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label" for="doclabel-@d.DecisionId">Document label</label>
+                                    <input class="form-control" id="doclabel-@d.DecisionId"
+                                           value="@NewRuleDocLabelFor(d.DecisionId)" @onchange="e => _newRuleDocLabels[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+                                </div>
+                            </div>
+                            <div class="form-text">DocumentPresence rules require the document label; other types leave it blank.</div>
+                        </div>
+                    }
+                    <div class="mt-2">
+                        <label class="form-label" for="evidence-@d.DecisionId">Test evidence (passing test names, one per line; required to approve)</label>
+                        <textarea class="form-control" id="evidence-@d.DecisionId" rows="2"
+                                  value="@EvidenceFor(d.DecisionId)" @onchange="e => _evidence[d.DecisionId] = e.Value?.ToString() ?? string.Empty"></textarea>
+                    </div>
+                    <div class="mt-2">
+                        <button class="btn btn-success me-2" disabled="@_busy" @onclick="() => DecideAsync(card, true)">Approve</button>
+                        <button class="btn btn-danger" disabled="@_busy" @onclick="() => DecideAsync(card, false)">Reject</button>
+                    </div>
+                }
+                @if (_outcomes.TryGetValue(d.DecisionId, out var outcome))
+                {
+                    <div class="mt-2">
+                        <ErrorBox Message="@(outcome.Ok ? null : outcome.Message)" Warnings="@outcome.Warnings" />
+                        @if (outcome.Ok)
+                        {
+                            <div class="alert alert-success" role="alert">@outcome.Message</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <h2>Activations</h2>
+    @if (_activations.Count == 0)
+    {
+        <p>No published activations yet.</p>
+    }
+    @foreach (var activation in _activations)
+    {
+        var a = activation.Activation;
+        <div class="card mb-3">
+            <div class="card-header">
+                <strong>@a.PackId @a.NewPackVersion</strong>
+                <span class="badge bg-success">published</span>
+            </div>
+            <div class="card-body">
+                <p class="card-text"><strong>Source:</strong> @activation.SourceLine</p>
+                <p class="card-text">
+                    <strong>Rule:</strong> @a.RuleId · memo @activation.MemoId ·
+                    prior version @a.PriorPackVersion (rollback point) ·
+                    effective @a.EffectiveAt.ToString("u") · @a.Applicability ·
+                    published @a.PublishedAt.ToString("u") · proposal <code>@a.ProposalHash</code>
+                </p>
+                <div class="row mt-2">
+                    <div class="col-md-4">
+                        <label class="form-label" for="restore-@a.ActivationId">Version to restore</label>
+                        <input class="form-control" id="restore-@a.ActivationId"
+                               value="@RollbackRestoreFor(activation)" @onchange="e => _rollbackRestores[a.ActivationId] = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label" for="rollback-@a.ActivationId">Rollback reason (required)</label>
+                        <input class="form-control" id="rollback-@a.ActivationId"
+                               value="@RollbackReasonFor(a.ActivationId)" @onchange="e => _rollbackReasons[a.ActivationId] = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <button class="btn btn-outline-danger" disabled="@_busy" @onclick="() => RollbackAsync(activation)">Request rollback</button>
+                </div>
+                <p class="card-text text-muted mt-2">
+                    Rollback publishes a new pack version restoring the named version; history is untouched.
+                </p>
+                @if (_rollbackOutcomes.TryGetValue(a.ActivationId, out var outcome))
+                {
+                    <div class="mt-2">
+                        <ErrorBox Message="@(outcome.Ok ? null : outcome.Message)" Warnings="@outcome.Warnings" />
+                        @if (outcome.Ok)
+                        {
+                            <div class="alert alert-success" role="alert">@outcome.Message</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private IReadOnlyList<PolicyQuestionCardVm>? _questions;
+    private IReadOnlyList<PolicyApprovalCardVm>? _approvals;
+    private IReadOnlyList<PolicyActivationVm>? _activations;
+    private IReadOnlyList<UserDto> _users = [];
+    private string? _actedBy;
+    private string? _loadError;
+    private bool _busy;
+    private readonly Dictionary<string, string> _chosenOptions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _declineNotes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _effective = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleApplicability> _applicability = new();
+    private readonly Dictionary<string, string> _comments = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, string>> _paramEdits = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _newRuleTitles = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuleTier> _newRuleTiers = new();
+    private readonly Dictionary<string, string> _newRuleDocLabels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _evidence = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PolicyOutcome> _outcomes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _rollbackRestores = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _rollbackReasons = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PolicyOutcome> _rollbackOutcomes = new(StringComparer.Ordinal);
+
+    private string ChosenOptionFor(string decisionId)
+    {
+        _chosenOptions.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private string DeclineNoteFor(string decisionId)
+    {
+        _declineNotes.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private string EffectiveFor(string decisionId)
+    {
+        _effective.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private RuleApplicability ApplicabilityFor(string decisionId) =>
+        _applicability.TryGetValue(decisionId, out var value) ? value : RuleApplicability.ProspectiveOnly;
+
+    private string CommentFor(string decisionId)
+    {
+        _comments.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private string NewRuleTitleFor(string decisionId)
+    {
+        _newRuleTitles.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private RuleTier NewRuleTierFor(string decisionId) =>
+        _newRuleTiers.TryGetValue(decisionId, out var value) ? value : RuleTier.Tier2;
+
+    private string NewRuleDocLabelFor(string decisionId)
+    {
+        _newRuleDocLabels.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private string EvidenceFor(string decisionId)
+    {
+        _evidence.TryGetValue(decisionId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private string RollbackRestoreFor(PolicyActivationVm activation)
+    {
+        if (_rollbackRestores.TryGetValue(activation.Activation.ActivationId, out var value))
+        {
+            return value;
+        }
+
+        return activation.Activation.PriorPackVersion;
+    }
+
+    private string RollbackReasonFor(string activationId)
+    {
+        _rollbackReasons.TryGetValue(activationId, out var value);
+        return value ?? string.Empty;
+    }
+
+    private IReadOnlyList<string> ParamKeysFor(PolicyApprovalCardVm card)
+    {
+        var keys = new List<string>();
+        if (card.RuleSpec is not null)
+        {
+            keys.AddRange(card.RuleSpec.RequiredParams);
+            keys.AddRange(card.RuleSpec.OptionalParams);
+        }
+
+        if (card.Current?.Proposal.ProposedRule is not null)
+        {
+            foreach (var key in card.Current.Proposal.ProposedRule.Params.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            {
+                if (!keys.Contains(key))
+                {
+                    keys.Add(key);
+                }
+            }
+        }
+
+        return keys;
+    }
+
+    private string ParamValueFor(PolicyApprovalCardVm card, string key)
+    {
+        if (_paramEdits.TryGetValue(card.Decision.DecisionId, out var edits)
+            && edits.TryGetValue(key, out var edited))
+        {
+            return edited;
+        }
+
+        if (card.Current?.Proposal.ProposedRule?.Params.TryGetValue(key, out var proposed) == true)
+        {
+            return proposed;
+        }
+
+        return string.Empty;
+    }
+
+    private void SetParamValue(PolicyApprovalCardVm card, string key, string value)
+    {
+        if (!_paramEdits.TryGetValue(card.Decision.DecisionId, out var edits))
+        {
+            edits = new Dictionary<string, string>(StringComparer.Ordinal);
+            _paramEdits[card.Decision.DecisionId] = edits;
+        }
+
+        edits[key] = value;
+    }
+
+    private IReadOnlyDictionary<string, string>? EditedParamsFor(PolicyApprovalCardVm card)
+    {
+        var keys = ParamKeysFor(card);
+        if (keys.Count == 0)
+        {
+            return null;
+        }
+
+        var optional = card.RuleSpec?.OptionalParams ?? [];
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var key in keys)
+        {
+            var value = ParamValueFor(card, key).Trim();
+            if (value.Length == 0 && optional.Contains(key))
+            {
+                continue;
+            }
+
+            map[key] = value;
+        }
+
+        return map;
+    }
+
+    private NewRuleSpec? NewRuleSpecFor(PolicyApprovalCardVm card)
+    {
+        if (!card.NeedsNewRuleSpec)
+        {
+            return null;
+        }
+
+        var title = NewRuleTitleFor(card.Decision.DecisionId).Trim();
+        if (title.Length == 0)
+        {
+            return null;
+        }
+
+        var docLabel = NewRuleDocLabelFor(card.Decision.DecisionId).Trim();
+        return new NewRuleSpec(title, NewRuleTierFor(card.Decision.DecisionId),
+            docLabel.Length == 0 ? null : docLabel);
+    }
+
+    private IReadOnlyList<string> EvidenceLinesFor(string decisionId) =>
+        EvidenceFor(decisionId)
+            .Split('\n')
+            .Select(line => line.Trim().TrimEnd('\r'))
+            .Where(line => line.Length > 0)
+            .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _users = await UsersSvc.ListUsersAsync().ConfigureAwait(false);
+            await RefreshAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Policies failed to load: {ex.Message}";
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        _questions = await Views.ListQuestionCardsAsync().ConfigureAwait(false);
+        _approvals = await Views.ListApprovalCardsAsync().ConfigureAwait(false);
+        _activations = await Views.ListActivationsAsync().ConfigureAwait(false);
+    }
+
+    private async Task AnswerAsync(PolicyQuestionCardVm card)
+    {
+        _busy = true;
+        try
+        {
+            _chosenOptions.TryGetValue(card.Decision.DecisionId, out var chosen);
+            var outcome = await Outcomes.AnswerQuestionAsync(
+                card.MemoId, card.Decision.DecisionId, chosen, _actedBy ?? string.Empty)
+                .ConfigureAwait(false);
+            _outcomes[card.Decision.DecisionId] = outcome;
+            await RefreshAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _outcomes[card.Decision.DecisionId] = new PolicyOutcome(false, $"Answer failed: {ex.Message}", []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeclineAsync(PolicyQuestionCardVm card)
+    {
+        _busy = true;
+        try
+        {
+            _declineNotes.TryGetValue(card.Decision.DecisionId, out var note);
+            var outcome = await Outcomes.DeclineQuestionAsync(
+                card.MemoId, card.Decision.DecisionId, _actedBy ?? string.Empty, note)
+                .ConfigureAwait(false);
+            _outcomes[card.Decision.DecisionId] = outcome;
+            await RefreshAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _outcomes[card.Decision.DecisionId] = new PolicyOutcome(false, $"Decline failed: {ex.Message}", []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DecideAsync(PolicyApprovalCardVm card, bool approved)
+    {
+        _busy = true;
+        try
+        {
+            if (!PolicyLabels.TryParseEffectiveUtc(EffectiveFor(card.Decision.DecisionId), out var parsed))
+            {
+                _outcomes[card.Decision.DecisionId] = new PolicyOutcome(
+                    false,
+                    $"Effective datetime '{EffectiveFor(card.Decision.DecisionId)}' did not parse; " +
+                    "use YYYY-MM-DDTHH:MM (UTC). It is mandatory on every approval.",
+                    []);
+                return;
+            }
+
+            _comments.TryGetValue(card.Decision.DecisionId, out var comment);
+            var outcome = await Outcomes.DecideApprovalAsync(
+                card.MemoId, card.Decision.DecisionId, approved, _actedBy ?? string.Empty,
+                parsed, ApplicabilityFor(card.Decision.DecisionId),
+                card.Current?.Proposal.ProposedRule is null ? null : EditedParamsFor(card),
+                string.IsNullOrWhiteSpace(comment) ? null : comment,
+                approved ? NewRuleSpecFor(card) : null,
+                approved ? EvidenceLinesFor(card.Decision.DecisionId) : null)
+                .ConfigureAwait(false);
+            _outcomes[card.Decision.DecisionId] = outcome;
+            await RefreshAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _outcomes[card.Decision.DecisionId] = new PolicyOutcome(false, $"Decision failed: {ex.Message}", []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RollbackAsync(PolicyActivationVm activation)
+    {
+        _busy = true;
+        try
+        {
+            _rollbackReasons.TryGetValue(activation.Activation.ActivationId, out var reason);
+            var outcome = await Outcomes.RequestRollbackAsync(
+                activation.MemoId, RollbackRestoreFor(activation), reason, _actedBy ?? string.Empty)
+                .ConfigureAwait(false);
+            _rollbackOutcomes[activation.Activation.ActivationId] = outcome;
+            await RefreshAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _rollbackOutcomes[activation.Activation.ActivationId] =
+                new PolicyOutcome(false, $"Rollback request failed: {ex.Message}", []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
