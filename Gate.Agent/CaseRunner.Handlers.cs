@@ -531,10 +531,27 @@ public partial class CaseRunner
     /// Link tricky invoices to the case whose vendor flow they affect: a
     /// pending BankVerification parks that case's pre-pay leg.</summary>
     public async Task<InvoiceIntakeOutcome> OnInvoiceAsync(
-        SupplierInvoiceInput input, CancellationToken ct = default)
+        SupplierInvoiceInput input, CancellationToken ct = default, bool vendorIdentityCompletion = false)
     {
         var file = CaseStore.Load(_cacheDir, input.CaseId)
             ?? throw new InvalidOperationException($"Unknown case {input.CaseId}.");
+        if (!vendorIdentityCompletion)
+        {
+            var waiting = VendorIdentityStore.FindByInvoiceNumber(
+                _cacheDir, input.CaseId, input.SupplierInvoiceNumber);
+            if (waiting is not null && file.Decisions.Any(d =>
+                string.Equals(d.DecisionId, waiting.DecisionId, StringComparison.Ordinal)
+                && d.Status == DecisionStatus.Pending))
+            {
+                _logger.LogError(
+                    "Case {CaseId}: invoice '{Invoice}' has a pending vendor identity confirm ({DecisionId}); refusing direct intake.",
+                    input.CaseId, input.SupplierInvoiceNumber, waiting.DecisionId);
+                throw new InvalidOperationException(
+                    $"Invoice '{input.SupplierInvoiceNumber}' has a pending vendor identity confirm " +
+                    $"(decision {waiting.DecisionId}); resolve it first instead of intaking directly.");
+            }
+        }
+
         var current = file.Case;
         var lines = input.Lines
             .Select(l => new InvoiceLineInput(l.PoLineRef, l.Quantity, l.UnitPrice))
@@ -792,7 +809,9 @@ public partial class CaseRunner
     /// action: approvals record plus (invoice) post or (payment) post; money
     /// rejections cancel the case; review rejections quarantine plus hold the
     /// carton; bank verification re-verifies the master and releases the
-    /// bank-held lines. Resolving a decided decision returns it unchanged.</summary>
+    /// bank-held lines; vendor identity completes the stored intake with the
+    /// confirmed vendor on approve or the missing-fields path on reject.
+    /// Resolving a decided decision returns it unchanged.</summary>
     public async Task<Decision> ResolveDecisionAsync(
         string caseId, string decisionId, bool approved, string decidedBy,
         string? comment = null, CancellationToken ct = default)
@@ -808,6 +827,20 @@ public partial class CaseRunner
                 "Decision {DecisionId} on case {CaseId} already {Status}; replay returns it unchanged.",
                 decisionId, caseId, decision.Status);
             return decision;
+        }
+
+        if (decision.Kind == DecisionKind.VendorIdentity)
+        {
+            var completed = await CompleteVendorIdentityIntakeAsync(caseId, decision, approved, ct)
+                .ConfigureAwait(false);
+            if (completed)
+            {
+                file = CaseStore.Load(_cacheDir, caseId)
+                    ?? throw new InvalidOperationException($"Case {caseId} vanished during vendor identity completion.");
+                decision = file.Decisions.FirstOrDefault(d =>
+                    string.Equals(d.DecisionId, decision.DecisionId, StringComparison.Ordinal))
+                    ?? throw new InvalidOperationException($"Decision {decision.DecisionId} vanished during vendor identity completion.");
+            }
         }
 
         var work = new CaseWork(file);
@@ -826,6 +859,7 @@ public partial class CaseRunner
             DecisionKind.ApReview => ResolveApReview(work, decision, approved, decidedBy, comment),
             DecisionKind.BankVerification => await ResolveBankVerificationAsync(work, decision, approved, decidedBy, comment, ct)
                 .ConfigureAwait(false),
+            DecisionKind.VendorIdentity => ResolveVendorIdentity(work, decision, approved, decidedBy, comment),
             _ => throw new InvalidOperationException($"Decision kind {decision.Kind} is not resolvable by the runner."),
         };
         work.Save(_cacheDir);
