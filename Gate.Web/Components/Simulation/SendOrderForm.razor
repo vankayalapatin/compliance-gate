@@ -182,10 +182,10 @@
                 Options.CandidateVendorsByItem.Count == 0 ? null : Options.CandidateVendorsByItem,
                 _newOrder ? _lines.Select(l => new OrderLineForm(l.ItemId, l.Quantity)).ToList() : null,
                 _newOrder ? _currency : null);
-            _outcome = await Simulate.SendOrderAsync(submission).ConfigureAwait(false);
+            _outcome = await Simulate.SendOrderAsync(submission);
             if (_outcome.Ok)
             {
-                await OnChanged.InvokeAsync().ConfigureAwait(false);
+                await OnChanged.InvokeAsync();
             }
         }
         catch (Exception ex)
