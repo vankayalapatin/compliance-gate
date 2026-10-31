@@ -96,6 +96,22 @@ else
         </table>
     }
 
+    <h2>Vendor email</h2>
+    @if (_detail.Mail.Count == 0)
+    {
+        <p>No vendor email on this case.</p>
+    }
+    @foreach (var mail in _detail.Mail.OrderBy(m => m.SentAt))
+    {
+        <div class="card mb-2">
+            <div class="card-body">
+                <strong>@mail.Subject</strong>
+                <p class="card-text mb-1"><small>From @mail.From · to @mail.To · sent @mail.SentAt.ToString("u")</small></p>
+                <p class="card-text mb-0">@mail.Body</p>
+            </div>
+        </div>
+    }
+
     <h2>Timeline</h2>
     @if (_detail.Events.Count == 0)
     {
@@ -113,7 +129,7 @@ else
                     <tr>
                         <td>@e.Timestamp.ToString("u")</td>
                         <td>@e.Actor</td>
-                        <td>@e.Kind</td>
+                        <td>@CaseEventLabels.Label(e.Kind)</td>
                         <td>
                             @e.Summary
                             @if (e.RuleId is not null)

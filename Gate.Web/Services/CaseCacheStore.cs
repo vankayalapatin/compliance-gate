@@ -33,7 +33,9 @@ public sealed class CaseCacheStore
             return [];
         }
 
-        var files = Directory.GetFiles(_dir, "*.json");
+        var files = Directory.GetFiles(_dir, "*.json")
+            .Where(f => !f.EndsWith(".mail.json", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         Array.Sort(files, StringComparer.Ordinal);
         var result = new List<CaseFile>(files.Length);
         foreach (var file in files)

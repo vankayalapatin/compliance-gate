@@ -200,6 +200,30 @@ else
         </div>
     }
 
+    <h2>Vendors</h2>
+    @if (_records.Vendors.Count == 0)
+    {
+        <p>No vendors.</p>
+    }
+    else
+    {
+        <table class="table">
+            <thead>
+                <tr><th>Vendor</th><th>Name</th><th>Email</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var vendor in _records.Vendors)
+                {
+                    <tr>
+                        <td>@vendor.VendorId</td>
+                        <td>@vendor.Name</td>
+                        <td>@VendorLabels.EmailOrPlaceholder(vendor.Email)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
     <h2>Open holds</h2>
     @if (_records.OpenHolds.Count == 0)
     {

@@ -29,7 +29,30 @@ public sealed record CaseDetailVm(
     IReadOnlyList<ChainStepVm> Chain,
     IReadOnlyList<CaseEvent> Events,
     IReadOnlyList<Decision> Decisions,
-    IReadOnlyList<HoldDto> OpenHolds);
+    IReadOnlyList<HoldDto> OpenHolds,
+    IReadOnlyList<VendorEmail> Mail);
+
+/// <summary>Human-readable timeline labels. New batch-3 event kinds get
+/// clear phrases; every other kind keeps its enum name.</summary>
+public static class CaseEventLabels
+{
+    public static string Label(CaseEventKind kind) =>
+        kind switch
+        {
+            CaseEventKind.VendorEmailed => "Vendor emailed",
+            CaseEventKind.VendorReplied => "Vendor replied",
+            _ => kind.ToString(),
+        };
+}
+
+/// <summary>Vendor contact-email display. A missing address renders as
+/// the not-on-file placeholder, never blank and never guessed.</summary>
+public static class VendorLabels
+{
+    public const string EmailNotOnFile = "not-on-file";
+
+    public static string EmailOrPlaceholder(string? email) => email ?? EmailNotOnFile;
+}
 
 public sealed record ApprovalVm(
     string DocumentType,
@@ -54,6 +77,7 @@ public sealed record RecordsVm(
     IReadOnlyList<InventoryVm> Inventory,
     IReadOnlyList<HoldDto> OpenHolds,
     IReadOnlyList<ApprovalVm> Approvals,
+    IReadOnlyList<VendorDto> Vendors,
     IReadOnlyList<string> Notes);
 
 public sealed record ReceiptVm(

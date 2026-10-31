@@ -169,7 +169,19 @@ public sealed class CaseViewService
             _log.LogWarning(ex, "Open-hold lookup failed for case {CaseId}.", kase.CaseId);
         }
 
-        return new CaseDetailVm(kase, chain, file.Events, file.Decisions, holds);
+        IReadOnlyList<VendorEmail> mail = [];
+        try
+        {
+            var thread = await new CaseMailStore(_cases.CacheDir)
+                .ReadAsync(kase.CaseId, ct).ConfigureAwait(false);
+            mail = thread?.Messages ?? [];
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Vendor-mail lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
+        return new CaseDetailVm(kase, chain, file.Events, file.Decisions, holds, mail);
     }
 
     private async Task<ChainStepVm> SoStepAsync(Case kase, CancellationToken ct)
@@ -388,7 +400,19 @@ public sealed class CaseViewService
             notes.Add($"Open-hold list failed: {ex.Message}.");
         }
 
-        return new RecordsVm(salesOrders, prs, pos, asns, receipts, invoices, payments, inventory, holds, approvals, notes);
+        IReadOnlyList<VendorDto> vendors = [];
+        try
+        {
+            vendors = (await _erp.GetVendorsAsync(ct).ConfigureAwait(false))
+                .OrderBy(v => v.VendorId, StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            notes.Add($"Vendor list failed: {ex.Message}.");
+        }
+
+        return new RecordsVm(salesOrders, prs, pos, asns, receipts, invoices, payments, inventory, holds, approvals, vendors, notes);
     }
 
     private async Task<IReadOnlyList<ApprovalVm>> ApprovalsForAsync(string docType, string docNumber, CancellationToken ct)
