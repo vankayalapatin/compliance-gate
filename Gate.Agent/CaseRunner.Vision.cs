@@ -55,7 +55,11 @@ public partial class CaseRunner
     /// <summary>Transcribes invoice photos (one per page) into a single
     /// validated invoice, cached by image hash. Scalars take the first
     /// non-blank transcription across pages; lines concatenate in photo
-    /// order. Vendor and PO resolve against the ERP or come back null.</summary>
+    /// order. Vendor resolves against the ERP when it matches exactly; a
+    /// non-blank unmatched vendor raises a Spark-suggested VendorIdentity
+    /// card for the clerk (photo refs as evidence) and stays null until the
+    /// card is approved, so callers must resolve a pending card before
+    /// intaking. PO resolves against the ERP or comes back null.</summary>
     public async Task<TranscribedInvoice> TranscribeInvoicePhotosAsync(
         string caseId, IReadOnlyList<InvoicePhoto> photos, CancellationToken ct = default)
     {
@@ -82,6 +86,14 @@ public partial class CaseRunner
 
         var resolvedVendor = await ResolveVendorIdAsync(vendor, ct).ConfigureAwait(false);
         var resolvedPo = await ResolvePoNumberAsync(po, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(vendor) && resolvedVendor is null)
+        {
+            await ProposeVendorIdentityAsync(
+                caseId, vendor,
+                photos.Select(p => $"image:{p.ImageId}").ToList(),
+                new VendorIdentityIntake(number, resolvedPo, lines, bank), ct).ConfigureAwait(false);
+        }
+
         _logger.LogInformation(
             "Case {CaseId}: transcribed {Photos} invoice photo(s): number {Number}, vendor '{RawVendor}' -> '{Vendor}', po '{RawPo}' -> '{Po}', {Lines} line(s).",
             caseId, photos.Count, number ?? "null", vendor ?? "null", resolvedVendor ?? "null",
