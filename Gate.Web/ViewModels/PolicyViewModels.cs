@@ -55,6 +55,48 @@ public sealed record PolicyActivationVm(
     RuleActivation Activation,
     string SourceLine);
 
+/// <summary>Pure Policies-board filtering, mirroring DecisionBoard: pending
+/// cards routed exactly to the acting user (routing already resolves
+/// delegation), history decided by them. No IO; values arrive as args.</summary>
+public static class PolicyBoard
+{
+    /// <summary>Pending question cards the acting user can answer.</summary>
+    public static IReadOnlyList<PolicyQuestionCardVm> PendingQuestionsFor(
+        IReadOnlyList<PolicyQuestionCardVm> cards, string actingUser) =>
+        cards
+            .Where(c => c.Decision.Status == DecisionStatus.Pending
+                && string.Equals(c.Decision.RequestedTo, actingUser, StringComparison.Ordinal))
+            .OrderBy(c => c.Decision.RequestedAt)
+            .ToList();
+
+    /// <summary>Pending approval cards the acting user can decide.</summary>
+    public static IReadOnlyList<PolicyApprovalCardVm> PendingApprovalsFor(
+        IReadOnlyList<PolicyApprovalCardVm> cards, string actingUser) =>
+        cards
+            .Where(c => c.Decision.Status == DecisionStatus.Pending
+                && string.Equals(c.Decision.RequestedTo, actingUser, StringComparison.Ordinal))
+            .OrderBy(c => c.Decision.RequestedAt)
+            .ToList();
+
+    /// <summary>Question cards the acting user resolved, newest first.</summary>
+    public static IReadOnlyList<PolicyQuestionCardVm> DecidedQuestionsBy(
+        IReadOnlyList<PolicyQuestionCardVm> cards, string actingUser) =>
+        cards
+            .Where(c => c.Decision.Status != DecisionStatus.Pending
+                && string.Equals(c.Decision.DecidedBy, actingUser, StringComparison.Ordinal))
+            .OrderByDescending(c => c.Decision.DecidedAt ?? c.Decision.RequestedAt)
+            .ToList();
+
+    /// <summary>Approval cards the acting user resolved, newest first.</summary>
+    public static IReadOnlyList<PolicyApprovalCardVm> DecidedApprovalsBy(
+        IReadOnlyList<PolicyApprovalCardVm> cards, string actingUser) =>
+        cards
+            .Where(c => c.Decision.Status != DecisionStatus.Pending
+                && string.Equals(c.Decision.DecidedBy, actingUser, StringComparison.Ordinal))
+            .OrderByDescending(c => c.Decision.DecidedAt ?? c.Decision.RequestedAt)
+            .ToList();
+}
+
 /// <summary>Display-only policy labels. Fixed phrases and formats; every
 // domain value (ids, hashes, versions, amounts) arrives at runtime.</summary>
 public static class PolicyLabels
