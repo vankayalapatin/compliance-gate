@@ -34,10 +34,22 @@ public sealed class ReplayService
         _log = log;
     }
 
-    public async Task<ReplayReport> ResetAndReplayAsync(CancellationToken ct = default)
+    /// <summary>Resets to scenario start and pins the session to offline
+    /// replay. Progress reports each completed step as it lands so the Demo
+    /// page can show movement; the returned report carries the full result.
+    /// Zero live calls happen in here: scenario reload, cache clear, and
+    /// cache counts are all local.</summary>
+    public async Task<ReplayReport> ResetAndReplayAsync(
+        IProgress<string>? progress = null, CancellationToken ct = default)
     {
         var steps = new List<string>();
         var warnings = new List<string>();
+        void Step(string text)
+        {
+            steps.Add(text);
+            progress?.Report(text);
+        }
+
         try
         {
             var manifest = await ScenarioLoader.ResetAsync(
@@ -46,17 +58,17 @@ public sealed class ReplayService
                 ScenarioEndpoints.SqlitePath(_config),
                 ScenarioEndpoints.ManifestPath(_config),
                 ct).ConfigureAwait(false);
-            steps.Add($"Scenario {manifest.Scenario} reloaded; {manifest.Documents.Count} document(s) regenerated.");
+            Step($"Scenario {manifest.Scenario} reloaded; {manifest.Documents.Count} document(s) regenerated.");
 
             var cleared = await _cases.ClearAsync(ct).ConfigureAwait(false);
-            steps.Add($"Case cache cleared ({cleared} file(s) removed).");
+            Step($"Case cache cleared ({cleared} file(s) removed).");
 
             _replay.IsReplay = true;
-            steps.Add("Replay mode on: Ask-why answers from the model cache only (zero live calls).");
+            Step("Replay mode on: Ask-why answers from the model cache only (zero live calls).");
 
             var modelCache = ModelCachePaths.ResolveDir();
             var modelEntries = Directory.Exists(modelCache) ? Directory.GetFiles(modelCache, "*.json").Length : 0;
-            steps.Add($"Model cache holds {modelEntries} entr(y/ies); vision cache holds {_photos.CachedReadCount()} read(s).");
+            Step($"Model cache holds {modelEntries} entr(y/ies); vision cache holds {_photos.CachedReadCount()} read(s).");
             if (modelEntries == 0)
             {
                 warnings.Add("Model cache is empty; Ask-why will refuse every question until answers are cached outside replay.");
