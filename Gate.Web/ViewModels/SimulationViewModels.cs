@@ -1,12 +1,12 @@
-// Simulation form shapes for the Simulate surface. Display and form shapes
-// only; every option value arrives from the scenario file, the run
+// Simulation form shapes for the outside-world surface. Display and form
+// shapes only; every option value arrives from the scenario file, the run
 // manifest, the case cache, the dock image directory, or the ERP adapter at
 // runtime. No business values in code.
 using Gate.Contracts;
 
 namespace Gate.Web.ViewModels;
 
-/// <summary>One cached case offered by the Simulate dropdowns.</summary>
+/// <summary>One cached case offered by the outside-world dropdowns.</summary>
 public sealed record CaseOption(
     string CaseId,
     string SoNumber,
@@ -19,9 +19,16 @@ public sealed record ItemOption(
     string ItemId,
     string Unit);
 
-/// <summary>Every option list on the Simulate surface, plus notes for sources
-/// that were missing or failed. Empty lists (never null) render honest empty
-/// states; notes surface the cause.</summary>
+/// <summary>One scenario carton with its part and units, for ASN prefills.
+/// Missing part/units arrive as empty/zero; the human completes them.</summary>
+public sealed record CartonOption(
+    string CartonId,
+    string ItemId,
+    int UnitsPerCarton);
+
+/// <summary>Every option list on the outside-world surface, plus notes for
+/// sources that were missing or failed. Empty lists (never null) render
+/// honest empty states; notes surface the cause.</summary>
 public sealed record SimulateOptions(
     string ScenarioName,
     string Currency,
@@ -34,7 +41,10 @@ public sealed record SimulateOptions(
     IReadOnlyList<string> DockImages,
     IReadOnlyList<ItemOption> Items,
     IReadOnlyDictionary<string, IReadOnlyList<string>> CandidateVendorsByItem,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<CartonOption> CartonDetails,
+    string SalesOrderItem,
+    decimal SalesOrderQuantity);
 
 /// <summary>One photo the human injects: an uploaded file or a server dock
 /// image, read to bytes before posting. CartonHint fills a blank label id
