@@ -40,7 +40,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        await ReloadAsync().ConfigureAwait(false);
+        await ReloadAsync();
     }
 
     private async Task ReloadAsync()
@@ -48,7 +48,7 @@ else
         _busy = true;
         try
         {
-            _options = await Sim.GetOptionsAsync().ConfigureAwait(false);
+            _options = await Sim.GetOptionsAsync();
             _loadError = null;
         }
         catch (Exception ex)
