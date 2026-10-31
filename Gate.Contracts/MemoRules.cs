@@ -284,6 +284,111 @@ public sealed record KbSnapshot(
     IReadOnlyList<KbRegionRule> RegionRules,
     IReadOnlyList<KbDocument> Documents);
 
+/// <summary>Old or new side of a what-if comparison: a registry rule type
+/// plus its string params. A null old side means the rule is absent live
+/// (brand-new requirement): every old verdict is Pass.</summary>
+public sealed record WhatIfRuleConfig(
+    string RuleType,
+    IReadOnlyDictionary<string, string> Params);
+
+/// <summary>One historical award row (vendor, country, qty, item, date)
+/// plus the observables each rule type reads. Amounts are qty times price
+/// with the currency from the row.</summary>
+public sealed record WhatIfHistoryRow(
+    string DocumentNumber,
+    string ItemId,
+    bool IsCritical,
+    string? VendorId,
+    string Country,
+    decimal Quantity,
+    decimal UnitPrice,
+    string? Currency,
+    DateOnly? AwardDate = null,
+    bool DocPresent = false,
+    bool MarkPresent = false,
+    bool MarkLegible = false,
+    bool HandlingRequired = false,
+    bool HandlingVisible = false,
+    bool DamageVisible = false,
+    bool ScreeningHit = false);
+
+/// <summary>One open-pipeline document row plus the observables each rule
+/// type reads. Open states apply to pre-pay evaluation; posted history
+/// rows never carry open states (posted rows are never re-evaluated).</summary>
+public sealed record WhatIfPipelineRow(
+    string DocumentType,
+    string DocumentNumber,
+    string ItemId,
+    bool IsCritical,
+    string? VendorId,
+    string? Country,
+    decimal Quantity,
+    decimal? UnitPrice,
+    string? Currency,
+    bool DocPresent = false,
+    bool MarkPresent = false,
+    bool MarkLegible = false,
+    bool HandlingRequired = false,
+    bool HandlingVisible = false,
+    bool DamageVisible = false,
+    bool ScreeningHit = false,
+    bool HasOpenHold = false,
+    bool HasQuarantine = false,
+    bool HasOpenReview = false);
+
+/// <summary>Proposal validation outcome. Ok is true only when Errors is
+/// empty. Conflicts holds the live-pack conflicts for structurally valid
+/// ProposedRule proposals.</summary>
+public sealed record ProposalValidation(
+    bool Ok,
+    IReadOnlyList<string> Errors,
+    IReadOnlyList<RuleConflict> Conflicts)
+{
+    public void EnsureValid()
+    {
+        if (!Ok)
+        {
+            throw new InvalidOperationException(
+                "Rule proposal rejected:\n- " + string.Join("\n- ", Errors));
+        }
+    }
+}
+
+/// <summary>Approval-gate outcome. Ok is true only when Errors is empty.</summary>
+public sealed record ApprovalValidation(bool Ok, IReadOnlyList<string> Errors)
+{
+    public void EnsureValid()
+    {
+        if (!Ok)
+        {
+            throw new InvalidOperationException(
+                "Rule approval refused:\n- " + string.Join("\n- ", Errors));
+        }
+    }
+}
+
+public enum RuleTier
+{
+    Tier1,
+    Tier2,
+    Tier3
+}
+
+/// <summary>Approver's call for a brand-new rule: title, tier, and document
+/// label. Rule type, gate, and params come from the approved proposal (or
+/// its edited params).</summary>
+public sealed record NewRuleSpec(
+    string Title,
+    RuleTier Tier,
+    string? DocumentLabel = null);
+
+/// <summary>One publication: the new file name, its JSON content, and the
+/// activation record. Deterministic: same inputs serialize byte-identical.</summary>
+public sealed record PackPublication(
+    string FileName,
+    string Json,
+    RuleActivation Activation);
+
 /// <summary>Publish record: a validated plus approved plus tested proposal
 /// shipped as a version-bumped pack. Source is memo id plus approver plus
 /// effective date. PriorPackVersion is the rollback point: rollback
