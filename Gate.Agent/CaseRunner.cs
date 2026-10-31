@@ -327,9 +327,12 @@ public partial class CaseRunner
     }
 
     /// <summary>Records the supplier award: the winner must come from the
-    /// screened-passing set (re-derived, never trusted), and the reason is
-    /// the chooser's own words. A null vendor (C# fallback only) awards the
-    /// first passing vendor and says so.</summary>
+    /// screened-passing set (re-derived, never trusted), and the reason must
+    /// name every other candidate plus each blocking rule id from its
+    /// screening. Spark writes that one-line prose on the tool path (C#
+    /// validates the loser tokens, never the style); a null vendor (C#
+    /// fallback only) awards the first passing vendor and records the same
+    /// loser detail deterministically.</summary>
     private async Task AwardSupplierStepAsync(
         CaseFile file, string? vendorId, string? reason, CancellationToken ct)
     {
@@ -352,12 +355,17 @@ public partial class CaseRunner
         if (winner is null)
         {
             winner = passing[0];
-            why = "C# executed the pick: first passing vendor.";
+            why = FallbackAwardReason(winner, screenings);
         }
-        else if (!passing.Contains(winner, StringComparer.Ordinal))
+        else
         {
-            throw new InvalidOperationException(
-                $"Vendor {winner} did not pass screening for case {current.CaseId}; passing: {string.Join(", ", passing)}.");
+            if (!passing.Contains(winner, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Vendor {winner} did not pass screening for case {current.CaseId}; passing: {string.Join(", ", passing)}.");
+            }
+
+            RequireLosersInReason(why, screenings, winner, current.CaseId);
         }
 
         var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false);
@@ -368,6 +376,88 @@ public partial class CaseRunner
             documentType: "PR", documentNumber: current.PrNumber);
         work.Patch(current with { AwardedVendorId = winner });
         work.Save(_cacheDir);
+    }
+
+    /// <summary>Screening block rule ids for one vendor: distinct Block
+    /// verdicts excluding the ERP-block marker (losers are already blocked
+    /// when the award re-derives screenings, and the marker is not a rule
+    /// the screening events ever showed).</summary>
+    private static IReadOnlyList<string> ScreeningBlockRuleIds(VendorScreening screening) =>
+        screening.Verdicts
+            .Where(v => v.Kind == VerdictKind.Block)
+            .Select(v => v.RuleId)
+            .Where(id => !string.Equals(id, ComplianceVerdictIds.VendorBlock, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>Deterministic C#-fallback award prose: names the first passing
+    /// vendor plus every loser with its honest outcome (blocking rule ids for
+    /// blocked candidates, passed-but-not-chosen otherwise).</summary>
+    private static string FallbackAwardReason(
+        string winner, IReadOnlyList<VendorScreening> screenings)
+    {
+        var losers = screenings
+            .Where(s => !string.Equals(s.VendorId, winner, StringComparison.Ordinal))
+            .ToList();
+        if (losers.Count == 0)
+        {
+            return $"C# executed the pick: first passing vendor {winner}.";
+        }
+
+        var clauses = losers.Select(loser =>
+        {
+            var blocks = ScreeningBlockRuleIds(loser);
+            return blocks.Count > 0
+                ? $"{loser.VendorId} blocked by {string.Join(", ", blocks)}"
+                : $"{loser.VendorId} passed but not chosen";
+        });
+        return $"C# executed the pick: first passing vendor {winner}. Losers: {string.Join("; ", clauses)}.";
+    }
+
+    /// <summary>Validates a Spark-written award reason names every other
+    /// candidate plus each blocking rule id from its screening. Loser detail
+    /// is deterministic from the verdicts; only the prose is the model's.</summary>
+    private static void RequireLosersInReason(
+        string? reason, IReadOnlyList<VendorScreening> screenings, string winner, string caseId)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new InvalidOperationException(
+                $"Award for case {caseId} needs a one-line reason naming each losing vendor and its blocking rule id.");
+        }
+
+        var missing = MissingLoserTokens(reason, screenings, winner);
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Award reason for case {caseId} must name each losing vendor and its blocking rule id; " +
+                $"missing: {string.Join(", ", missing)}.");
+        }
+    }
+
+    private static IReadOnlyList<string> MissingLoserTokens(
+        string reason, IReadOnlyList<VendorScreening> screenings, string winner)
+    {
+        var missing = new List<string>();
+        foreach (var loser in screenings.Where(s =>
+            !string.Equals(s.VendorId, winner, StringComparison.Ordinal)))
+        {
+            if (!reason.Contains(loser.VendorId, StringComparison.Ordinal))
+            {
+                missing.Add(loser.VendorId);
+            }
+
+            foreach (var ruleId in ScreeningBlockRuleIds(loser))
+            {
+                if (!reason.Contains(ruleId, StringComparison.Ordinal))
+                {
+                    missing.Add(ruleId);
+                }
+            }
+        }
+
+        return missing;
     }
 
     private async Task CreatePoStepAsync(CaseFile file, CancellationToken ct)
@@ -758,6 +848,21 @@ public partial class CaseRunner
                 return existing;
             }
 
+            return CreateDecision(
+                kind, title, requestedTo, documentType, documentNumber,
+                amount, currency, reason, ruleId, evidenceRefs);
+        }
+
+        /// <summary>Always appends a fresh decision card. Vendor-identity
+        /// proposals use this (their document number is the proposed vendor
+        /// id, which repeats across invoices), after their own dedupe on raw
+        /// text plus evidence refs.</summary>
+        public Decision CreateDecision(
+            DecisionKind kind, string title, string requestedTo,
+            string? documentType, string? documentNumber,
+            decimal? amount = null, string? currency = null, string? reason = null,
+            string? ruleId = null, IReadOnlyList<string>? evidenceRefs = null)
+        {
             var decision = new Decision(
                 $"{_caseId}-d{_decisions.Count + 1:000}", _caseId, kind, title,
                 DecisionStatus.Pending, requestedTo, DateTimeOffset.UtcNow,
