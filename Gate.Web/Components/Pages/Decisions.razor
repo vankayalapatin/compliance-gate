@@ -8,7 +8,6 @@
 @inject DecisionOutcomeService Outcomes
 @inject AskWhyService Why
 @inject ActingUserState Acting
-@inject ReplayService Replay
 @inject ILogger<Decisions> Log
 @implements IDisposable
 
@@ -153,28 +152,6 @@ else
         </table>
     }
 
-    <section class="gate-reset">
-        <p class="gate-section-title">Reset + replay offline</p>
-        <p class="gate-meta">Reloads the scenario, clears the case cache, and pins Ask-why to cached answers.</p>
-        <button class="gate-btn" disabled="@_busy" @onclick="ResetAsync">Reset + replay offline</button>
-        @if (_report is not null)
-        {
-            @if (_report.Error is not null)
-            {
-                <div class="gate-notice gate-notice-error" role="alert">@_report.Error</div>
-            }
-            @foreach (var warning in _report.Warnings)
-            {
-                <div class="gate-notice" role="alert">@warning</div>
-            }
-            <ul class="gate-list">
-                @foreach (var step in _report.Steps)
-                {
-                    <li>@step</li>
-                }
-            </ul>
-        }
-    </section>
 }
 
 @code {
@@ -187,7 +164,6 @@ else
     private string? _selected;
     private string? _loadError;
     private bool _busy;
-    private ReplayReport? _report;
     private readonly Dictionary<string, string> _comments = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _questions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _answers = new(StringComparer.Ordinal);
@@ -342,24 +318,4 @@ else
         }
     }
 
-    private async Task ResetAsync()
-    {
-        _busy = true;
-        try
-        {
-            _report = await Replay.ResetAndReplayAsync();
-            _outcomes.Clear();
-            _answers.Clear();
-            await ReloadAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.LogWarning(ex, "Reset + replay failed.");
-            _report = new ReplayReport(DateTimeOffset.UtcNow, false, [], [], $"Reset + replay failed: {ex.Message}");
-        }
-        finally
-        {
-            _busy = false;
-        }
-    }
 }
