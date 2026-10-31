@@ -361,7 +361,7 @@ public sealed class ToolLoopTests
         var caseId = await OpenApprovedPrCaseAsync(h);
         h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
         h.Models.QueueToolCalls("award V-A", ("c4", AgentTools.AwardSupplier, AwardArgs(caseId, "V-A")));
-        h.Models.QueueToolCalls("award V-B instead", ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
+        h.Models.QueueToolCalls("Award V-B; V-A blocked by CORP-02.", ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
         h.Models.QueueToolCalls("create", ("c6", AgentTools.CreatePo, Args(caseId)));
         h.Models.QueueToolCalls("submit", ("c7", AgentTools.SubmitPoApproval, Args(caseId)));
 
@@ -384,7 +384,7 @@ public sealed class ToolLoopTests
         var caseId = await OpenApprovedPrCaseAsync(h);
         h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
         h.Models.QueueToolCalls("award?", ("c4", AgentTools.AwardSupplier, Args(caseId)));
-        h.Models.QueueToolCalls("award V-B", ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
+        h.Models.QueueToolCalls("Award V-B; V-A blocked by CORP-02.", ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
         h.Models.QueueToolCalls("create", ("c6", AgentTools.CreatePo, Args(caseId)));
         h.Models.QueueToolCalls("submit", ("c7", AgentTools.SubmitPoApproval, Args(caseId)));
 
