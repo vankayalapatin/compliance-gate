@@ -1,0 +1,248 @@
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Simulate
+
+<div class="card mb-4" id="invoice">
+    <div class="card-header"><strong>Upload and intake an invoice</strong> <span class="text-muted">POST /simulation/supplier/invoice · /simulation/supplier/invoice-photo</span></div>
+    <div class="card-body">
+        <p class="card-text text-muted">Typed lines post as transcribed EDI; photos post for Spark transcription (cached by image hash). Blank vendor or PO is a valid missing-fields input — the runner holds it for the AP clerk. C# validates every value against the ERP.</p>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label" for="inv-case">Case</label>
+                <select class="form-select" id="inv-case" @bind="_caseId">
+                    <option value="">— pick a case —</option>
+                    @foreach (var kase in Options.Cases)
+                    {
+                        <option value="@kase.CaseId">@kase.CaseId (SO @kase.SoNumber · @kase.ItemId · @kase.Stage)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6 d-flex align-items-end">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="inv-photo" @bind="_photoMode" />
+                    <label class="form-check-label" for="inv-photo">Invoice photos instead of typed lines</label>
+                </div>
+            </div>
+        </div>
+        @if (_photoMode)
+        {
+            <div class="mt-3">
+                <label class="form-label" for="inv-files">Invoice photos (one per page, in order)</label>
+                <div><InputFile id="inv-files" multiple accept=".jpg,.jpeg" OnChange="OnUploadAsync" /></div>
+            </div>
+            @foreach (var row in _uploads)
+            {
+                <div class="mt-2">
+                    <span>@row.FileName (@row.Bytes.Length bytes)</span>
+                    <button class="btn btn-outline-danger btn-sm ms-2" disabled="@_busy" @onclick="() => _uploads.Remove(row)">Remove</button>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="row g-3 mt-1">
+                <div class="col-md-3">
+                    <label class="form-label" for="inv-number">Supplier invoice number</label>
+                    <input class="form-control" id="inv-number" @bind="_number" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="inv-vendor">Vendor (blank holds for AP)</label>
+                    <select class="form-select" id="inv-vendor" @bind="_vendorId">
+                        <option value="">— blank —</option>
+                        @foreach (var vendor in Options.Vendors)
+                        {
+                            <option value="@vendor.VendorId">@vendor.VendorId (@vendor.Name)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="inv-po">PO (blank holds for AP)</label>
+                    <select class="form-select" id="inv-po" value="@_poNumber" @onchange="OnPoChanged">
+                        <option value="">— blank —</option>
+                        @foreach (var po in PoChoices())
+                        {
+                            <option value="@po">@po</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="inv-bank">Remittance bank ref (optional)</label>
+                    <input class="form-control" id="inv-bank" @bind="_bankRef" />
+                </div>
+            </div>
+            <h6 class="mt-3">Invoice lines</h6>
+            <datalist id="poline-refs">
+                @foreach (var poLine in _poLines)
+                {
+                    <option value="@poLine.PoLineRef">@poLine.ItemId · ordered @poLine.QtyOrdered</option>
+                }
+            </datalist>
+            @foreach (var line in _lines)
+            {
+                <div class="row g-2 mb-2">
+                    <div class="col-md-4">
+                        <input class="form-control" list="poline-refs" value="@line.PoLineRef" @onchange="e => line.PoLineRef = e.Value?.ToString()" placeholder="PO line ref (blank holds for AP)" />
+                    </div>
+                    <div class="col-md-3">
+                        <input class="form-control" type="number" min="0" step="any" value="@line.Quantity" @onchange="e => line.Quantity = ParseDecimal(e.Value?.ToString())" placeholder="quantity" />
+                    </div>
+                    <div class="col-md-3">
+                        <input class="form-control" type="number" min="0" step="any" value="@line.UnitPrice" @onchange="e => line.UnitPrice = ParseDecimal(e.Value?.ToString())" placeholder="unit price" />
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-outline-danger" disabled="@_busy" @onclick="() => _lines.Remove(line)">Remove</button>
+                    </div>
+                </div>
+            }
+            <button class="btn btn-outline-secondary" disabled="@_busy" @onclick="() => _lines.Add(new InvoiceLineRow())">Add line</button>
+        }
+        <div class="mt-3">
+            <button class="btn btn-primary" disabled="@_busy" @onclick="SubmitAsync">Intake invoice</button>
+            @if (_busy)
+            {
+                <span class="ms-2 text-muted">Intaking…</span>
+            }
+        </div>
+        @if (_uploadError is not null)
+        {
+            <div class="mt-3"><ErrorBox Message="@_uploadError" /></div>
+        }
+        @if (_outcome is not null)
+        {
+            <div class="mt-3">
+                <ErrorBox Message="@(_outcome.Ok ? null : _outcome.Summary)" />
+                @if (_outcome.Ok)
+                {
+                    <div class="alert alert-success" role="alert">@_outcome.Summary</div>
+                }
+                <ul>
+                    @foreach (var detail in _outcome.Details)
+                    {
+                        <li>@detail</li>
+                    }
+                </ul>
+                @if (!string.IsNullOrEmpty(_caseId))
+                {
+                    <a class="btn btn-outline-primary btn-sm me-2" href="cases/@_caseId">Open @_caseId</a>
+                    <a class="btn btn-outline-primary btn-sm" href="decisions">Open Decisions</a>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private const long MaxUploadBytes = 15L * 1024 * 1024;
+
+    [Parameter]
+    public SimulateOptions Options { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private string? _caseId;
+    private bool _photoMode;
+    private bool _busy;
+    private string _number = string.Empty;
+    private string? _vendorId;
+    private string? _poNumber;
+    private string _bankRef = string.Empty;
+    private string? _uploadError;
+    private SimulationOutcome? _outcome;
+    private IReadOnlyList<PoLineOption> _poLines = [];
+    private readonly List<InvoiceLineRow> _lines = [new()];
+    private readonly List<UploadRow> _uploads = [];
+
+    private sealed class InvoiceLineRow
+    {
+        public string? PoLineRef { get; set; }
+        public decimal Quantity { get; set; }
+        public decimal UnitPrice { get; set; }
+    }
+
+    private sealed class UploadRow
+    {
+        public string FileName { get; set; } = string.Empty;
+        public byte[] Bytes { get; set; } = [];
+    }
+
+    private IReadOnlyList<string> PoChoices()
+    {
+        var numbers = new SortedSet<string>(Options.PoNumbers, StringComparer.Ordinal);
+        var kase = Options.Cases.FirstOrDefault(c => string.Equals(c.CaseId, _caseId, StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(kase?.PoNumber))
+        {
+            numbers.Add(kase!.PoNumber);
+        }
+
+        return numbers.ToList();
+    }
+
+    private async Task OnPoChanged(ChangeEventArgs e)
+    {
+        _poNumber = e.Value?.ToString();
+        _poLines = string.IsNullOrWhiteSpace(_poNumber)
+            ? []
+            : await Simulate.GetPoLinesAsync(_poNumber).ConfigureAwait(false);
+    }
+
+    private static decimal ParseDecimal(string? text) =>
+        decimal.TryParse(text, out var value) ? value : 0m;
+
+    private async Task OnUploadAsync(InputFileChangeEventArgs e)
+    {
+        _uploadError = null;
+        foreach (var file in e.GetMultipleFiles())
+        {
+            try
+            {
+                using var stream = file.OpenReadStream(MaxUploadBytes);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer).ConfigureAwait(false);
+                _uploads.Add(new UploadRow { FileName = file.Name, Bytes = buffer.ToArray() });
+            }
+            catch (Exception ex)
+            {
+                _uploadError = $"Upload {file.Name} failed: {ex.Message}.";
+            }
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _outcome = null;
+        try
+        {
+            if (_photoMode)
+            {
+                var photos = _uploads
+                    .Select(u => new SimulationPhoto(u.FileName, u.Bytes, null))
+                    .ToList();
+                _outcome = await Simulate.SendInvoicePhotosAsync(_caseId, photos).ConfigureAwait(false);
+            }
+            else
+            {
+                var lines = _lines
+                    .Select(l => new InvoiceLineForm(l.PoLineRef, l.Quantity, l.UnitPrice))
+                    .ToList();
+                _outcome = await Simulate
+                    .SendInvoiceAsync(_caseId, _number, _vendorId, _poNumber, lines, _bankRef)
+                    .ConfigureAwait(false);
+            }
+
+            if (_outcome.Ok)
+            {
+                await OnChanged.InvokeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _outcome = new SimulationOutcome(false, $"Invoice intake failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

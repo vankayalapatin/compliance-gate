@@ -1,0 +1,165 @@
+@using Gate.Contracts
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Simulate
+
+<div class="card mb-4" id="vendor-reply">
+    <div class="card-header"><strong>Reply as vendor</strong> <span class="text-muted">POST /simulation/supplier/email-reply</span></div>
+    <div class="card-body">
+        <p class="card-text text-muted">The human plays the vendor answering an agent query. The agent reads the reply via Spark and acts on any corrected invoice fields it carries.</p>
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label" for="reply-case">Case</label>
+                <select class="form-select" id="reply-case" value="@_caseId" @onchange="OnCaseChanged">
+                    <option value="">— pick a case —</option>
+                    @foreach (var kase in Options.Cases)
+                    {
+                        <option value="@kase.CaseId">@kase.CaseId (SO @kase.SoNumber · @kase.ItemId · @kase.Stage)</option>
+                    }
+                </select>
+            </div>
+        </div>
+        @if (!string.IsNullOrEmpty(_caseId))
+        {
+            <h6 class="mt-3">Thread</h6>
+            @if (_mail is null)
+            {
+                <p class="text-muted">Loading thread…</p>
+            }
+            else if (_mail.Count == 0)
+            {
+                <p class="text-muted">No vendor email on this case yet; the reply still records and lands on the timeline.</p>
+            }
+            @foreach (var mail in _mail ?? [])
+            {
+                <div class="card mb-2">
+                    <div class="card-body">
+                        <strong>@mail.Subject</strong>
+                        <p class="card-text mb-1"><small>@mail.EmailId · from @mail.From · to @mail.To · sent @mail.SentAt.ToString("u")@(mail.InReplyTo is null ? "" : $" · in reply to {mail.InReplyTo}")@(mail.InvoiceRef is null ? "" : $" · invoice {mail.InvoiceRef}")</small></p>
+                        <p class="card-text mb-0">@mail.Body</p>
+                    </div>
+                </div>
+            }
+            <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                    <label class="form-label" for="reply-from">From (vendor address)</label>
+                    <input class="form-control" id="reply-from" @bind="_from" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="reply-inreplyto">In reply to</label>
+                    <select class="form-select" id="reply-inreplyto" @bind="_inReplyTo">
+                        <option value="">— none —</option>
+                        @foreach (var mail in _mail ?? [])
+                        {
+                            <option value="@mail.EmailId">@mail.EmailId (@mail.Subject)</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-12">
+                    <label class="form-label" for="reply-subject">Subject</label>
+                    <input class="form-control" id="reply-subject" @bind="_subject" />
+                </div>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-12">
+                    <label class="form-label" for="reply-body">Body (corrected invoice fields re-enter intake)</label>
+                    <textarea class="form-control" id="reply-body" rows="4" @bind="_body"></textarea>
+                </div>
+            </div>
+            <div class="mt-3">
+                <button class="btn btn-primary" disabled="@_busy" @onclick="SubmitAsync">Send reply</button>
+                @if (_busy)
+                {
+                    <span class="ms-2 text-muted">Sending…</span>
+                }
+            </div>
+        }
+        @if (_outcome is not null)
+        {
+            <div class="mt-3">
+                <ErrorBox Message="@(_outcome.Ok ? null : _outcome.Summary)" />
+                @if (_outcome.Ok)
+                {
+                    <div class="alert alert-success" role="alert">@_outcome.Summary</div>
+                }
+                <ul>
+                    @foreach (var detail in _outcome.Details)
+                    {
+                        <li>@detail</li>
+                    }
+                </ul>
+                @if (!string.IsNullOrEmpty(_caseId))
+                {
+                    <a class="btn btn-outline-primary btn-sm me-2" href="cases/@_caseId">Open @_caseId</a>
+                    <a class="btn btn-outline-primary btn-sm" href="decisions">Open Decisions</a>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public SimulateOptions Options { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private string? _caseId;
+    private string _from = string.Empty;
+    private string? _inReplyTo;
+    private string _subject = string.Empty;
+    private string _body = string.Empty;
+    private bool _busy;
+    private SimulationOutcome? _outcome;
+    private IReadOnlyList<VendorEmail>? _mail;
+
+    private async Task OnCaseChanged(ChangeEventArgs e)
+    {
+        _caseId = e.Value?.ToString();
+        _outcome = null;
+        _mail = null;
+        if (string.IsNullOrWhiteSpace(_caseId))
+        {
+            return;
+        }
+
+        _mail = await Simulate.ReadMailAsync(_caseId).ConfigureAwait(false);
+        var suggestion = await Simulate.SuggestReplyAsync(_caseId).ConfigureAwait(false);
+        _from = suggestion.From ?? string.Empty;
+        _inReplyTo = suggestion.InReplyTo;
+        _subject = suggestion.Subject ?? string.Empty;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _outcome = null;
+        try
+        {
+            _outcome = await Simulate
+                .SendVendorReplyAsync(_caseId, _from, _body, _subject, _inReplyTo)
+                .ConfigureAwait(false);
+            if (_outcome.Ok)
+            {
+                _body = string.Empty;
+                if (!string.IsNullOrWhiteSpace(_caseId))
+                {
+                    _mail = await Simulate.ReadMailAsync(_caseId).ConfigureAwait(false);
+                }
+
+                await OnChanged.InvokeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _outcome = new SimulationOutcome(false, $"Vendor reply failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
