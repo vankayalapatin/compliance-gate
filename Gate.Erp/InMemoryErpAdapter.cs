@@ -139,6 +139,35 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             _pos.Values.Where(p => p.DocStatus is not PoDocStatus.Closed and not PoDocStatus.Cancelled)
                 .Where(p => p.Lines.Any(l => l.ItemId == itemId && l.QtyOrdered - l.QtyReceived > 0)).ToList());
 
+    public Task<IReadOnlyList<PurchaseRequisition>> GetOpenPurchaseRequisitionsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PurchaseRequisition>>(
+            _prs.Values.Where(p => p.Status is PrStatus.Draft or PrStatus.Submitted)
+                .OrderBy(p => p.PrNumber).ToList());
+
+    public Task<IReadOnlyList<PurchaseOrder>> GetDraftPurchaseOrdersAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PurchaseOrder>>(
+            _pos.Values.Where(p => p.ApprovalStatus is PoApprovalStatus.Draft or PoApprovalStatus.InReview)
+                .OrderBy(p => p.PoNumber).ToList());
+
+    public Task<IReadOnlyList<VendorInvoice>> GetOpenInvoicesAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<VendorInvoice>>(
+            _invoices.Values.Where(i => i.Status is InvoiceStatus.Received or InvoiceStatus.Matched)
+                .OrderBy(i => i.VendorId).ThenBy(i => i.SupplierInvoiceNumber).ToList());
+
+    public Task<IReadOnlyList<Payment>> GetOpenPaymentsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Payment>>(
+            _payments.Values.Where(p => p.Status is PaymentStatus.Draft or PaymentStatus.Submitted)
+                .OrderBy(p => p.PaymentNumber).ToList());
+
+    public Task<IReadOnlyList<AsnDto>> GetUnreceivedAsnsAsync(CancellationToken ct = default)
+    {
+        // An ASN is unreceived while no receipt is posted against its PO.
+        var receivedPo = _receipts.Values.Select(r => r.PoNumber).ToHashSet(StringComparer.Ordinal);
+        return Task.FromResult<IReadOnlyList<AsnDto>>(
+            _asns.Values.Where(a => !receivedPo.Contains(a.PoNumber))
+                .OrderBy(a => a.AsnNumber).ToList());
+    }
+
     public Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<VendorDto>>(_vendors.Values.ToList());
 
