@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Components;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Gate.Agent;
@@ -45,11 +46,20 @@ builder.Services.AddScoped(sp => new CaseRunner(
     sp.GetRequiredService<ILogger<CaseRunner>>()));
 builder.Services.AddSingleton(sp => new CaseCacheStore(
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
+builder.Services.AddSingleton(sp => new MemoFileStore(
+    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
+builder.Services.AddScoped(sp => new MemoRunner(
+    sp.GetRequiredService<IErpAdapter>(),
+    sp.GetRequiredService<IModelClient>(),
+    sp.GetRequiredService<IComplianceEngine>(),
+    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddSingleton(sp => new DockPhotoService(
     DockPhotoService.ResolveImageDir(), DockPhotoService.ResolveVisionCacheDir()));
 builder.Services.AddSingleton<ReplayState>();
 builder.Services.AddScoped<CaseViewService>();
 builder.Services.AddScoped<DecisionOutcomeService>();
+builder.Services.AddScoped<PolicyViewService>();
+builder.Services.AddScoped<PolicyOutcomeService>();
 builder.Services.AddScoped(sp => new AskWhyService(
     sp.GetRequiredService<P2pAgent>(),
     sp.GetRequiredService<IModelClient>(),
@@ -59,6 +69,17 @@ builder.Services.AddScoped(sp => new AskWhyService(
     sp.GetRequiredService<ILogger<AskWhyService>>(),
     ModelCachePaths.ResolveDir()));
 builder.Services.AddScoped<ReplayService>();
+// Simulate surface: posts the human's external inputs back to this app's own
+// simulation endpoints. The generous timeout covers photo transcription
+// (live model calls can take minutes). The service retries transport
+// failures once with the same idempotency key, so a lost response never
+// double-injects the input.
+builder.Services.AddScoped(sp => new HttpClient
+{
+    BaseAddress = new Uri(sp.GetRequiredService<NavigationManager>().BaseUri),
+    Timeout = TimeSpan.FromMinutes(10),
+});
+builder.Services.AddScoped<SimulationUiService>();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
