@@ -5,7 +5,7 @@ using Gate.Contracts;
 
 namespace Gate.Compliance;
 
-public sealed class ComplianceEngine : IComplianceEngine
+public sealed partial class ComplianceEngine : IComplianceEngine
 {
     public const string CorpOriginCapId = "CORP-02";
 
@@ -83,7 +83,7 @@ public sealed class ComplianceEngine : IComplianceEngine
         var verdicts = new List<Verdict>();
         if (vendor.IsBlocked)
         {
-            verdicts.Add(new Verdict("VENDOR-BLOCK", VerdictKind.Block, $"Vendor {vendor.VendorId} is blocked: {vendor.BlockReason}.", "ERP vendor master"));
+            verdicts.Add(new Verdict(ComplianceVerdictIds.VendorBlock, VerdictKind.Block, $"Vendor {vendor.VendorId} is blocked: {vendor.BlockReason}.", "ERP vendor master"));
         }
 
         verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("BAT-LI-01")));
