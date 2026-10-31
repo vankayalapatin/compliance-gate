@@ -55,12 +55,21 @@ public partial class CaseRunner
                 $"Vendor {vendorId} has no email in the vendor master; cannot query invoice '{invoiceRef}'.");
         }
 
-        var (subject, body) = await ComposeQueryAsync(file, vendor, invoiceRef, problem, ct).ConfigureAwait(false);
+        var (subject, body, fellBack) = await ComposeQueryAsync(file, vendor, invoiceRef, problem, ct).ConfigureAwait(false);
         var email = EmailStore.Append(_cacheDir, new VendorEmail(
             emailId, caseId, vendorId, RecordSource.P2pAgent, vendor.Email!,
             subject, body, DateTimeOffset.UtcNow, InvoiceRef: invoiceRef));
         var work = new CaseWork(CaseStore.Load(_cacheDir, caseId)
             ?? throw new InvalidOperationException($"Case {caseId} vanished while emailing."));
+        if (fellBack)
+        {
+            work.AddEvent(CaseEventKind.Note,
+                $"Vendor query composition fell back to raw text instead of structured Spark composition " +
+                $"for {invoiceRef} (mail {emailId}).",
+                documentType: "Invoice", documentNumber: invoiceRef,
+                evidenceRef: $"mail:{emailId}");
+        }
+
         work.AddEvent(CaseEventKind.VendorEmailed,
             $"Queried {vendor.Email} about held invoice {invoiceRef}: {problem.Reason ?? problem.Title}",
             documentType: "Invoice", documentNumber: invoiceRef,
@@ -208,7 +217,7 @@ public partial class CaseRunner
         work.Save(_cacheDir);
     }
 
-    private async Task<(string Subject, string Body)> ComposeQueryAsync(
+    private async Task<(string Subject, string Body, bool FellBack)> ComposeQueryAsync(
         CaseFile file, VendorDto vendor, string invoiceRef, Decision problem, CancellationToken ct)
     {
         var current = file.Case;
@@ -231,8 +240,12 @@ public partial class CaseRunner
             var body = root.TryGetProperty("body", out var b) ? b.GetString() : null;
             if (!string.IsNullOrWhiteSpace(subject) && !string.IsNullOrWhiteSpace(body))
             {
-                return (subject, body);
+                return (subject, body, false);
             }
+
+            _logger.LogWarning(
+                "Case {CaseId}: query composition came back without a subject and body; using the raw text as the body.",
+                current.CaseId);
         }
         catch (System.Text.Json.JsonException ex)
         {
@@ -241,7 +254,7 @@ public partial class CaseRunner
                 current.CaseId);
         }
 
-        return ($"Query on invoice {invoiceRef} (case {current.CaseId})", result.Text.Trim());
+        return ($"Query on invoice {invoiceRef} (case {current.CaseId})", result.Text.Trim(), true);
     }
 
     private async Task ActOnReplyAsync(string caseId, VendorEmail reply, CancellationToken ct)
@@ -284,6 +297,20 @@ public partial class CaseRunner
 
         var vendorId = await ResolveVendorIdAsync(extracted.VendorIdOrName, ct).ConfigureAwait(false);
         var poNumber = await ResolvePoNumberAsync(extracted.PoNumber, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(extracted.VendorIdOrName) && vendorId is null)
+        {
+            var card = await ProposeVendorIdentityAsync(
+                caseId, extracted.VendorIdOrName, [$"mail:{reply.EmailId}"],
+                new VendorIdentityIntake(
+                    extracted.SupplierInvoiceNumber, poNumber,
+                    extracted.Lines, extracted.BankAccountRef), ct).ConfigureAwait(false);
+            NoteOn(caseId,
+                $"Vendor reply {reply.EmailId} proposes vendor '{extracted.VendorIdOrName}': " +
+                $"clerk confirm needed (decision {card?.DecisionId ?? "unknown"}); intake waits.",
+                "Invoice", reply.InvoiceRef);
+            return;
+        }
+
         var outcome = await OnInvoiceAsync(new SupplierInvoiceInput(
             caseId, extracted.SupplierInvoiceNumber!, vendorId, poNumber,
             extracted.Lines, extracted.BankAccountRef,
