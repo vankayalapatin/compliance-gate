@@ -1,12 +1,17 @@
 // Simulation endpoints: external inputs in only (order webhooks, supplier
-// ACKs, ASNs, dock reads, reshots, supplier invoices). Each handler runs,
-// then the runner advances until it waits on external input or completes;
-// no fixed step sequence lives here either.
+// ACKs, ASNs, dock photos, invoice photos or EDI lines, vendor replies).
+// Photos are transcribed by Spark (cached) and judged by C#; there is no
+// reads-without-photo path. Each handler runs, then the runner advances
+// until it waits on external input or completes.
 using Gate.Agent;
 
 namespace Gate.Web;
 
-public sealed record DockReadsRequest(string CaseId, List<DockCartonRead> Reads);
+public sealed record DockPhotosRequest(string CaseId, List<DockPhoto> Photos);
+
+public sealed record ReshotPhotosRequest(string CaseId, List<string> CartonIds, List<DockPhoto> Photos);
+
+public sealed record InvoicePhotosRequest(string CaseId, List<InvoicePhoto> Photos);
 
 public static class SimulationEndpoints
 {
@@ -59,11 +64,12 @@ public static class SimulationEndpoints
             });
         });
 
-        app.MapPost("/simulation/dock/reads", async (
-            DockReadsRequest request, CaseRunner runner, CancellationToken ct) =>
+        app.MapPost("/simulation/dock/photos", async (
+            DockPhotosRequest request, CaseRunner runner, CancellationToken ct) =>
         {
-            var verdicts = await runner.OnDockReadsAsync(request.CaseId, request.Reads, ct)
+            var reads = await runner.TranscribeDockPhotosAsync(request.CaseId, request.Photos, ct)
                 .ConfigureAwait(false);
+            var verdicts = await runner.OnDockReadsAsync(request.CaseId, reads, ct).ConfigureAwait(false);
             var advanced = await runner.AdvanceAsync(request.CaseId, ct).ConfigureAwait(false);
             return Results.Ok(new
             {
@@ -74,10 +80,14 @@ public static class SimulationEndpoints
         });
 
         app.MapPost("/simulation/dock/reshot", async (
-            ReshotInput input, CaseRunner runner, CancellationToken ct) =>
+            ReshotPhotosRequest request, CaseRunner runner, CancellationToken ct) =>
         {
-            var verdicts = await runner.OnReshotAsync(input, ct).ConfigureAwait(false);
-            var advanced = await runner.AdvanceAsync(input.CaseId, ct).ConfigureAwait(false);
+            var reads = await runner.TranscribeDockPhotosAsync(request.CaseId, request.Photos, ct)
+                .ConfigureAwait(false);
+            var verdicts = await runner
+                .OnReshotAsync(new ReshotInput(request.CaseId, request.CartonIds, reads), ct)
+                .ConfigureAwait(false);
+            var advanced = await runner.AdvanceAsync(request.CaseId, ct).ConfigureAwait(false);
             return Results.Ok(new
             {
                 cartons = verdicts.Keys.Order(StringComparer.Ordinal).ToList(),
@@ -99,6 +109,45 @@ public static class SimulationEndpoints
                 outcome.Persisted,
                 outcome.AcceptedValue,
                 outcome.HeldValue,
+                step = advanced.Step.ToString(),
+                advanced.Complete,
+            });
+        });
+
+        app.MapPost("/simulation/supplier/invoice-photo", async (
+            InvoicePhotosRequest request, CaseRunner runner, CancellationToken ct) =>
+        {
+            var transcribed = await runner.TranscribeInvoicePhotosAsync(request.CaseId, request.Photos, ct)
+                .ConfigureAwait(false);
+            var outcome = await runner.OnInvoiceAsync(new SupplierInvoiceInput(
+                request.CaseId,
+                transcribed.SupplierInvoiceNumber ?? string.Empty,
+                transcribed.VendorIdOrName,
+                transcribed.PoNumber,
+                transcribed.Lines,
+                transcribed.BankAccountRef), ct).ConfigureAwait(false);
+            var advanced = await runner.AdvanceAsync(request.CaseId, ct).ConfigureAwait(false);
+            return Results.Ok(new
+            {
+                invoice = outcome.Key is null
+                    ? null
+                    : $"{outcome.Key.VendorId}/{outcome.Key.SupplierInvoiceNumber}",
+                outcome.Persisted,
+                outcome.AcceptedValue,
+                outcome.HeldValue,
+                step = advanced.Step.ToString(),
+                advanced.Complete,
+            });
+        });
+
+        app.MapPost("/simulation/supplier/email-reply", async (
+            VendorReplyInput input, CaseRunner runner, CancellationToken ct) =>
+        {
+            var reply = await runner.OnVendorReplyAsync(input, ct).ConfigureAwait(false);
+            var advanced = await runner.AdvanceAsync(input.CaseId, ct).ConfigureAwait(false);
+            return Results.Ok(new
+            {
+                reply.EmailId,
                 step = advanced.Step.ToString(),
                 advanced.Complete,
             });
