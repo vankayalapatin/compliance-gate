@@ -1,10 +1,10 @@
 @if (!string.IsNullOrWhiteSpace(Message))
 {
-    <div class="alert alert-danger" role="alert">@Message</div>
+    <div class="gate-notice gate-notice-error" role="alert">@Message</div>
 }
 @foreach (var warning in Warnings)
 {
-    <div class="alert alert-warning" role="alert">@warning</div>
+    <div class="gate-notice" role="alert">@warning</div>
 }
 
 @code {
