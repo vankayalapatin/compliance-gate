@@ -15,6 +15,20 @@ public interface IErpAdapter
     Task<IReadOnlyList<BomLine>> GetBomAsync(string itemId, CancellationToken ct = default);
     Task<decimal> GetStockAsync(string itemId, CancellationToken ct = default);
     Task<IReadOnlyList<PurchaseOrder>> GetOpenPurchaseOrdersAsync(string itemId, CancellationToken ct = default);
+    /// <summary>Pipeline list queries for what-if gather: every doc in an
+    /// open state, header plus lines. Draft POs are approval Draft/InReview;
+    /// unreceived ASNs have no receipt posted. Defaults throw until the ERP
+    /// layer implements them.</summary>
+    Task<IReadOnlyList<PurchaseRequisition>> GetOpenPurchaseRequisitionsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetOpenPurchaseRequisitionsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<PurchaseOrder>> GetDraftPurchaseOrdersAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetDraftPurchaseOrdersAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<VendorInvoice>> GetOpenInvoicesAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetOpenInvoicesAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<Payment>> GetOpenPaymentsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetOpenPaymentsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<AsnDto>> GetUnreceivedAsnsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetUnreceivedAsnsAsync is implemented by the ERP layer.");
     Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<VendorDocumentDto>> GetVendorDocumentsAsync(string vendorId, CancellationToken ct = default);
     Task<string?> GetVendorCountryAsync(string vendorId, CancellationToken ct = default);
