@@ -133,7 +133,10 @@ public sealed record VendorDto(
     string CountryOfOrigin,
     bool IsBlocked,
     string? BlockReason,
-    string PaymentTermsId);
+    string PaymentTermsId,
+    /// <summary>Vendor contact email from the master. The agent sends
+    /// invoice queries here; a missing address blocks sending.</summary>
+    string? Email = null);
 
 public sealed record VendorDocumentDto(
     string VendorId,

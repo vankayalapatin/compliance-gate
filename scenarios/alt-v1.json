@@ -24,6 +24,7 @@
     {
       "id": "V-A", "name": "Cheap Cells Ltd", "country": "CN", "role": "cheaper-blocked",
       "item": "BAT-1", "unitPrice": 16.00, "terms": "NET30", "bankAccount": "BANK-A-001",
+      "email": "sales@cheapcells.example",
       "documents": [
         { "kind": "UN38.3", "reference": "un383-a", "present": true },
         { "kind": "SDS", "reference": "sds-a", "present": true },
@@ -34,6 +35,7 @@
     {
       "id": "V-B", "name": "Compliant Cells Inc", "country": "MX", "role": "compliant-winner",
       "item": "BAT-1", "unitPrice": 21.00, "terms": "NET30", "bankAccount": "BANK-B-001",
+      "email": "sales@compliantcells.example",
       "documents": [
         { "kind": "UN38.3", "reference": "un383-b", "present": true },
         { "kind": "SDS", "reference": "sds-b", "present": true },
@@ -44,6 +46,7 @@
     {
       "id": "V-C", "name": "Screws Co", "country": "TW", "role": "straight-through",
       "item": "SCR-9", "unitPrice": 0.45, "terms": "NET30", "bankAccount": "BANK-C-001",
+      "email": "sales@screwsco.example",
       "documents": []
     }
   ],

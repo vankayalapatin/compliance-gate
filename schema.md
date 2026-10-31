@@ -23,6 +23,11 @@ adapter interface, and this file change in the lead session only.
 - `Gate.Contracts/Cases.cs` — agent-side case store shapes (one case per
   SO shortfall item): `Case` stage plus document links plus block, `CaseEvent`
   append-only timeline, `Decision` human card with evidence refs.
+- `Gate.Contracts/ModelTools.cs` — tool-calling wire format: flat tool
+  schemas, tool calls, conversation messages. Requests add tools plus
+  history; results add tool calls; the cache key extends only when present.
+- `Gate.Contracts/CaseMail.cs` — vendor email thread per case, stored as
+  `<CaseId>.mail.json` next to the case file.
 - `Gate.Contracts/PrePayState.cs` — pre-pay gate input: open holds plus
   quarantined lot refs plus open reviews.
 - Dock reads (`CartonRead`) stay compliance-internal by decision (see

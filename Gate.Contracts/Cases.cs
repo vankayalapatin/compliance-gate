@@ -70,7 +70,9 @@ public enum CaseEventKind
     PaymentRequested,
     PaymentPosted,
     CustomerNotified,
-    Note
+    Note,
+    VendorEmailed,
+    VendorReplied
 }
 
 /// <summary>One append-only timeline entry. Actor is a user id, vendor id, or
