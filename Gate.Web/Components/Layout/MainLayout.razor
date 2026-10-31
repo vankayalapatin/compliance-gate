@@ -1,20 +1,21 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
+<header class="gate-topbar">
+    <a class="gate-brand" href="">ComplianceGate</a>
+    <nav class="gate-nav" aria-label="Primary">
+        <NavLink href="" Match="NavLinkMatch.All">Decisions</NavLink>
+        <NavLink href="cases">Cases</NavLink>
+        <NavLink href="records">Records</NavLink>
+        <NavLink href="policies">Policies</NavLink>
+    </nav>
+    <div class="gate-topbar-right">
+        <UserSwitcher @rendermode="InteractiveServer" />
     </div>
+</header>
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-
-        <article class="content px-4">
-            @Body
-        </article>
-    </main>
-</div>
+<main class="gate-main">
+    @Body
+</main>
 
 <div id="blazor-error-ui">
     An unhandled error has occurred.
