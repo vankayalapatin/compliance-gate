@@ -11,6 +11,9 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <!-- bUnit: test-only. Powers the Blazor dispatcher-affinity component tests
+         (Gate.Eval/Ui/BlazorDispatcherTests.cs); never referenced by shipped code. -->
+    <PackageReference Include="bunit" Version="1.28.9" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="8.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
