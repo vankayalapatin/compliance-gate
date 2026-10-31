@@ -56,7 +56,7 @@ else
     {
         try
         {
-            _files = await CaseStore.ListAsync().ConfigureAwait(false);
+            _files = await CaseStore.ListAsync();
         }
         catch (Exception ex)
         {
