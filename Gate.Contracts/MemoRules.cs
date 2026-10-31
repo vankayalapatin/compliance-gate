@@ -209,6 +209,81 @@ public sealed record RuleApproval(
     IReadOnlyDictionary<string, string>? EditedParams,
     string? Comment);
 
+/// <summary>One KB legal entity: id, name, country of incorporation,
+/// base currency.</summary>
+public sealed record KbLegalEntity(
+    string Id,
+    string Name,
+    string Country,
+    string Currency);
+
+/// <summary>One KB site or warehouse: id, legal entity ref, region ref
+/// (resolves via regionRules), capabilities.</summary>
+public sealed record KbSite(
+    string Id,
+    string EntityId,
+    string Region,
+    IReadOnlyList<string> Capabilities);
+
+/// <summary>KB fiscal calendar. Null until seeded; while null, history
+/// reports use the labeled trailing-twelve-month approximation.</summary>
+public sealed record KbFiscalCalendar(
+    string YearEnd,
+    string CurrentFy,
+    IReadOnlyList<string> Periods);
+
+/// <summary>One KB approval-matrix row: policy or action, owner role,
+/// named person. The matrix names who; the ERP enforces how much.</summary>
+public sealed record KbApprovalEntry(
+    string Action,
+    string OwnerRole,
+    string Owner);
+
+/// <summary>One KB item row: item id plus critical flag. Mirrors the
+/// scenario items; equality is proven by test, never asserted.</summary>
+public sealed record KbItem(
+    string Id,
+    bool Critical);
+
+/// <summary>One KB sourcing policy: id plus string params (caps,
+/// thresholds, windows, part scope). Mirrors pack config values;
+/// equality is proven by test.</summary>
+public sealed record KbSourcingPolicy(
+    string Id,
+    IReadOnlyDictionary<string, string> Params);
+
+/// <summary>One KB region rule: named region plus explicit versioned
+/// country list. Region boundaries are data.</summary>
+public sealed record KbRegionRule(
+    string Id,
+    IReadOnlyList<string> Countries,
+    string Version);
+
+/// <summary>One KB document row. P2pRelevant false (HR policies and
+/// similar) means searchable agent context, excluded from rule mapping
+/// by a C# allowlist.</summary>
+public sealed record KbDocument(
+    string Id,
+    string Kind,
+    bool P2pRelevant,
+    string? ContentHash = null,
+    string? StorageRef = null);
+
+/// <summary>Pinned KB snapshot every proposal resolves against. The
+/// proposal pins KbVersion plus KbHash; any KB change after a proposal
+/// requires re-grounding before approval can proceed.</summary>
+public sealed record KbSnapshot(
+    string KbVersion,
+    string KbHash,
+    IReadOnlyList<KbLegalEntity> LegalEntities,
+    IReadOnlyList<KbSite> SitesWarehouses,
+    KbFiscalCalendar? FiscalCalendar,
+    IReadOnlyList<KbApprovalEntry> ApprovalMatrix,
+    IReadOnlyList<KbItem> Items,
+    IReadOnlyList<KbSourcingPolicy> SourcingPolicies,
+    IReadOnlyList<KbRegionRule> RegionRules,
+    IReadOnlyList<KbDocument> Documents);
+
 /// <summary>Publish record: a validated plus approved plus tested proposal
 /// shipped as a version-bumped pack. Source is memo id plus approver plus
 /// effective date. PriorPackVersion is the rollback point: rollback
