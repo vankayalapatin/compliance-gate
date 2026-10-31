@@ -1,3 +1,4 @@
+@page "/"
 @page "/decisions"
 @rendermode InteractiveServer
 @using Gate.Contracts
@@ -6,131 +7,187 @@
 @inject CaseViewService Views
 @inject DecisionOutcomeService Outcomes
 @inject AskWhyService Why
+@inject ActingUserState Acting
+@inject ReplayService Replay
+@inject ILogger<Decisions> Log
+@implements IDisposable
 
 <PageTitle>Decisions</PageTitle>
 
-<h1>Decisions</h1>
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Decisions</p>
+        <p class="gate-page-sub">@Subtitle()</p>
+    </div>
+    <div>
+        <button class="gate-btn" disabled="@_busy" @onclick="ReloadAsync">Refresh</button>
+    </div>
+</div>
 
 @if (_loadError is not null)
 {
-    <ErrorBox Message="@_loadError" />
+    <div class="gate-notice gate-notice-error" role="alert">@_loadError</div>
 }
-else if (_cards is null)
+else if (_cards is null || _users is null || _delegations is null)
 {
-    <p>Loading decisions…</p>
+    <p class="gate-meta">Loading decisions…</p>
+}
+else if (_selected is null)
+{
+    <div class="gate-notice gate-notice-error" role="alert">ERP has no users, so there is nobody to act as.</div>
 }
 else
 {
-    <div class="row mb-3">
-        <div class="col-md-4">
-            <label class="form-label" for="actedBy">Acting as (ERP user)</label>
-            <select class="form-select" id="actedBy" @bind="_actedBy">
-                <option value="">— pick the approver —</option>
-                @foreach (var user in _users)
-                {
-                    <option value="@user.UserId">@user.UserId (@user.Role, limit @user.SigningLimit @user.LimitCurrency)</option>
-                }
-            </select>
-        </div>
-        <div class="col-md-8 d-flex align-items-end">
-            <p class="text-muted mb-2">@_cards.Count(c => c.Decision.Status == DecisionStatus.Pending) pending of @_cards.Count total.</p>
-        </div>
-    </div>
-
-    @if (_cards.Count == 0)
+    <p class="gate-section-title">Pending for @_selected (@_pending.Count)</p>
+    @if (_pending.Count == 0)
     {
-        <p>No decisions in the case cache yet. Run the agent or reset-and-replay from Home.</p>
+        <p class="gate-meta">No pending decisions for @_selected.</p>
     }
-
-    @foreach (var card in _cards)
+    @foreach (var card in _pending)
     {
         var d = card.Decision;
-        <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between">
-                <span><strong>@d.Title</strong> <span class="badge bg-secondary">@d.Kind</span></span>
-                <span class="badge @(d.Status == DecisionStatus.Pending ? "bg-warning text-dark" : d.Status == DecisionStatus.Approved ? "bg-success" : "bg-danger")">@d.Status</span>
-            </div>
-            <div class="card-body">
-                <p class="card-text">
-                    Case <a href="cases/@card.Decision.CaseId">@d.CaseId</a>
-                    · SO @card.SoNumber · item @card.ItemId · stage @card.Stage
-                    · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
-                </p>
-                @if (d.Amount is not null)
-                {
-                    <p class="card-text"><strong>Amount:</strong> @d.Amount @d.Currency</p>
-                }
-                @if (d.RuleId is not null || d.Reason is not null)
-                {
-                    <p class="card-text"><strong>Rule:</strong> @(d.RuleId ?? "—") — @(d.Reason ?? "—")</p>
-                }
-                @if (card.ErpSummary is not null)
-                {
-                    <p class="card-text"><strong>ERP:</strong> @card.ErpSummary</p>
-                }
-                @if (d.DecidedBy is not null)
-                {
-                    <p class="card-text"><strong>Decided:</strong> @d.DecidedBy at @(d.DecidedAt?.ToString("u") ?? "—")@(d.Comment is null ? "" : $" — {d.Comment}")</p>
-                }
-                @if (card.EvidenceCaptions.Count > 0)
-                {
-                    <ul>
-                        @foreach (var caption in card.EvidenceCaptions)
-                        {
-                            <li>@caption</li>
-                        }
-                    </ul>
-                }
-                @foreach (var image in card.ImageFileNames)
-                {
-                    <img src="dock-images/@image" alt="@image" class="img-thumbnail me-2 mb-2" style="max-width: 320px;" />
-                }
-
-                @if (d.Status == DecisionStatus.Pending)
-                {
-                    <div class="mt-2">
-                        <label class="form-label" for="comment-@d.DecisionId">Comment</label>
-                        <input class="form-control" id="comment-@d.DecisionId" value="@CommentFor(d.DecisionId)" @onchange="e => _comments[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
-                    </div>
-                    <div class="mt-2">
-                        <button class="btn btn-success me-2" disabled="@_busy" @onclick="() => DecideAsync(card, true)">Approve</button>
-                        <button class="btn btn-danger" disabled="@_busy" @onclick="() => DecideAsync(card, false)">Reject</button>
-                    </div>
-                }
-
-                <div class="mt-3">
-                    <label class="form-label" for="why-@d.DecisionId">Ask the agent why</label>
-                    <div class="input-group">
-                        <input class="form-control" id="why-@d.DecisionId" value="@QuestionFor(d.DecisionId)" @onchange="e => _questions[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
-                        <button class="btn btn-outline-primary" disabled="@_busy" @onclick="() => AskAsync(card)">Ask</button>
-                    </div>
-                    @if (_answers.TryGetValue(d.DecisionId, out var answer))
+        <section class="gate-card">
+            <div class="gate-card-head">
+                <p class="gate-card-title">@d.Title</p>
+                <div class="gate-card-badges">
+                    @if (_covering.Count > 0)
                     {
-                        <p class="card-text mt-2"><em>@answer</em></p>
+                        <span class="gate-chip">covering @(string.Join(", ", _covering))</span>
                     }
+                    <span class="gate-badge">@d.Kind</span>
+                    <span class="gate-badge gate-badge-dark">Pending</span>
                 </div>
-
-                @if (_outcomes.TryGetValue(d.DecisionId, out var outcome))
+            </div>
+            <p class="gate-meta">
+                Case <a href="cases/@d.CaseId">@d.CaseId</a>
+                · SO @card.SoNumber · item @card.ItemId · stage @card.Stage
+                · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
+            </p>
+            @if (d.Amount is not null)
+            {
+                <p class="gate-row"><span class="gate-label">Amount:</span> @d.Amount @d.Currency</p>
+            }
+            @if (d.RuleId is not null || d.Reason is not null)
+            {
+                <p class="gate-row"><span class="gate-label">Rule:</span> @(d.RuleId ?? "—") — @(d.Reason ?? "—")</p>
+            }
+            @if (card.ErpSummary is not null)
+            {
+                <p class="gate-row"><span class="gate-label">ERP:</span> @card.ErpSummary</p>
+            }
+            @if (card.EvidenceCaptions.Count > 0)
+            {
+                <ul class="gate-list">
+                    @foreach (var caption in card.EvidenceCaptions)
+                    {
+                        <li>@caption</li>
+                    }
+                </ul>
+            }
+            @foreach (var image in card.ImageFileNames)
+            {
+                <img class="gate-img" src="dock-images/@image" alt="@image" />
+            }
+            <div class="gate-field">
+                <label class="gate-label" for="comment-@d.DecisionId">Comment</label>
+                <input class="gate-input" id="comment-@d.DecisionId" value="@CommentFor(d.DecisionId)" @onchange="e => _comments[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+            </div>
+            <div class="gate-actions">
+                <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="() => DecideAsync(card, true)">Approve</button>
+                <button class="gate-btn" disabled="@_busy" @onclick="() => DecideAsync(card, false)">Reject</button>
+            </div>
+            <div class="gate-ask">
+                <label class="gate-label" for="why-@d.DecisionId">Ask the agent why</label>
+                <div class="gate-ask-row">
+                    <input class="gate-input" id="why-@d.DecisionId" value="@QuestionFor(d.DecisionId)" @onchange="e => _questions[d.DecisionId] = e.Value?.ToString() ?? string.Empty" />
+                    <button class="gate-btn" disabled="@_busy" @onclick="() => AskAsync(card)">Ask</button>
+                </div>
+                @if (_answers.TryGetValue(d.DecisionId, out var answer))
                 {
-                    <div class="mt-2">
-                        <ErrorBox Message="@(outcome.Ok ? null : outcome.Message)" Warnings="@outcome.Warnings" />
-                        @if (outcome.Ok)
-                        {
-                            <div class="alert alert-success" role="alert">@outcome.Message</div>
-                        }
-                    </div>
+                    <p class="gate-answer">@answer</p>
                 }
             </div>
-        </div>
+            @if (_outcomes.TryGetValue(d.DecisionId, out var outcome))
+            {
+                @if (outcome.Ok)
+                {
+                    <div class="gate-notice gate-notice-ok" role="alert">@outcome.Message</div>
+                }
+                else
+                {
+                    <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @outcome.Message</div>
+                }
+                @foreach (var warning in outcome.Warnings)
+                {
+                    <div class="gate-notice" role="alert">@warning</div>
+                }
+            }
+        </section>
     }
+
+    <p class="gate-section-title">Decided by me (@_history.Count)</p>
+    @if (_history.Count == 0)
+    {
+        <p class="gate-meta">Nothing decided by @_selected yet.</p>
+    }
+    else
+    {
+        <table class="gate-table">
+            <thead>
+                <tr><th>Decision</th><th>Case</th><th>Kind</th><th>Outcome</th><th>Decided at</th><th>Comment</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var card in _history)
+                {
+                    var h = card.Decision;
+                    <tr>
+                        <td>@h.DecisionId — @h.Title</td>
+                        <td><a href="cases/@h.CaseId">@h.CaseId</a></td>
+                        <td>@h.Kind</td>
+                        <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
+                        <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                        <td>@(h.Comment ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <section class="gate-reset">
+        <p class="gate-section-title">Reset + replay offline</p>
+        <p class="gate-meta">Reloads the scenario, clears the case cache, and pins Ask-why to cached answers.</p>
+        <button class="gate-btn" disabled="@_busy" @onclick="ResetAsync">Reset + replay offline</button>
+        @if (_report is not null)
+        {
+            @if (_report.Error is not null)
+            {
+                <div class="gate-notice gate-notice-error" role="alert">@_report.Error</div>
+            }
+            @foreach (var warning in _report.Warnings)
+            {
+                <div class="gate-notice" role="alert">@warning</div>
+            }
+            <ul class="gate-list">
+                @foreach (var step in _report.Steps)
+                {
+                    <li>@step</li>
+                }
+            </ul>
+        }
+    </section>
 }
 
 @code {
+    private IReadOnlyList<UserDto>? _users;
+    private IReadOnlyList<DelegationDto>? _delegations;
     private IReadOnlyList<DecisionCardVm>? _cards;
-    private IReadOnlyList<UserDto> _users = [];
-    private string? _actedBy;
+    private IReadOnlyList<DecisionCardVm> _pending = [];
+    private IReadOnlyList<DecisionCardVm> _history = [];
+    private IReadOnlyList<string> _covering = [];
+    private string? _selected;
     private string? _loadError;
     private bool _busy;
+    private ReplayReport? _report;
     private readonly Dictionary<string, string> _comments = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _questions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _answers = new(StringComparer.Ordinal);
@@ -150,32 +207,114 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        Acting.OnChange += OnActingChanged;
+        await ReloadAsync();
+    }
+
+    public void Dispose()
+    {
+        Acting.OnChange -= OnActingChanged;
+    }
+
+    private void OnActingChanged()
+    {
+        // ActingUserState.OnChange is a service-raised event: it can fire
+        // from any thread, so the whole handler (state touches and render)
+        // marshals to the Dispatcher.
+        _ = InvokeAsync(() =>
+        {
+            _outcomes.Clear();
+            ResolveSelection();
+            Recompute();
+            StateHasChanged();
+        });
+    }
+
+    private string Subtitle() =>
+        _selected is null ? "Loading…" : $"{_pending.Count} pending for {_selected}.";
+
+    private void ResolveSelection()
+    {
+        if (_users is null)
+        {
+            _selected = null;
+            return;
+        }
+
+        var current = Acting.CurrentUserId;
+        if (current is not null
+            && _users.Any(u => string.Equals(u.UserId, current, StringComparison.Ordinal)))
+        {
+            _selected = current;
+            return;
+        }
+
+        _selected = DecisionBoard.PickDefaultUserId(_users);
+    }
+
+    private void Recompute()
+    {
+        if (_cards is null || _delegations is null || _selected is null)
+        {
+            _pending = [];
+            _history = [];
+            _covering = [];
+            return;
+        }
+
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        _pending = DecisionBoard.PendingFor(_cards, _selected);
+        _history = DecisionBoard.DecidedBy(_cards, _selected);
+        _covering = DecisionBoard.CoveringFrom(_delegations, _selected, today);
+    }
+
+    private async Task ReloadAsync()
+    {
         try
         {
-            _users = await Views.ListUsersAsync().ConfigureAwait(false);
-            _cards = await Views.ListDecisionCardsAsync().ConfigureAwait(false);
+            _users = await Views.ListUsersAsync();
+            _delegations = await Views.ListDelegationsAsync();
+            _cards = await Views.ListDecisionCardsAsync();
+            _loadError = null;
         }
         catch (Exception ex)
         {
+            Log.LogWarning(ex, "Decisions failed to load.");
             _loadError = $"Decisions failed to load: {ex.Message}";
+            return;
         }
+
+        ResolveSelection();
+        Recompute();
     }
 
     private async Task DecideAsync(DecisionCardVm card, bool approved)
     {
+        if (_selected is null)
+        {
+            _outcomes[card.Decision.DecisionId] =
+                new DecisionOutcome(false, "No acting user is selected.", []);
+            return;
+        }
+
         _busy = true;
         try
         {
             _comments.TryGetValue(card.Decision.DecisionId, out var comment);
+            // No pre-checks here: the attempt runs through the runner/ERP and
+            // every control refusal (SoD, signing limits, self-approval,
+            // delegation) comes back as the outcome message on the card.
             var outcome = await Outcomes.ApplyAsync(
-                card.Decision.CaseId, card.Decision.DecisionId, approved, comment, _actedBy ?? string.Empty)
-                .ConfigureAwait(false);
+                card.Decision.CaseId, card.Decision.DecisionId, approved, comment, _selected);
             _outcomes[card.Decision.DecisionId] = outcome;
-            _cards = await Views.ListDecisionCardsAsync().ConfigureAwait(false);
+            _cards = await Views.ListDecisionCardsAsync();
+            Recompute();
         }
         catch (Exception ex)
         {
-            _outcomes[card.Decision.DecisionId] = new DecisionOutcome(false, $"Decision failed: {ex.Message}", []);
+            Log.LogWarning(ex, "Decision {DecisionId} failed.", card.Decision.DecisionId);
+            _outcomes[card.Decision.DecisionId] =
+                new DecisionOutcome(false, $"Decision failed: {ex.Message}", []);
         }
         finally
         {
@@ -189,13 +328,34 @@ else
         try
         {
             _questions.TryGetValue(card.Decision.DecisionId, out var question);
-            var answer = await Why.AskAsync(card.Decision.CaseId, card.Decision.DecisionId, question ?? string.Empty)
-                .ConfigureAwait(false);
+            var answer = await Why.AskAsync(card.Decision.CaseId, card.Decision.DecisionId, question ?? string.Empty);
             _answers[card.Decision.DecisionId] = answer.Text;
         }
         catch (Exception ex)
         {
+            Log.LogWarning(ex, "Ask-why failed for decision {DecisionId}.", card.Decision.DecisionId);
             _answers[card.Decision.DecisionId] = $"Ask-why failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ResetAsync()
+    {
+        _busy = true;
+        try
+        {
+            _report = await Replay.ResetAndReplayAsync();
+            _outcomes.Clear();
+            _answers.Clear();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Reset + replay failed.");
+            _report = new ReplayReport(DateTimeOffset.UtcNow, false, [], [], $"Reset + replay failed: {ex.Message}");
         }
         finally
         {
