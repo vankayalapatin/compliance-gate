@@ -184,6 +184,83 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
         return result;
     }
 
+    public async Task<IReadOnlyList<PurchaseRequisition>> GetOpenPurchaseRequisitionsAsync(CancellationToken ct = default)
+    {
+        var open = new[] { nameof(PrStatus.Draft), nameof(PrStatus.Submitted) };
+        var numbers = await _db.PurchaseRequisitions
+            .Where(p => open.Contains(p.Status)).OrderBy(p => p.PrNumber)
+            .Select(p => p.PrNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<PurchaseRequisition>();
+        foreach (var number in numbers)
+        {
+            var pr = await GetPrAsync(number, ct).ConfigureAwait(false);
+            if (pr is not null) result.Add(pr);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<PurchaseOrder>> GetDraftPurchaseOrdersAsync(CancellationToken ct = default)
+    {
+        var open = new[] { nameof(PoApprovalStatus.Draft), nameof(PoApprovalStatus.InReview) };
+        var numbers = await _db.PurchaseOrders
+            .Where(p => open.Contains(p.ApprovalStatus)).OrderBy(p => p.PoNumber)
+            .Select(p => p.PoNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<PurchaseOrder>();
+        foreach (var number in numbers)
+        {
+            var po = await ReadPoAsync(number, ct).ConfigureAwait(false);
+            if (po is not null) result.Add(po);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<VendorInvoice>> GetOpenInvoicesAsync(CancellationToken ct = default)
+    {
+        var open = new[] { nameof(InvoiceStatus.Received), nameof(InvoiceStatus.Matched) };
+        var keys = await _db.VendorInvoices
+            .Where(i => open.Contains(i.Status))
+            .OrderBy(i => i.VendorId).ThenBy(i => i.SupplierInvoiceNumber)
+            .Select(i => new { i.VendorId, i.SupplierInvoiceNumber }).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<VendorInvoice>();
+        foreach (var key in keys)
+        {
+            var inv = await ReadInvoiceAsync(key.VendorId, key.SupplierInvoiceNumber, ct).ConfigureAwait(false);
+            if (inv is not null) result.Add(inv);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<Payment>> GetOpenPaymentsAsync(CancellationToken ct = default)
+    {
+        var open = new[] { nameof(PaymentStatus.Draft), nameof(PaymentStatus.Submitted) };
+        var numbers = await _db.Payments
+            .Where(p => open.Contains(p.Status)).OrderBy(p => p.PaymentNumber)
+            .Select(p => p.PaymentNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<Payment>();
+        foreach (var number in numbers)
+        {
+            var pay = await ReadPaymentAsync(number, ct).ConfigureAwait(false);
+            if (pay is not null) result.Add(pay);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<AsnDto>> GetUnreceivedAsnsAsync(CancellationToken ct = default)
+    {
+        // An ASN is unreceived while no receipt is posted against its PO.
+        var receivedPo = (await _db.ShipmentReceipts.Select(r => r.PoNumber)
+            .Distinct().ToListAsync(ct).ConfigureAwait(false)).ToHashSet(StringComparer.Ordinal);
+        var numbers = await _db.Asns.OrderBy(a => a.AsnNumber)
+            .Select(a => new { a.AsnNumber, a.PoNumber }).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<AsnDto>();
+        foreach (var asn in numbers.Where(a => !receivedPo.Contains(a.PoNumber)))
+        {
+            var dto = await GetAsnAsync(asn.AsnNumber, ct).ConfigureAwait(false);
+            if (dto is not null) result.Add(dto);
+        }
+        return result;
+    }
+
     public async Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default)
     {
         var rows = await _db.Vendors.OrderBy(v => v.VendorId).ToListAsync(ct).ConfigureAwait(false);
