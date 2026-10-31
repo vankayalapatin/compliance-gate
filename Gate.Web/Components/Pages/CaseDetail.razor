@@ -6,7 +6,12 @@
 
 <PageTitle>Case @CaseId</PageTitle>
 
-<h1>Case @CaseId</h1>
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Case @CaseId</p>
+        <p class="gate-page-sub"><a href="cases">&#8592; all cases</a></p>
+    </div>
+</div>
 
 @if (_loadError is not null)
 {
@@ -14,25 +19,31 @@
 }
 else if (_detail is null)
 {
-    <p>Loading case…</p>
+    <p class="gate-meta">Loading case…</p>
 }
 else
 {
-    <p>
-        <a href="cases">← all cases</a>
-        · SO @_detail.Case.SoNumber · item @_detail.Case.ItemId · scenario @_detail.Case.ScenarioName
-        · stage <strong>@_detail.Case.Stage</strong>
-    </p>
-
-    @if (_detail.Case.BlockedByRuleId is not null)
-    {
-        <div class="alert alert-warning" role="alert">
-            Blocked by rule <strong>@_detail.Case.BlockedByRuleId</strong>: @_detail.Case.BlockedReason
+    <section class="gate-card">
+        <div class="gate-card-head">
+            <p class="gate-card-title">SO @_detail.Case.SoNumber · item @_detail.Case.ItemId</p>
+            <div class="gate-card-badges">
+                <span class="gate-badge">@_detail.Case.Stage</span>
+                <span class="gate-chip">@_detail.Case.ScenarioName</span>
+            </div>
         </div>
-    }
+        <ChainStrip Steps="@_detail.Chain" />
+        @if (_detail.Case.BlockedByRuleId is null)
+        {
+            <p class="gate-meta">Not blocked.</p>
+        }
+        else
+        {
+            <div class="gate-notice" role="alert">Blocked by rule <strong>@_detail.Case.BlockedByRuleId</strong>: @(_detail.Case.BlockedReason ?? "—")</div>
+        }
+    </section>
 
-    <h2>Chain</h2>
-    <table class="table">
+    <p class="gate-section-title">Chain</p>
+    <table class="gate-table">
         <thead>
             <tr><th>Step</th><th>Document</th><th>Status</th><th>Detail</th></tr>
         </thead>
@@ -40,7 +51,10 @@ else
             @foreach (var step in _detail.Chain)
             {
                 <tr>
-                    <td>@step.Label</td>
+                    <td>@step.Label @if (step.IsCurrent)
+                        {
+                            <span class="gate-badge gate-badge-dark">current</span>
+                        }</td>
                     <td>@(step.DocumentNumber ?? "—")</td>
                     <td>@step.Status</td>
                     <td>@(step.Detail ?? "—")</td>
@@ -49,10 +63,52 @@ else
         </tbody>
     </table>
 
+    <p class="gate-section-title">What the agent did</p>
+    @if (_detail.Summary.Did.Count == 0)
+    {
+        <p class="gate-meta">Nothing recorded yet.</p>
+    }
+    else
+    {
+        <section class="gate-card">
+            <ul class="gate-list">
+                @foreach (var line in _detail.Summary.Did)
+                {
+                    <li>@line</li>
+                }
+            </ul>
+        </section>
+    }
+
+    <p class="gate-section-title">What it tried and was stopped from doing</p>
+    @if (_detail.Summary.Stopped.Count == 0)
+    {
+        <p class="gate-meta">No refusals, blocks, or waits recorded.</p>
+    }
+    else
+    {
+        <table class="gate-table">
+            <thead>
+                <tr><th>At</th><th>What</th><th>Rule</th><th>Reason</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var attempt in _detail.Summary.Stopped)
+                {
+                    <tr>
+                        <td>@(attempt.At?.ToString("u") ?? "—")</td>
+                        <td>@attempt.What</td>
+                        <td>@(attempt.RuleId ?? "—")</td>
+                        <td>@attempt.Reason</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
     @if (_detail.OpenHolds.Count > 0)
     {
-        <h2>Open holds</h2>
-        <table class="table">
+        <p class="gate-section-title">Open holds</p>
+        <table class="gate-table">
             <thead>
                 <tr><th>Hold</th><th>Rule</th><th>Blocks</th><th>Note</th></tr>
             </thead>
@@ -70,16 +126,16 @@ else
         </table>
     }
 
-    <h2>Decisions</h2>
+    <p class="gate-section-title">Decisions</p>
     @if (_detail.Decisions.Count == 0)
     {
-        <p>No decisions on this case.</p>
+        <p class="gate-meta">No decisions on this case.</p>
     }
     else
     {
-        <table class="table">
+        <table class="gate-table">
             <thead>
-                <tr><th>Decision</th><th>Kind</th><th>Status</th><th>Rule</th><th>Amount</th></tr>
+                <tr><th>Decision</th><th>Kind</th><th>Status</th><th>Rule</th><th class="gate-num">Amount</th></tr>
             </thead>
             <tbody>
                 @foreach (var d in _detail.Decisions)
@@ -87,39 +143,37 @@ else
                     <tr>
                         <td><a href="decisions">@d.DecisionId</a> — @d.Title</td>
                         <td>@d.Kind</td>
-                        <td>@d.Status</td>
+                        <td><span class="gate-badge">@d.Status</span></td>
                         <td>@(d.RuleId is null ? "—" : $"{d.RuleId}: {d.Reason}")</td>
-                        <td>@(d.Amount is null ? "—" : $"{d.Amount} {d.Currency}")</td>
+                        <td class="gate-num">@(d.Amount is null ? "—" : $"{d.Amount} {d.Currency}")</td>
                     </tr>
                 }
             </tbody>
         </table>
     }
 
-    <h2>Vendor email</h2>
+    <p class="gate-section-title">Vendor email</p>
     @if (_detail.Mail.Count == 0)
     {
-        <p>No vendor email on this case.</p>
+        <p class="gate-meta">No vendor email on this case.</p>
     }
     @foreach (var mail in _detail.Mail.OrderBy(m => m.SentAt))
     {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@mail.Subject</strong>
-                <p class="card-text mb-1"><small>From @mail.From · to @mail.To · sent @mail.SentAt.ToString("u")</small></p>
-                <p class="card-text mb-0">@mail.Body</p>
-            </div>
-        </div>
+        <section class="gate-card">
+            <p class="gate-card-title">@mail.Subject</p>
+            <p class="gate-meta">From @mail.From · to @mail.To · sent @mail.SentAt.ToString("u")</p>
+            <p class="gate-row">@mail.Body</p>
+        </section>
     }
 
-    <h2>Timeline</h2>
+    <p class="gate-section-title">Timeline</p>
     @if (_detail.Events.Count == 0)
     {
-        <p>No events recorded.</p>
+        <p class="gate-meta">No events recorded.</p>
     }
     else
     {
-        <table class="table">
+        <table class="gate-table">
             <thead>
                 <tr><th>At</th><th>Actor</th><th>Event</th><th>Detail</th></tr>
             </thead>
