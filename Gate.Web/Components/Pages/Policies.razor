@@ -702,8 +702,8 @@ else
     {
         try
         {
-            _users = await UsersSvc.ListUsersAsync().ConfigureAwait(false);
-            await RefreshAsync().ConfigureAwait(false);
+            _users = await UsersSvc.ListUsersAsync();
+            await RefreshAsync();
         }
         catch (Exception ex)
         {
@@ -713,9 +713,9 @@ else
 
     private async Task RefreshAsync()
     {
-        _questions = await Views.ListQuestionCardsAsync().ConfigureAwait(false);
-        _approvals = await Views.ListApprovalCardsAsync().ConfigureAwait(false);
-        _activations = await Views.ListActivationsAsync().ConfigureAwait(false);
+        _questions = await Views.ListQuestionCardsAsync();
+        _approvals = await Views.ListApprovalCardsAsync();
+        _activations = await Views.ListActivationsAsync();
     }
 
     private async Task AnswerAsync(PolicyQuestionCardVm card)
@@ -725,10 +725,9 @@ else
         {
             _chosenOptions.TryGetValue(card.Decision.DecisionId, out var chosen);
             var outcome = await Outcomes.AnswerQuestionAsync(
-                card.MemoId, card.Decision.DecisionId, chosen, _actedBy ?? string.Empty)
-                .ConfigureAwait(false);
+                card.MemoId, card.Decision.DecisionId, chosen, _actedBy ?? string.Empty);
             _outcomes[card.Decision.DecisionId] = outcome;
-            await RefreshAsync().ConfigureAwait(false);
+            await RefreshAsync();
         }
         catch (Exception ex)
         {
@@ -747,10 +746,9 @@ else
         {
             _declineNotes.TryGetValue(card.Decision.DecisionId, out var note);
             var outcome = await Outcomes.DeclineQuestionAsync(
-                card.MemoId, card.Decision.DecisionId, _actedBy ?? string.Empty, note)
-                .ConfigureAwait(false);
+                card.MemoId, card.Decision.DecisionId, _actedBy ?? string.Empty, note);
             _outcomes[card.Decision.DecisionId] = outcome;
-            await RefreshAsync().ConfigureAwait(false);
+            await RefreshAsync();
         }
         catch (Exception ex)
         {
@@ -784,10 +782,9 @@ else
                 card.Current?.Proposal.ProposedRule is null ? null : EditedParamsFor(card),
                 string.IsNullOrWhiteSpace(comment) ? null : comment,
                 approved ? NewRuleSpecFor(card) : null,
-                approved ? EvidenceLinesFor(card.Decision.DecisionId) : null)
-                .ConfigureAwait(false);
+                approved ? EvidenceLinesFor(card.Decision.DecisionId) : null);
             _outcomes[card.Decision.DecisionId] = outcome;
-            await RefreshAsync().ConfigureAwait(false);
+            await RefreshAsync();
         }
         catch (Exception ex)
         {
@@ -806,10 +803,9 @@ else
         {
             _rollbackReasons.TryGetValue(activation.Activation.ActivationId, out var reason);
             var outcome = await Outcomes.RequestRollbackAsync(
-                activation.MemoId, RollbackRestoreFor(activation), reason, _actedBy ?? string.Empty)
-                .ConfigureAwait(false);
+                activation.MemoId, RollbackRestoreFor(activation), reason, _actedBy ?? string.Empty);
             _rollbackOutcomes[activation.Activation.ActivationId] = outcome;
-            await RefreshAsync().ConfigureAwait(false);
+            await RefreshAsync();
         }
         catch (Exception ex)
         {
