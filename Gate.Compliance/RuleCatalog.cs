@@ -3,14 +3,10 @@
 // RulePacks.cs); C# holds the shape and the expected version only.
 // C# decides pass/block/hold/human-review; the model only explains.
 // Tier 3 rules are documented here and never enforced in the demo.
-namespace Gate.Compliance;
+// RuleTier lives in Gate.Contracts; RuleDefinition.Tier is that enum.
+using Gate.Contracts;
 
-public enum RuleTier
-{
-    Tier1,
-    Tier2,
-    Tier3
-}
+namespace Gate.Compliance;
 
 public enum ComplianceGate
 {
@@ -29,7 +25,12 @@ public sealed record RuleDefinition(
     string Source,
     bool Enforced,
     string? DocumentKind = null,
-    string? DocumentLabel = null);
+    string? DocumentLabel = null,
+    // Memo-to-rule registry type for published rules (null for the shipped
+    // v0.2 rules, which predate the registry).
+    string? RuleType = null,
+    // Published rule params (null when the rule carries none).
+    IReadOnlyDictionary<string, string>? Params = null);
 
 public static class RuleCatalog
 {
