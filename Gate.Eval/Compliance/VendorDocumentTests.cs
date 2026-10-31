@@ -86,7 +86,7 @@ public sealed class VendorDocumentTests
         var vendor = new VendorDto("V-X", "Blocked Ltd", "MX", true, "unpaid invoices", "NET0");
         var verdicts = await _engine.EvaluateVendorAsync(
             vendor, CriticalCell(), DocsWithout(), new ProposedAward("BAT-9", 10, "MX"), History());
-        var refusal = Assert.Single(verdicts, v => v.RuleId == "VENDOR-BLOCK");
+        var refusal = Assert.Single(verdicts, v => v.RuleId == ComplianceVerdictIds.VendorBlock);
         Assert.Equal(VerdictKind.Block, refusal.Kind);
         Assert.Contains("unpaid invoices", refusal.Reason);
     }
