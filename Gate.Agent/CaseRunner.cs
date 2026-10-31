@@ -364,12 +364,26 @@ public partial class CaseRunner
     {
         var losers = screenings.Where(s => !s.Passed).Select(s => s.VendorId).ToList();
         var qty = po.Lines.Sum(l => l.QtyOrdered);
+        var outcomes = screenings.Select(s =>
+        {
+            if (s.Passed)
+            {
+                return $"{s.VendorId}: passed screening.";
+            }
+
+            var block = s.Verdicts.FirstOrDefault(v => v.Kind == VerdictKind.Block);
+            return block is null
+                ? $"{s.VendorId}: blocked."
+                : $"{s.VendorId}: blocked by {block.RuleId}: {block.Reason}";
+        }).ToList();
         // Default token cap: reasoning models burn hundreds of tokens before
         // answering (see SparkOptions), so a small cap starves this call.
         var request = new ModelRequest(
             $"In one short sentence, why award {current.ItemId} x{qty} to {po.VendorId}"
-            + (losers.Count == 0 ? "?" : $" over {string.Join(", ", losers)}?"),
-            "You write one-sentence sourcing rationales.");
+            + (losers.Count == 0 ? "?" : $" over {string.Join(", ", losers)}?")
+            + $" Screening outcomes: {string.Join(" ", outcomes)}"
+            + " Ground your answer only in these screening outcomes; do not invent cost, quality, or delivery reasons.",
+            "You write one-sentence sourcing rationales grounded only in the given screening outcomes.");
         var result = await ResilientCalls.CompleteWithRetryAsync(
             _models, request, _logger, $"award rationale for {current.CaseId}", ct).ConfigureAwait(false);
         return (result.Text.Trim(), CachedModelClient.CacheKey(_models.ModelName, request));

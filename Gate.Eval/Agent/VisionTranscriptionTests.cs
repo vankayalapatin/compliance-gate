@@ -283,4 +283,56 @@ public sealed class VisionTranscriptionTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             h.Runner.TranscribeInvoicePhotosAsync("nope", [new InvoicePhoto("INV-IMG-1", [1])]));
     }
+
+    [Fact]
+    public async Task MissingDamageVisibleIsAGapError()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        h.Models.QueueResponse(
+            """[{"carton_id":"CTN-1","part":"BAT-1","po_number":null,"lot_code":null,"units_per_carton":10,"mark_present":true,"mark_legible":true,"un_number":null,"class9_visible":true,"damage_note":null,"read_confidence":0.9}]""");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            h.Runner.TranscribeDockPhotosAsync(caseId, [new DockPhoto("IMG-1", [11], null)]));
+
+        Assert.Contains("damage_visible", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("CTN-1", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("IMG-1", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("refusing to guess", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MissingMarkPresentIsAGapError()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        h.Models.QueueResponse(
+            """[{"carton_id":"CTN-1","part":"BAT-1","po_number":null,"lot_code":null,"units_per_carton":10,"mark_legible":true,"un_number":null,"class9_visible":true,"damage_visible":false,"damage_note":null,"read_confidence":0.9}]""");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            h.Runner.TranscribeDockPhotosAsync(caseId, [new DockPhoto("IMG-1", [12], null)]));
+
+        Assert.Contains("mark_present", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("CTN-1", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("IMG-1", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("refusing to guess", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InvoiceMissingKeyIsAGapError()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        var bad = """{"supplier_invoice_number":"INV-NOKEY","vendor_id_or_name":null,"po_number":null,"lines":[],"bank_account_ref":null}""";
+        var missing = bad.Replace("\"bank_account_ref\":null", "\"bank_account_ref_missing\":null");
+        h.Models.QueueResponse(missing);
+        h.Models.QueueResponse(missing);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            h.Runner.TranscribeInvoicePhotosAsync(caseId, [new InvoicePhoto("INV-IMG-1", [13, 13])]));
+
+        Assert.Contains("failed after one retry", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("bank_account_ref", ex.InnerException?.Message ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal(2, h.Models.CallCount);
+    }
 }

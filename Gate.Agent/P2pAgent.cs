@@ -166,6 +166,8 @@ public sealed class P2pAgent
         }
         if (string.IsNullOrWhiteSpace(vendorId) || string.IsNullOrWhiteSpace(poNumber))
             problems.Add("AP-C3: vendor or PO number missing; goods receipt required before pay.");
+        if (string.IsNullOrWhiteSpace(supplierInvoiceNumber))
+            problems.Add("AP-C3: supplier invoice number missing; goods receipt required before pay.");
 
         PurchaseOrder? po = null;
         if (problems.Count == 0 && poNumber is not null)

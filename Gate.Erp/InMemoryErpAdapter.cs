@@ -420,7 +420,9 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             if (string.IsNullOrWhiteSpace(currency)) throw new InvalidOperationException("Sales order currency is required.");
             if (lines.Count == 0) throw new InvalidOperationException("Sales order needs at least one line.");
             foreach (var l in lines) if (l.Quantity <= 0) throw new InvalidOperationException($"Sales order line {l.ItemId} quantity must be positive.");
-            var so = new SalesOrder(Next("SO"), SalesOrderStatus.Created, currency, lines.ToList());
+            string soNumber;
+            do { soNumber = Next("SO"); } while (_salesOrders.ContainsKey(soNumber));
+            var so = new SalesOrder(soNumber, SalesOrderStatus.Created, currency, lines.ToList());
             _salesOrders[so.SoNumber] = so;
             return so;
         }));
@@ -625,6 +627,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, CancellationToken ct = default) =>
         Task.FromResult(Idem($"invoice:{idempotencyKey}", () =>
         {
+            if (string.IsNullOrWhiteSpace(supplierInvoiceNumber))
+                throw new InvalidOperationException("Supplier invoice number is required.");
             if (string.IsNullOrWhiteSpace(vendorId) || string.IsNullOrWhiteSpace(poNumber))
                 throw new InvalidOperationException("Vendor or PO number missing; goods receipt required before pay.");
             if (!_vendors.ContainsKey(vendorId)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");

@@ -61,6 +61,68 @@ public sealed class ErpBatch3Tests
     }
 
     [Fact]
+    public async Task CreateSalesOrderAfterScenarioSeedSkipsUsedNumber()
+    {
+        var erp = SeededErp.Create();
+        erp.SeedSalesOrder(new SalesOrder("SO-1", SalesOrderStatus.Created, "USD",
+            [new SalesOrderLine("GLASS-1", 7)]));
+        var so = await erp.CreateSalesOrderAsync("USD",
+            [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", Idem());
+        Assert.Equal("SO-2", so.SoNumber);
+        var seeded = await erp.GetSalesOrderAsync("SO-1");
+        Assert.NotNull(seeded);
+        Assert.Equal(SalesOrderStatus.Created, seeded.Status);
+        Assert.Equal("USD", seeded.Currency);
+        var seededLine = Assert.Single(seeded.Lines);
+        Assert.Equal("GLASS-1", seededLine.ItemId);
+        Assert.Equal(7m, seededLine.Quantity);
+    }
+
+    [Fact]
+    public async Task CreateSalesOrderAfterSeedRedeliveryReturnsSameOrder()
+    {
+        var erp = SeededErp.Create();
+        erp.SeedSalesOrder(new SalesOrder("SO-1", SalesOrderStatus.Created, "USD",
+            [new SalesOrderLine("GLASS-1", 7)]));
+        var key = Idem();
+        var first = await erp.CreateSalesOrderAsync("USD",
+            [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", key);
+        var second = await erp.CreateSalesOrderAsync("USD",
+            [new SalesOrderLine("BAT-1", 99)], "order-webhook", "order-webhook", key);
+        Assert.Equal("SO-2", first.SoNumber);
+        Assert.Equal(first.SoNumber, second.SoNumber);
+        var stored = await erp.GetSalesOrderAsync(first.SoNumber);
+        Assert.NotNull(stored);
+        var storedLine = Assert.Single(stored.Lines);
+        Assert.Equal("GLASS-1", storedLine.ItemId);
+        Assert.Equal(5m, storedLine.Quantity);
+    }
+
+    [Fact]
+    public async Task CreateInvoiceRefusesBlankSupplierNumber()
+    {
+        var erp = SeededErp.Create();
+        var (poNumber, lineRef) = await OpenPoLineAsync(erp);
+        foreach (var blank in new[] { "", "   " })
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                erp.CreateInvoiceAsync(blank, "V-B", poNumber, "vendor", "planner",
+                    [new InvoiceLineInput(lineRef, 2, 12)], Idem()));
+            Assert.Contains("Supplier invoice number", ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInvoiceValidNumberUnaffected()
+    {
+        var erp = SeededErp.Create();
+        await PostedInvoiceAsync(erp, "INV-OK1");
+        var inv = await erp.GetInvoiceAsync("V-B", "INV-OK1");
+        Assert.NotNull(inv);
+        Assert.Equal(InvoiceStatus.Posted, inv.Status);
+    }
+
+    [Fact]
     public async Task PayUpToDateSkipsInvoiceDueAfter()
     {
         var erp = SeededErp.Create();
@@ -122,6 +184,24 @@ public sealed class ErpBatch3Tests
     public async Task VendorEmailSeedsFromAltScenario()
     {
         await AssertScenarioEmailsAsync("scenarios/alt-v1.json");
+    }
+
+    private static async Task<(string PoNumber, string LineRef)> OpenPoLineAsync(InMemoryErpAdapter erp, decimal qty = 2)
+    {
+        var pr = await erp.CreatePrAsync("planner", RecordSource.P2pAgent, "planner",
+            [new PurchaseRequisitionLine("BAT-1", qty, "EA")], Idem());
+        if (pr.Status == PrStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PR", pr.PrNumber, "approver", true, "ok", Idem());
+        }
+        var po = await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.P2pAgent, "planner", Idem());
+        if (po.ApprovalStatus == PoApprovalStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PO", po.PoNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PO", po.PoNumber, "approver", true, "ok", Idem());
+        }
+        return (po.PoNumber, po.Lines[0].PoLineRef);
     }
 
     private static async Task PostedInvoiceAsync(InMemoryErpAdapter erp, string supplierInvoiceNumber, decimal qty = 2)

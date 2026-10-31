@@ -102,9 +102,12 @@ public partial class CaseRunner
         Exception? lastError = null;
         for (var attempt = 0; attempt < 2; attempt++)
         {
+            // Multi-label pallet views need headroom: reasoning models burn
+            // most of a 2000-token budget before answering, truncating the
+            // JSON array mid-string (observed on IMG-01's six labels).
             var result = await ResilientCalls.CompleteWithRetryAsync(
                 _models,
-                new ModelRequest(prompt, MaxTokens: 2000, ImageJpeg: jpeg),
+                new ModelRequest(prompt, MaxTokens: 4000, ImageJpeg: jpeg),
                 _logger, $"photo read for {imageId}", ct).ConfigureAwait(false);
             try
             {
@@ -155,12 +158,12 @@ public partial class CaseRunner
             ReadString(element, "po_number"),
             ReadString(element, "lot_code"),
             ReadInt(element, "units_per_carton", photo.ImageId, cartonId),
-            ReadBool(element, "mark_present"),
-            ReadBool(element, "mark_legible"),
+            ReadBool(element, "mark_present", photo.ImageId, cartonId),
+            ReadBool(element, "mark_legible", photo.ImageId, cartonId),
             ReadString(element, "un_number"),
             item.IsCritical,
-            ReadBool(element, "class9_visible"),
-            ReadBool(element, "damage_visible"),
+            ReadBool(element, "class9_visible", photo.ImageId, cartonId),
+            ReadBool(element, "damage_visible", photo.ImageId, cartonId),
             ReadString(element, "damage_note"),
             photo.ImageId,
             ReadDecimal(element, "read_confidence"));
@@ -168,8 +171,10 @@ public partial class CaseRunner
 
     /// <summary>Parses one transcribed-invoice JSON object (vision page or
     /// vendor-reply extraction). Values stay raw; callers resolve vendor and
-    /// PO against the ERP. Money fields are required: missing quantity or
-    /// price is a gap error, never a default.</summary>
+    /// PO against the ERP. Every top-level key must be present (null allowed
+    /// for scalars): an absent key is a gap error, never a silent null. Money
+    /// fields are required: missing quantity or price is a gap error, never
+    /// a default.</summary>
     private static TranscribedInvoice ParseTranscribedInvoice(string text)
     {
         using var doc = JsonDocument.Parse(StripFences(text));
@@ -180,35 +185,61 @@ public partial class CaseRunner
         }
 
         var lines = new List<SupplierInvoiceLineInput>();
-        if (root.TryGetProperty("lines", out var linesJson)
-            && linesJson.ValueKind == JsonValueKind.Array)
+        if (!root.TryGetProperty("lines", out var linesJson))
         {
-            foreach (var line in linesJson.EnumerateArray())
-            {
-                if (!line.TryGetProperty("quantity", out var qty)
-                    || qty.ValueKind != JsonValueKind.Number
-                    || !line.TryGetProperty("unit_price", out var price)
-                    || price.ValueKind != JsonValueKind.Number)
-                {
-                    throw new JsonException("Invoice line needs a numeric quantity and unit_price.");
-                }
+            throw new JsonException("Transcribed invoice is missing 'lines'; refusing to guess it.");
+        }
 
-                lines.Add(new SupplierInvoiceLineInput(
-                    line.TryGetProperty("po_line_ref", out var lineRef)
-                    && lineRef.ValueKind == JsonValueKind.String
-                        ? lineRef.GetString()
-                        : null,
-                    qty.GetDecimal(),
-                    price.GetDecimal()));
+        if (linesJson.ValueKind != JsonValueKind.Array)
+        {
+            throw new JsonException("Transcribed invoice key 'lines' must be an array.");
+        }
+
+        foreach (var line in linesJson.EnumerateArray())
+        {
+            if (!line.TryGetProperty("quantity", out var qty)
+                || qty.ValueKind != JsonValueKind.Number
+                || !line.TryGetProperty("unit_price", out var price)
+                || price.ValueKind != JsonValueKind.Number)
+            {
+                throw new JsonException("Invoice line needs a numeric quantity and unit_price.");
             }
+
+            lines.Add(new SupplierInvoiceLineInput(
+                line.TryGetProperty("po_line_ref", out var lineRef)
+                && lineRef.ValueKind == JsonValueKind.String
+                    ? lineRef.GetString()
+                    : null,
+                qty.GetDecimal(),
+                price.GetDecimal()));
         }
 
         return new TranscribedInvoice(
-            ReadString(root, "supplier_invoice_number"),
-            ReadString(root, "vendor_id_or_name"),
-            ReadString(root, "po_number"),
+            ReadInvoiceString(root, "supplier_invoice_number"),
+            ReadInvoiceString(root, "vendor_id_or_name"),
+            ReadInvoiceString(root, "po_number"),
             lines,
-            ReadString(root, "bank_account_ref"));
+            ReadInvoiceString(root, "bank_account_ref"));
+    }
+
+    private static string? ReadInvoiceString(JsonElement element, string key)
+    {
+        if (!element.TryGetProperty(key, out var value))
+        {
+            throw new JsonException($"Transcribed invoice is missing '{key}'; refusing to guess it.");
+        }
+
+        if (value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString();
+        }
+
+        throw new JsonException($"Transcribed invoice key '{key}' must be a string or null.");
     }
 
     private static string ReadReplySummary(string text)
@@ -248,10 +279,17 @@ public partial class CaseRunner
             ? value.GetString()
             : null;
 
-    private static bool ReadBool(JsonElement element, string key) =>
-        element.TryGetProperty(key, out var value)
-        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
-        && value.ValueKind == JsonValueKind.True;
+    private static bool ReadBool(JsonElement element, string key, string imageId, string cartonId)
+{
+        if (element.TryGetProperty(key, out var value)
+            && value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            return value.ValueKind == JsonValueKind.True;
+        }
+
+        throw new InvalidOperationException(
+            $"Photo {imageId} label {cartonId} has no {key}; refusing to guess one.");
+}
 
     private static decimal ReadDecimal(JsonElement element, string key) =>
         element.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number

@@ -348,7 +348,9 @@ public sealed partial class EfCoreErpAdapter
         if (string.IsNullOrWhiteSpace(currency)) throw new InvalidOperationException("Sales order currency is required.");
         if (lines.Count == 0) throw new InvalidOperationException("Sales order needs at least one line.");
         foreach (var l in lines) if (l.Quantity <= 0) throw new InvalidOperationException($"Sales order line {l.ItemId} quantity must be positive.");
-        var soNumber = await NextAsync("SO", ct).ConfigureAwait(false);
+        string soNumber;
+        do { soNumber = await NextAsync("SO", ct).ConfigureAwait(false); }
+        while (await _db.SalesOrders.FindAsync([soNumber], ct).ConfigureAwait(false) is not null);
         _db.SalesOrders.Add(new SalesOrderRow
         {
             SoNumber = soNumber, Status = SalesOrderStatus.Created.ToString(), Currency = currency
@@ -615,6 +617,8 @@ public sealed partial class EfCoreErpAdapter
         var replay = await ReplayAsync<VendorInvoice>($"invoice:{idempotencyKey}", ct).ConfigureAwait(false);
         if (replay is not null) return replay;
         using var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(supplierInvoiceNumber))
+            throw new InvalidOperationException("Supplier invoice number is required.");
         if (string.IsNullOrWhiteSpace(vendorId) || string.IsNullOrWhiteSpace(poNumber))
             throw new InvalidOperationException("Vendor or PO number missing; goods receipt required before pay.");
         _ = await _db.Vendors.FindAsync([vendorId], ct).ConfigureAwait(false)

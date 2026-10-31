@@ -39,7 +39,16 @@ public partial class CaseRunner
                 $"Invoice '{invoiceRef}' has no unemailed AP problem on case {caseId}.");
         var vendorId = await ResolveQueryVendorAsync(file, invoiceRef, ct).ConfigureAwait(false);
         var vendor = (await _erp.GetVendorsAsync(ct).ConfigureAwait(false))
-            .First(v => string.Equals(v.VendorId, vendorId, StringComparison.Ordinal));
+            .FirstOrDefault(v => string.Equals(v.VendorId, vendorId, StringComparison.Ordinal));
+        if (vendor is null)
+        {
+            _logger.LogError(
+                "Case {CaseId}: PO vendor {VendorId} for invoice '{InvoiceRef}' is missing from the vendor master.",
+                caseId, vendorId, invoiceRef);
+            throw new InvalidOperationException(
+                $"PO vendor {vendorId} for invoice '{invoiceRef}' is missing from the vendor master; cannot query it.");
+        }
+
         if (string.IsNullOrWhiteSpace(vendor.Email))
         {
             throw new InvalidOperationException(

@@ -240,11 +240,33 @@ public partial class CaseRunner
     /// ERP holds plus lot quarantine; human-review verdicts open dock/damage
     /// decisions (damage never auto-quarantines). Follow-up reads go through
     /// the reshot handler.</summary>
+    /// <summary>Photo-provenance gate: the dock check evaluates only reads
+    /// that name the photo they were transcribed from. Transcription is the
+    /// sole producer (it stamps every read with its photo id); anything else
+    /// is refused before any verdict, hold, or event is written.</summary>
+    private void RequirePhotoProvenance(string caseId, IReadOnlyList<DockCartonRead> reads)
+    {
+        foreach (var read in reads)
+        {
+            if (!string.IsNullOrWhiteSpace(read.ImageId))
+            {
+                continue;
+            }
+
+            _logger.LogError(
+                "Case {CaseId}: dock read for carton {CartonId} names no photo; refusing reads that did not come from a photo.",
+                caseId, read.CartonId);
+            throw new InvalidOperationException(
+                $"Dock read for carton {read.CartonId} on case {caseId} names no photo; the dock check runs only on photo transcriptions.");
+        }
+    }
+
     public async Task<IReadOnlyDictionary<string, IReadOnlyList<Verdict>>> OnDockReadsAsync(
         string caseId, IReadOnlyList<DockCartonRead> reads, CancellationToken ct = default)
     {
         var file = CaseStore.Load(_cacheDir, caseId)
             ?? throw new InvalidOperationException($"Unknown case {caseId}.");
+        RequirePhotoProvenance(caseId, reads);
         if (file.Events.Any(e => e.Kind == CaseEventKind.DockEvaluated))
         {
             IReadOnlyList<string> asnIds = [];
@@ -278,6 +300,7 @@ public partial class CaseRunner
     {
         var file = CaseStore.Load(_cacheDir, input.CaseId)
             ?? throw new InvalidOperationException($"Unknown case {input.CaseId}.");
+        RequirePhotoProvenance(input.CaseId, input.Reads);
         var outcome = await EvaluateCartonsAsync(file, input.CartonIds, input.Reads, isReshot: true, ct)
             .ConfigureAwait(false);
         var reloaded = CaseStore.Load(_cacheDir, input.CaseId)
@@ -513,12 +536,27 @@ public partial class CaseRunner
         var file = CaseStore.Load(_cacheDir, input.CaseId)
             ?? throw new InvalidOperationException($"Unknown case {input.CaseId}.");
         var current = file.Case;
-        var vendorId = input.VendorId ?? string.Empty;
-        var docKey = $"{vendorId}/{input.SupplierInvoiceNumber}";
-        var scope = input.IdempotencyKey ?? $"{current.CaseId}:inv:{docKey}";
         var lines = input.Lines
             .Select(l => new InvoiceLineInput(l.PoLineRef, l.Quantity, l.UnitPrice))
             .ToList();
+        if (string.IsNullOrWhiteSpace(input.SupplierInvoiceNumber))
+        {
+            var blankVendor = input.VendorId ?? string.Empty;
+            var blankDoc = $"{blankVendor}/{input.SupplierInvoiceNumber}";
+            var blankScope = input.IdempotencyKey ?? $"{current.CaseId}:inv:{blankDoc}";
+            var blankBy = await CreatedByAsync(file, ct).ConfigureAwait(false);
+            var blankHeld = await _core.MatchInvoiceAsync(
+                blankVendor, input.SupplierInvoiceNumber, input.PoNumber,
+                RecordSource.P2pAgent, blankBy, lines, ct,
+                idempotencyScope: blankScope).ConfigureAwait(false);
+            return await FinishHeldIntakeAsync(file,
+                "AP-C3: supplier invoice number missing; held for the AP clerk.",
+                blankDoc, blankHeld, apReview: true, bankVerification: false, ct).ConfigureAwait(false);
+        }
+
+        var vendorId = input.VendorId ?? string.Empty;
+        var docKey = $"{vendorId}/{input.SupplierInvoiceNumber}";
+        var scope = input.IdempotencyKey ?? $"{current.CaseId}:inv:{docKey}";
         var createdBy = await CreatedByAsync(file, ct).ConfigureAwait(false);
 
         var duplicate = !string.IsNullOrWhiteSpace(vendorId)

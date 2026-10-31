@@ -67,6 +67,66 @@ public sealed class EfCoreBatch3Tests
     }
 
     [Fact]
+    public async Task CreateSalesOrderAfterScenarioSeedSkipsUsedNumber()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        await SeedScenarioSalesOrderAsync(fx);
+        var so = await fx.Adapter.CreateSalesOrderAsync("USD",
+            [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", Idem());
+        Assert.Equal("SO-2", so.SoNumber);
+        var seeded = await fx.Adapter.GetSalesOrderAsync("SO-1");
+        Assert.NotNull(seeded);
+        Assert.Equal(SalesOrderStatus.Created, seeded.Status);
+        Assert.Equal("USD", seeded.Currency);
+        var seededLine = Assert.Single(seeded.Lines);
+        Assert.Equal("GLASS-1", seededLine.ItemId);
+        Assert.Equal(7m, seededLine.Quantity);
+    }
+
+    [Fact]
+    public async Task CreateSalesOrderAfterSeedRedeliveryReturnsSameOrder()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        await SeedScenarioSalesOrderAsync(fx);
+        var key = Idem();
+        var first = await fx.Adapter.CreateSalesOrderAsync("USD",
+            [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", key);
+        var second = await fx.Adapter.CreateSalesOrderAsync("USD",
+            [new SalesOrderLine("BAT-1", 99)], "order-webhook", "order-webhook", key);
+        Assert.Equal("SO-2", first.SoNumber);
+        Assert.Equal(first.SoNumber, second.SoNumber);
+        var stored = await fx.Adapter.GetSalesOrderAsync(first.SoNumber);
+        Assert.NotNull(stored);
+        var storedLine = Assert.Single(stored.Lines);
+        Assert.Equal("GLASS-1", storedLine.ItemId);
+        Assert.Equal(5m, storedLine.Quantity);
+    }
+
+    [Fact]
+    public async Task CreateInvoiceRefusesBlankSupplierNumber()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        var (poNumber, lineRef) = await OpenPoLineAsync(fx.Adapter);
+        foreach (var blank in new[] { "", "   " })
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                fx.Adapter.CreateInvoiceAsync(blank, "V-B", poNumber, "vendor", "planner",
+                    [new InvoiceLineInput(lineRef, 2, 12)], Idem()));
+            Assert.Contains("Supplier invoice number", ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task CreateInvoiceValidNumberUnaffected()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        await PostedInvoiceAsync(fx.Adapter, "INV-OK1");
+        var inv = await fx.Adapter.GetInvoiceAsync("V-B", "INV-OK1");
+        Assert.NotNull(inv);
+        Assert.Equal(InvoiceStatus.Posted, inv.Status);
+    }
+
+    [Fact]
     public async Task PayUpToDateSkipsInvoiceDueAfter()
     {
         await using var fx = await EfCoreTestDb.CreateAsync();
@@ -155,6 +215,37 @@ public sealed class EfCoreBatch3Tests
     public async Task VendorEmailSeedsFromAltScenario()
     {
         await AssertScenarioEmailsAsync("scenarios/alt-v1.json");
+    }
+
+    private static async Task SeedScenarioSalesOrderAsync(EfCoreTestDb fx)
+    {
+        fx.Db.SalesOrders.Add(new SalesOrderRow
+        {
+            SoNumber = "SO-1", Status = nameof(SalesOrderStatus.Created), Currency = "USD"
+        });
+        fx.Db.SalesOrderLines.Add(new SalesOrderLineRow
+        {
+            SoNumber = "SO-1", LineNo = 1, ItemId = "GLASS-1", Quantity = 7
+        });
+        await fx.Db.SaveChangesAsync();
+    }
+
+    private static async Task<(string PoNumber, string LineRef)> OpenPoLineAsync(EfCoreErpAdapter erp, decimal qty = 2)
+    {
+        var pr = await erp.CreatePrAsync("planner", RecordSource.P2pAgent, "planner",
+            [new PurchaseRequisitionLine("BAT-1", qty, "EA")], Idem());
+        if (pr.Status == PrStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PR", pr.PrNumber, "approver", true, "ok", Idem());
+        }
+        var po = await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.P2pAgent, "planner", Idem());
+        if (po.ApprovalStatus == PoApprovalStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PO", po.PoNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PO", po.PoNumber, "approver", true, "ok", Idem());
+        }
+        return (po.PoNumber, po.Lines[0].PoLineRef);
     }
 
     private static async Task PostedInvoiceAsync(EfCoreErpAdapter erp, string supplierInvoiceNumber, decimal qty = 2)

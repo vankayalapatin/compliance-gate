@@ -3,18 +3,28 @@
 // it: every executed action names its model-proposed tool, zero
 // model-deferred turns), then the identical runs replay from scratch with
 // zero live calls. Keys come from user secrets or the environment, never
-// from a file in the repo.
+// from a file in the repo. The battery path runs on photos: dock posts real
+// JPEGs from assets/dock, the reshot posts its reshotIn photo, and the
+// invoice is rendered at runtime and transcribed before intake. The screw
+// path stays EDI/hand-reads as the non-photo variant.
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
 using Gate.Erp;
 using Microsoft.Extensions.Configuration;
+using SkiaSharp;
+using System.Globalization;
 using System.Text.Json;
+using Xunit.Abstractions;
 
 namespace Gate.Eval;
 
 public sealed class ToolLoopLiveTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public ToolLoopLiveTests(ITestOutputHelper output) => _output = output;
+
     private sealed record ScenarioCarton(
         string Id, string Part, int Units, bool MarkPresent, string Damage, IReadOnlyList<string> VisibleIn,
         string? ReshotIn);
@@ -47,25 +57,6 @@ public sealed class ToolLoopLiveTests
             Interlocked.Increment(ref Count);
             return base.SendAsync(request, ct);
         }
-    }
-
-    private static List<DockCartonRead> ReadsFor(
-        IReadOnlyList<ScenarioCarton> cartons, string poNumber, Func<string, string> lotOf)
-    {
-        var reads = new List<DockCartonRead>();
-        foreach (var carton in cartons)
-        {
-            var damaged = carton.Damage != "none" && carton.Damage != "none, hidden";
-            foreach (var image in carton.VisibleIn)
-            {
-                reads.Add(new DockCartonRead(
-                    carton.Id, carton.Part, poNumber, lotOf(carton.Id), carton.Units,
-                    carton.MarkPresent, carton.MarkPresent, "UN3480", true, true,
-                    damaged, damaged ? carton.Damage : null, image, 0.95m));
-            }
-        }
-
-        return reads;
     }
 
     [Theory]
@@ -119,7 +110,7 @@ public sealed class ToolLoopLiveTests
         }
     }
 
-    private static async Task RunScenarioAsync(
+    private async Task RunScenarioAsync(
         string scenarioPath, IModelClient models, string caseDir, bool live)
     {
         var resolved = ScenarioLoader.ResolvePath(scenarioPath);
@@ -134,6 +125,7 @@ public sealed class ToolLoopLiveTests
             c.GetProperty("damage").GetString()!,
             c.GetProperty("visibleIn").EnumerateArray().Select(v => v.GetString()!).ToList(),
             c.TryGetProperty("reshotIn", out var reshot) ? reshot.GetString() : null)).ToList();
+        var images = root.GetProperty("images").EnumerateArray().Select(e => e.GetString()!).ToList();
         var main = root.GetProperty("invoiceIntents").GetProperty("main");
         var mainVendor = main.GetProperty("vendor").GetString()!;
         var mainQty = main.GetProperty("quantity").GetDecimal();
@@ -166,18 +158,21 @@ public sealed class ToolLoopLiveTests
         var bat = caseIds.Single(c => c.EndsWith("-" + batItem, StringComparison.Ordinal));
         var screw = caseIds.Single(c => c != bat);
 
-        await RunBatteryAsync(runner, erp, caseDir, bat, cartons, mainVendor, mainQty, mainPrice, live);
+        await RunBatteryAsync(runner, erp, caseDir, bat, cartons, images, mainVendor, mainQty, mainPrice, live);
         await RunScrewAsync(runner, erp, caseDir, screw);
     }
 
-    private static async Task RunBatteryAsync(
+    private async Task RunBatteryAsync(
         CaseRunner runner, InMemoryErpAdapter erp, string caseDir, string bat,
-        IReadOnlyList<ScenarioCarton> cartons, string mainVendor, decimal mainQty, decimal mainPrice,
+        IReadOnlyList<ScenarioCarton> cartons, IReadOnlyList<string> images,
+        string mainVendor, decimal mainQty, decimal mainPrice,
         bool live)
     {
         CaseFile Load() => CaseStore.Load(caseDir, bat)!;
         static Decision Pending(CaseFile file, DecisionKind kind) =>
             file.Decisions.Single(d => d.Kind == kind && d.Status == DecisionStatus.Pending);
+
+        var photoReads = await TranscribeLivePhotosAsync(runner, bat, cartons, images);
 
         await runner.AdvanceAsync(bat);
         var prDecision = Pending(Load(), DecisionKind.PrApproval);
@@ -204,7 +199,7 @@ public sealed class ToolLoopLiveTests
             cartons.Select(c => new AsnCartonInput(c.Id, c.Part, c.Units, LotOf(c.Id))).ToList()));
 
         await runner.AdvanceAsync(bat);
-        await runner.OnDockReadsAsync(bat, ReadsFor(cartons, batPo, LotOf));
+        await runner.OnDockReadsAsync(bat, photoReads.DockReads);
         foreach (var review in Load().Decisions
             .Where(d => d.Status == DecisionStatus.Pending
                 && d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview)
@@ -217,9 +212,12 @@ public sealed class ToolLoopLiveTests
         var batLine = (await erp.GetPurchaseOrderAsync(batPo))!.Lines.Single();
         var unmarked = cartons.Single(c => !c.MarkPresent);
         var acceptedUnits = cartons.Sum(c => c.Units) - unmarked.Units;
+        var transcribed = await TranscribeLiveInvoiceAsync(
+            runner, erp, bat, $"INV-{batPo}", mainVendor, batPo,
+            batLine.PoLineRef, mainQty, mainPrice);
         var intake = await runner.OnInvoiceAsync(new SupplierInvoiceInput(
-            bat, $"INV-{batPo}", mainVendor, batPo,
-            [new SupplierInvoiceLineInput(batLine.PoLineRef, mainQty, mainPrice)]));
+            bat, transcribed.SupplierInvoiceNumber!, transcribed.VendorIdOrName, transcribed.PoNumber,
+            transcribed.Lines, transcribed.BankAccountRef));
         Assert.True(intake.Persisted);
         Assert.Equal(acceptedUnits * mainPrice, intake.AcceptedValue);
 
@@ -231,11 +229,7 @@ public sealed class ToolLoopLiveTests
         Assert.Equal(acceptedUnits * mainPrice, pay1.Amount);
         await runner.ResolveDecisionAsync(bat, pay1.DecisionId, true, pay1.RequestedTo, "ok");
 
-        var reshot = await runner.OnReshotAsync(new ReshotInput(bat, [unmarked.Id],
-            [new DockCartonRead(
-                unmarked.Id, unmarked.Part, batPo, LotOf(unmarked.Id), unmarked.Units,
-                true, true, "UN3480", true, true,
-                false, null, unmarked.ReshotIn ?? "RESHOT", 0.95m)]));
+        var reshot = await runner.OnReshotAsync(new ReshotInput(bat, [unmarked.Id], photoReads.ReshotReads));
         Assert.All(reshot[unmarked.Id], v => Assert.Equal(VerdictKind.Pass, v.Kind));
 
         await runner.AdvanceAsync(bat);
@@ -252,6 +246,225 @@ public sealed class ToolLoopLiveTests
         Assert.Equal(2, final.Case.PaymentNumbers.Count);
         var settlements = await erp.GetSettlementsAsync(mainVendor, $"INV-{batPo}");
         Assert.Equal(mainQty * mainPrice, settlements.Sum(s => s.SettledAmount));
+    }
+
+    private sealed record LivePhotoReads(
+        IReadOnlyList<DockCartonRead> DockReads,
+        IReadOnlyList<DockCartonRead> ReshotReads);
+
+    private static string FindDockDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "assets", "dock");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new InvalidOperationException(
+            $"Could not find assets/dock by walking up from {AppContext.BaseDirectory}; " +
+            "run the live photo flow from the repo checkout.");
+    }
+
+    private static bool IsDamaged(ScenarioCarton carton) =>
+        carton.Damage != "none" && carton.Damage != "none, hidden";
+
+    /// <summary>Live accuracy step: transcribes every scenario dock image plus
+    /// the reshot image, logs per-image carton/mark/damage results against
+    /// scenario ground truth, and returns the reads for the flow. The dock
+    /// step runs on these transcribed reads only: a misread fails the run
+    /// with the exact diffs, never falls back to hand reads. Carton sets,
+    /// marks, and Class 9 must match on every view; damage unions across
+    /// views (any view showing damage counts, mirroring the BAT-LI-05
+    /// any-view rule), since a crushed face may hide from one angle.</summary>
+    private async Task<LivePhotoReads> TranscribeLivePhotosAsync(
+        CaseRunner runner, string bat, IReadOnlyList<ScenarioCarton> cartons,
+        IReadOnlyList<string> images)
+    {
+        var dockDir = FindDockDir();
+        var unmarked = cartons.Single(c => !c.MarkPresent);
+        var palletIds = cartons.SelectMany(c => c.VisibleIn).Distinct(StringComparer.Ordinal).ToList();
+        var reshotId = unmarked.ReshotIn
+            ?? throw new InvalidOperationException("Scenario carton without markPresent has no reshotIn image.");
+        var perImage = new Dictionary<string, IReadOnlyList<DockCartonRead>>(StringComparer.Ordinal);
+        foreach (var imageId in images)
+        {
+            var file = Path.Combine(dockDir, imageId + ".jpg");
+            if (!File.Exists(file))
+            {
+                throw new InvalidOperationException(
+                    $"Live photo flow needs {file} but it is missing; run from the repo checkout with assets/dock intact.");
+            }
+
+            var jpeg = await File.ReadAllBytesAsync(file);
+            var reads = await runner.TranscribeDockPhotosAsync(bat, [new DockPhoto(imageId, jpeg, null)]);
+            perImage[imageId] = reads;
+        }
+
+        var mismatches = new List<string>();
+        var damageViews = cartons.ToDictionary(c => c.Id, _ => new List<string>(), StringComparer.Ordinal);
+        foreach (var imageId in palletIds)
+        {
+            var expected = cartons.Where(c => c.VisibleIn.Contains(imageId, StringComparer.Ordinal)).ToList();
+            var reads = perImage.TryGetValue(imageId, out var found) ? found : [];
+            var readIds = reads.Select(r => r.CartonId).OrderBy(id => id, StringComparer.Ordinal).ToList();
+            var expectedIds = expected.Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal).ToList();
+            _output.WriteLine($"[photo-accuracy] {imageId}: read [{string.Join(",", readIds)}] expected [{string.Join(",", expectedIds)}]");
+            foreach (var carton in expected)
+            {
+                var read = reads.SingleOrDefault(r =>
+                    string.Equals(r.CartonId, carton.Id, StringComparison.Ordinal));
+                _output.WriteLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "[photo-accuracy] {0} {1}: mark read {2} expected {3}; damage read {4} expected {5}; legible {6}; class9 {7}",
+                    imageId, carton.Id,
+                    read?.MarkPresent.ToString() ?? "(missing)", carton.MarkPresent,
+                    read?.DamageVisible.ToString() ?? "(missing)", IsDamaged(carton),
+                    read?.MarkLegible.ToString() ?? "(missing)",
+                    read?.Class9Visible.ToString() ?? "(missing)"));
+                if (read is null)
+                {
+                    mismatches.Add($"{imageId} {carton.Id}: no read transcribed.");
+                }
+                else
+                {
+                    if (read.MarkPresent != carton.MarkPresent)
+                    {
+                        mismatches.Add($"{imageId} {carton.Id}: mark read {read.MarkPresent}, expected {carton.MarkPresent}.");
+                    }
+
+                    if (read.MarkLegible != carton.MarkPresent)
+                    {
+                        mismatches.Add($"{imageId} {carton.Id}: legible read {read.MarkLegible}, expected {carton.MarkPresent}.");
+                    }
+
+                    if (read.DamageVisible)
+                    {
+                        damageViews[carton.Id].Add(imageId);
+                    }
+
+                    if (!read.Class9Visible)
+                    {
+                        mismatches.Add($"{imageId} {carton.Id}: class9 read False, expected True.");
+                    }
+                }
+            }
+
+            if (!new HashSet<string>(readIds, StringComparer.Ordinal).SetEquals(expectedIds))
+            {
+                mismatches.Add($"{imageId}: carton set read [{string.Join(",", readIds)}], expected [{string.Join(",", expectedIds)}].");
+            }
+        }
+
+        foreach (var carton in cartons)
+        {
+            var seen = damageViews[carton.Id];
+            var expectedDamage = IsDamaged(carton);
+            _output.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "[photo-accuracy] {0}: damage visible in [{1}] expected {2}",
+                carton.Id, string.Join(",", seen), expectedDamage));
+            if ((seen.Count > 0) != expectedDamage)
+            {
+                mismatches.Add($"{carton.Id}: damage visible in [{string.Join(",", seen)}], expected damaged={expectedDamage}.");
+            }
+        }
+
+        var reshotReads = perImage.TryGetValue(reshotId, out var reshot) ? reshot : [];
+        var reshotLine = string.Join(";", reshotReads.Select(r =>
+            $"{r.CartonId} mark={r.MarkPresent} legible={r.MarkLegible} damage={r.DamageVisible}"));
+        _output.WriteLine($"[photo-accuracy] {reshotId} (reshot of {unmarked.Id}): [{reshotLine}] expected [{unmarked.Id} mark=True damage=False]");
+        var reshotRead = Assert.Single(reshotReads);
+        Assert.Equal(unmarked.Id, reshotRead.CartonId);
+        Assert.True(reshotRead.MarkPresent);
+        Assert.True(reshotRead.MarkLegible);
+        Assert.False(reshotRead.DamageVisible);
+
+        Assert.True(mismatches.Count == 0,
+            "Pallet views misread; the dock check runs on photo transcriptions only:\n"
+            + string.Join("\n", mismatches));
+
+        _output.WriteLine("[photo-accuracy] Pallet views read correctly; dock runs on transcribed photo reads.");
+        var dockReads = palletIds.SelectMany(id => perImage[id]).ToList();
+        return new LivePhotoReads(dockReads, reshotReads);
+    }
+
+    /// <summary>Renders the battery invoice at runtime with SkiaSharp (white
+    /// background, large black text; every value from live ERP state, never
+    /// hardcoded), transcribes it, and asserts field-for-field before intake.</summary>
+    private async Task<TranscribedInvoice> TranscribeLiveInvoiceAsync(
+        CaseRunner runner, InMemoryErpAdapter erp, string bat,
+        string number, string vendorId, string poNumber,
+        string poLineRef, decimal qty, decimal price)
+    {
+        var vendorName = (await erp.GetVendorsAsync()).Single(v =>
+            string.Equals(v.VendorId, vendorId, StringComparison.Ordinal)).Name;
+        var bank = (await erp.GetVendorBankAsync(vendorId))?.AccountRef;
+        Assert.False(string.IsNullOrWhiteSpace(bank));
+        var jpeg = RenderInvoiceJpeg(number, vendorId, vendorName, poNumber, poLineRef, qty, price, bank!);
+        var transcribed = await runner.TranscribeInvoicePhotosAsync(bat, [new InvoicePhoto("INV-LIVE", jpeg)]);
+        _output.WriteLine(string.Format(
+            CultureInfo.InvariantCulture,
+            "[photo-accuracy] invoice: number '{0}' vendor '{1}' po '{2}' lines {3} bank '{4}'",
+            transcribed.SupplierInvoiceNumber, transcribed.VendorIdOrName,
+            transcribed.PoNumber, transcribed.Lines.Count, transcribed.BankAccountRef));
+        Assert.Equal(number, transcribed.SupplierInvoiceNumber);
+        Assert.Equal(vendorId, transcribed.VendorIdOrName);
+        Assert.Equal(poNumber, transcribed.PoNumber);
+        var line = Assert.Single(transcribed.Lines);
+        Assert.Equal(poLineRef, line.PoLineRef);
+        Assert.True(qty == line.Quantity);
+        Assert.True(price == line.UnitPrice);
+        Assert.Equal(bank, transcribed.BankAccountRef);
+        return transcribed;
+    }
+
+    private static byte[] RenderInvoiceJpeg(
+        string number, string vendorId, string vendorName, string poNumber,
+        string poLineRef, decimal qty, decimal price, string bankRef)
+    {
+        const int W = 2000;
+        const int H = 1500;
+        using var bitmap = new SKBitmap(W, H);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(SKColors.White);
+        using var title = new SKPaint
+        {
+            Color = SKColors.Black, IsAntialias = true, Typeface = SKTypeface.Default,
+            TextSize = 72, FakeBoldText = true
+        };
+        using var text = new SKPaint
+        {
+            Color = SKColors.Black, IsAntialias = true, Typeface = SKTypeface.Default, TextSize = 60
+        };
+        float y = 150;
+        canvas.DrawText(vendorName, 80, y, title);
+        y += 130;
+        canvas.DrawText("SUPPLIER INVOICE", 80, y, title);
+        y += 130;
+        canvas.DrawText($"supplier_invoice_number: {number}", 80, y, text);
+        y += 100;
+        canvas.DrawText($"vendor_id_or_name: {vendorId}", 80, y, text);
+        y += 100;
+        canvas.DrawText($"po_number: {poNumber}", 80, y, text);
+        y += 110;
+        canvas.DrawText("lines:", 80, y, text);
+        y += 100;
+        canvas.DrawText($"po_line_ref: {poLineRef}", 80, y, text);
+        y += 100;
+        canvas.DrawText(
+            $"quantity: {qty.ToString(CultureInfo.InvariantCulture)} unit_price: {price.ToString(CultureInfo.InvariantCulture)}",
+            80, y, text);
+        y += 100;
+        canvas.DrawText($"bank_account_ref: {bankRef}", 80, y, text);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Jpeg, 95);
+        return data.ToArray();
     }
 
     private static async Task RunScrewAsync(

@@ -219,6 +219,32 @@ public sealed class CaseRunnerTests
     }
 
     [Fact]
+    public async Task DockReadsWithoutPhotoProvenanceAreRejected()
+    {
+        var h = Create();
+        var ctx = await SetupBatteryCaseAsync(h, [
+            new AsnCartonInput("CTN-T1", SeededErp.Battery, 80, "LOT-T1")]);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.OnDockReadsAsync(ctx.CaseId, [
+            Read("CTN-T1", "", mark: true, damage: false, ctx.Po.PoNumber, "LOT-T1", 80, SeededErp.Battery)]));
+        Assert.Contains("names no photo", ex.Message);
+        Assert.DoesNotContain(Load(h, ctx.CaseId).Events, e => e.Kind == CaseEventKind.DockEvaluated);
+    }
+
+    [Fact]
+    public async Task ReshotWithoutPhotoProvenanceIsRejected()
+    {
+        var h = Create();
+        var ctx = await SetupBatteryCaseAsync(h, [
+            new AsnCartonInput("CTN-T1", SeededErp.Battery, 80, "LOT-T1")]);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.OnReshotAsync(
+            new ReshotInput(ctx.CaseId, ["CTN-T1"], [
+                Read("CTN-T1", "  ", mark: true, damage: false, ctx.Po.PoNumber, "LOT-T1", 80, SeededErp.Battery)])));
+        Assert.Contains("names no photo", ex.Message);
+    }
+
+    [Fact]
     public async Task FullBatteryRunPartialPaysThenResolvesOnReshot()
     {
         var h = Create();
@@ -439,6 +465,30 @@ public sealed class CaseRunnerTests
         Assert.Equal(DecisionKind.ApReview, decision.Kind);
         Assert.Equal("clerk", decision.RequestedTo);
         Assert.Equal("Invoice", decision.DocumentType);
+    }
+
+    [Fact]
+    public async Task BlankInvoiceNumberWithValidVendorAndPoIsHeldWithAnApReview()
+    {
+        var h = Create();
+        var caseId = await OpenCaseAsync(h);
+        var small = await CreateReceivedSmallPoAsync(h.Erp, "V-B", SeededErp.Battery, 50, "LOT-BLANKNUM");
+        var line = small.Lines.Single();
+
+        var outcome = await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "   ", "V-B", small.PoNumber,
+            [new SupplierInvoiceLineInput(line.PoLineRef, 50, line.UnitPrice)]));
+        Assert.False(outcome.Persisted);
+        Assert.Equal(50 * line.UnitPrice, outcome.HeldValue);
+        Assert.Equal(0, outcome.AcceptedValue);
+        var file = Load(h, caseId);
+        var decision = file.Decisions.Single(d => d.DecisionId == outcome.DecisionId);
+        Assert.Equal(DecisionKind.ApReview, decision.Kind);
+        Assert.Equal("clerk", decision.RequestedTo);
+        Assert.Contains(file.Events, e =>
+            e.Kind == CaseEventKind.Note && e.Summary.Contains("AP-C3", StringComparison.Ordinal));
+        Assert.Null(await h.Erp.GetInvoiceAsync("V-B", "   "));
+        Assert.Null(await h.Erp.GetInvoiceAsync("V-B", string.Empty));
     }
 
     [Fact]

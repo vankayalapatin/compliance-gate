@@ -370,6 +370,108 @@ public sealed class VendorEmailTests
         Assert.Single(EmailStore.Load(dir, "case-9").Messages);
     }
 
+    private sealed class GhostVendorErp : IErpAdapter
+    {
+        private readonly PurchaseOrder _po;
+        private readonly IReadOnlyList<VendorDto> _vendors;
+
+        public GhostVendorErp(PurchaseOrder po, IReadOnlyList<VendorDto> vendors)
+        {
+            _po = po;
+            _vendors = vendors;
+        }
+
+        public Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default) =>
+            Task.FromResult(_vendors);
+
+        public Task<PurchaseOrder?> GetPurchaseOrderAsync(string poNumber, CancellationToken ct = default) =>
+            Task.FromResult<PurchaseOrder?>(string.Equals(poNumber, _po.PoNumber, StringComparison.Ordinal) ? _po : null);
+
+        public Task<SalesOrder?> GetSalesOrderAsync(string soNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<BomLine>> GetBomAsync(string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<decimal> GetStockAsync(string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<PurchaseOrder>> GetOpenPurchaseOrdersAsync(string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<VendorDocumentDto>> GetVendorDocumentsAsync(string vendorId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<string?> GetVendorCountryAsync(string vendorId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ItemDto?> GetItemAsync(string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PaymentTermsDto?> GetPaymentTermsAsync(string termsId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorBankDto?> GetVendorBankAsync(string vendorId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<UserDto?> GetUserAsync(string userId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<UserDto>> GetUsersAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<decimal> GetAutoApproveThresholdAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<DelegationDto>> GetDelegationsAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ShipmentReceipt?> GetReceiptAsync(string receiptNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorInvoice?> GetInvoiceAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<Payment?> GetPaymentAsync(string paymentNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorConfirmation?> GetVendorConfirmationAsync(string poNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<AsnDto?> GetAsnAsync(string asnNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<InventoryTransaction>> GetInventoryTransactionsAsync(string itemId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<Settlement>> GetSettlementsAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<HoldDto>> GetOpenHoldsAsync(string? documentNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<HoldRelease>> GetHoldHistoryAsync(string holdId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<ApprovalDto>> GetApprovalsAsync(string documentType, string documentNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PurchaseRequisition> CreatePrAsync(string requester, string source, string createdBy, IReadOnlyList<PurchaseRequisitionLine> lines, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PurchaseRequisition?> GetPrAsync(string prNumber, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task SubmitForApprovalAsync(string documentType, string documentNumber, string routedTo, string submittedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<AsnDto> CreateAsnAsync(string asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task BlockVendorAsync(string vendorId, string reason, string blockedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task UnblockVendorAsync(string vendorId, string unblockedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task AddPoNoteAsync(string poNumber, string note, string createdBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task ClosePoAsync(string poNumber, string closedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task QuarantineLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task ReleaseLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task ConsumeLotAsync(string lotRef, string soNumber, decimal quantity, string actedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<VendorBankDto> VerifyVendorBankAsync(string vendorId, string verifiedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+    }
+
+    [Fact]
+    public async Task MissingPoVendorInMasterIsAModeledGapError()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var dir = TempDir();
+        var caseId = "ghost-case-BAT-1";
+        var po = new PurchaseOrder(
+            "PO-GHOST", "PR-GHOST", "V-GHOST", "NET0",
+            PoApprovalStatus.Approved, PoDocStatus.Open, "USD",
+            RecordSource.P2pAgent, "planner", "ghost-po", []);
+        var erp = new GhostVendorErp(po, [new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0")]);
+        var models = new FakeModelClient();
+        var compliance = new RecordingComplianceEngine();
+        var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
+            compliance, new DockEvaluatorAdapter(), dir);
+        CaseStore.Save(dir, new CaseFile(
+            new Case(caseId, "SO-GHOST", SeededErp.Battery, "ghost", CaseStage.InvoiceMatched,
+                now, now, "PR-GHOST", "PO-GHOST", null, null, [], [], null, null),
+            [],
+            [new Decision($"{caseId}-d001", caseId, DecisionKind.ApReview, "AP review for /INV-GHOST",
+                DecisionStatus.Pending, "clerk", now, null, null, "Invoice", "/INV-GHOST",
+                50m, "USD", null, "AP-C3: vendor or PO missing; held for the AP clerk.",
+                ["invoice:/INV-GHOST"], null)]));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runner.SendVendorEmailAsync(caseId, "/INV-GHOST"));
+
+        Assert.Contains("V-GHOST", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("missing from the vendor master", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, models.CallCount);
+    }
+
     [Fact]
     public async Task WebhookEnumerationIgnoresMailFiles()
     {
