@@ -122,7 +122,12 @@ public enum DecisionKind
     /// effective datetime (see Gate.Contracts/MemoRules.cs). Approval pins
     /// proposal hash plus KB version plus approver plus timestamp; publish
     /// is a separate activation step.</summary>
-    PolicyApproval
+    PolicyApproval,
+    /// <summary>Policy owner answers one blocking open question on a
+    /// memo-to-rule proposal. Reason carries the question, Comment records
+    /// the chosen option on approve. The memo waits; nothing publishes
+    /// past a block.</summary>
+    PolicyQuestion
 }
 
 public enum DecisionStatus
