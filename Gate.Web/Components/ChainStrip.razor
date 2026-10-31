@@ -1,0 +1,22 @@
+@using Gate.Web.ViewModels
+<div class="gate-chain" aria-label="Order to payment chain">
+    @for (var i = 0; i < Steps.Count; i++)
+    {
+        var step = Steps[i];
+        <span class="gate-chain-step @(step.IsCurrent ? "current" : "")" title="@StepTitle(step)">@step.Label@(step.DocumentNumber is null ? "" : $": {step.DocumentNumber}")</span>
+        @if (i < Steps.Count - 1)
+        {
+            <span class="gate-chain-arrow" aria-hidden="true">&#8594;</span>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<ChainStepVm> Steps { get; set; } = [];
+
+    private static string StepTitle(ChainStepVm step) =>
+        $"{step.Label}: {step.Status}" +
+        (step.DocumentNumber is null ? "" : $" ({step.DocumentNumber})") +
+        (step.IsCurrent ? " — current stage" : "");
+}
