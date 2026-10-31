@@ -16,6 +16,14 @@ public sealed record Verdict(
     string Reason,
     string Source);
 
+/// <summary>Shared verdict rule ids both sides compare by constant, never
+/// by mirrored literals. Compliance emits them; the agent filters on them.</summary>
+public static class ComplianceVerdictIds
+{
+    /// <summary>ERP vendor-master block (blocked flag plus reason).</summary>
+    public const string VendorBlock = "VENDOR-BLOCK";
+}
+
 public interface IComplianceEngine
 {
     /// <summary>Evaluates a vendor for a proposed award. The engine computes
