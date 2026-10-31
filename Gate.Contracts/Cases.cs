@@ -108,7 +108,21 @@ public enum DecisionKind
     BankVerification,
     /// <summary>AP clerk owns a held invoice exception: missing vendor or PO,
     /// price hold, or other AP catch. Resolve or reject.</summary>
-    ApReview
+    ApReview,
+    /// <summary>Human confirms a proposed vendor-master match for a
+    /// transcribed vendor id or name (invoice photo, vendor reply). The
+    /// agent proposes exactly one candidate; the master never auto-matches.
+    /// DocumentType "Vendor" plus DocumentNumber carry the proposed vendor
+    /// id, Reason carries the raw transcribed text, EvidenceRefs the photo
+    /// or mail refs. Approve confirms, reject routes to the missing-fields
+    /// path.</summary>
+    VendorIdentity,
+    /// <summary>Policy owner approves a memo-to-rule proposal: memo excerpt,
+    /// cited interpretation, conflicts, what-if flips, applicability mode,
+    /// effective datetime (see Gate.Contracts/MemoRules.cs). Approval pins
+    /// proposal hash plus KB version plus approver plus timestamp; publish
+    /// is a separate activation step.</summary>
+    PolicyApproval
 }
 
 public enum DecisionStatus
