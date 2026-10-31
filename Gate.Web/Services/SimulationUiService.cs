@@ -1,12 +1,13 @@
-// UI-side driver for the simulation endpoints. The Simulate surface offers
-// option lists built from runtime sources only (scenario file, run
-// manifest, case cache, dock image directory, ERP adapter) and posts the
-// human's external inputs (order webhooks, camera photos, supplier
-// invoices, vendor replies) to the existing endpoints in
-// SimulationEndpoints.cs. This service never sequences internal logic: the
-// endpoints run, then advance, and this layer only shapes the outcome for
-// display. Failures and refusals surface with the path, status, and body
-// excerpt; nothing is silently omitted.
+// UI-side driver for the simulation endpoints. The outside-world surface
+// (customer shop, supplier inbox, dock camera) offers option lists built
+// from runtime sources only (scenario file, run manifest, case cache, dock
+// image directory, ERP adapter) and posts the human's external inputs
+// (shop orders, shipment notices, camera photos, supplier invoices, vendor
+// replies) to the existing endpoints in SimulationEndpoints.cs. This
+// service never sequences internal logic: the endpoints run, then advance,
+// and this layer only shapes the outcome for display. Failures and
+// refusals surface with the path, status, and body excerpt (the UI
+// sanitizes paths to friendly flow names); nothing is silently omitted.
 using System.Text.Json;
 using Gate.Agent;
 using Gate.Contracts;
@@ -18,7 +19,10 @@ namespace Gate.Web.Services;
 public sealed class SimulationUiService
 {
     // Paths pinned to SimulationEndpoints.cs; SimulationUiTests pins them too.
+    // UI text never shows these (OutsideWorldLabels.Sanitize); the service
+    // keeps them for requests plus test-pinned failure context.
     public const string OrderPath = "/simulation/shopify/order";
+    public const string AsnPath = "/simulation/supplier/asn";
     public const string DockPhotosPath = "/simulation/dock/photos";
     public const string ReshotPath = "/simulation/dock/reshot";
     public const string InvoicePath = "/simulation/supplier/invoice";
@@ -98,7 +102,8 @@ public sealed class SimulationUiService
         return new SimulateOptions(
             scenario.Name, scenario.Currency, soNumbers, poNumbers, users, vendors,
             cases, scenario.CartonIds, ListDockImages(notes), scenario.Items,
-            scenario.Candidates, notes);
+            scenario.Candidates, notes, scenario.CartonDetails,
+            scenario.SalesOrderItem, scenario.SalesOrderQuantity);
     }
 
     public async Task<SimulationOutcome> SendOrderAsync(
@@ -154,6 +159,71 @@ public sealed class SimulationUiService
             Lines: lines,
             Currency: BlankToNull(submission.Currency));
         return await PostAsync(OrderPath, input, ParseOrder, ct).ConfigureAwait(false);
+    }
+
+    public async Task<SimulationOutcome> SendAsnAsync(
+        AsnSubmission? submission, CancellationToken ct = default)
+    {
+        if (submission is null)
+        {
+            return Refusal("No shipment notice was provided.");
+        }
+
+        if (string.IsNullOrWhiteSpace(submission.CaseId))
+        {
+            return Refusal("Case is required for a shipment notice.");
+        }
+
+        if (string.IsNullOrWhiteSpace(submission.AsnNumber))
+        {
+            return Refusal("ASN number is required; the supplier mints it when shipping.");
+        }
+
+        if (string.IsNullOrWhiteSpace(submission.PackingSlipNumber))
+        {
+            return Refusal("Packing-slip number is required; the receipt posts against it.");
+        }
+
+        if (submission.Cartons is null || submission.Cartons.Count == 0)
+        {
+            return Refusal("Add at least one carton to the shipment notice.");
+        }
+
+        var cartons = new List<AsnCartonInput>();
+        foreach (var carton in submission.Cartons)
+        {
+            if (string.IsNullOrWhiteSpace(carton.CartonId))
+            {
+                return Refusal("Every ASN carton needs a carton id.");
+            }
+
+            if (string.IsNullOrWhiteSpace(carton.ItemId))
+            {
+                return Refusal($"ASN carton {carton.CartonId} needs an item.");
+            }
+
+            if (carton.UnitsPerCarton <= 0)
+            {
+                return Refusal($"ASN carton {carton.CartonId} needs units per carton above zero.");
+            }
+
+            if (string.IsNullOrWhiteSpace(carton.LotRef))
+            {
+                return Refusal($"ASN carton {carton.CartonId} needs the supplier lot ref.");
+            }
+
+            cartons.Add(new AsnCartonInput(
+                carton.CartonId.Trim(), carton.ItemId.Trim(),
+                carton.UnitsPerCarton, carton.LotRef.Trim()));
+        }
+
+        var input = new SupplierAsnInput(
+            submission.CaseId.Trim(),
+            submission.AsnNumber.Trim(),
+            submission.PackingSlipNumber.Trim(),
+            cartons,
+            FreshKey());
+        return await PostAsync(AsnPath, input, ParseAsn, ct).ConfigureAwait(false);
     }
 
     public async Task<SimulationOutcome> SendDockPhotosAsync(
@@ -351,6 +421,86 @@ public sealed class SimulationUiService
         }
     }
 
+    /// <summary>Supplier-inbox prefill for one case: our PO from the ERP,
+    /// the agent mail thread, ASN plus invoice defaults derived from the
+    /// runtime PO plus scenario cartons, and the reply suggestion. Null when
+    /// the case has no case file; every source failure lands in Notes.</summary>
+    public async Task<SupplierInboxVm?> GetSupplierInboxAsync(
+        string caseId, CancellationToken ct = default)
+    {
+        var notes = new List<string>();
+        var file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
+        if (file is null)
+        {
+            return null;
+        }
+
+        var kase = file.Case;
+        InboxPoVm? po = null;
+        if (kase.PoNumber is null)
+        {
+            notes.Add("No PO on this case yet; the supplier waits for our order.");
+        }
+        else
+        {
+            try
+            {
+                var order = await _erp.GetPurchaseOrderAsync(kase.PoNumber, ct).ConfigureAwait(false);
+                po = order is null
+                    ? null
+                    : new InboxPoVm(
+                        order.PoNumber, order.VendorId, order.PaymentTermsId,
+                        order.ApprovalStatus.ToString(), order.DocStatus.ToString(),
+                        order.Currency,
+                        order.Lines.Select(l => new InboxPoLineVm(
+                            l.PoLineRef, l.ItemId, l.QtyOrdered, l.UnitPrice, l.LineAmount)).ToList(),
+                        order.Lines.Sum(l => l.LineAmount));
+                if (po is null)
+                {
+                    notes.Add($"PO {kase.PoNumber} is on the case but not found in the ERP.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Inbox PO lookup failed for case {CaseId}.", caseId);
+                notes.Add($"PO {kase.PoNumber} read failed: {ex.Message}.");
+            }
+        }
+
+        var scenario = ReadScenario(notes);
+        var mail = await ReadMailAsync(caseId, ct).ConfigureAwait(false);
+        var reply = await SuggestReplyAsync(caseId, ct).ConfigureAwait(false);
+
+        AsnSubmission? asn = null;
+        if (scenario.CartonDetails.Count > 0)
+        {
+            asn = new AsnSubmission(
+                kase.CaseId,
+                kase.PoNumber is null ? string.Empty : $"ASN-{kase.PoNumber}",
+                kase.PoNumber is null ? string.Empty : $"PACK-{kase.PoNumber}",
+                scenario.CartonDetails.Select(c => new AsnCartonForm(
+                    c.CartonId,
+                    string.IsNullOrWhiteSpace(c.ItemId) ? kase.ItemId : c.ItemId,
+                    c.UnitsPerCarton,
+                    kase.PoNumber is null ? $"LOT-{c.CartonId}" : $"{kase.PoNumber}-{c.CartonId}"))
+                    .ToList());
+        }
+        else
+        {
+            notes.Add("No scenario cartons; the shipment notice starts empty.");
+        }
+
+        InvoicePrefill? invoice = po is null
+            ? null
+            : new InvoicePrefill(
+                $"INV-{po.PoNumber}",
+                po.VendorId,
+                po.PoNumber,
+                po.Lines.Select(l => new InvoiceLineForm(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList());
+
+        return new SupplierInboxVm(kase.CaseId, po, mail, asn, invoice, reply, notes);
+    }
+
     public async Task<IReadOnlyList<PoLineOption>> GetPoLinesAsync(
         string poNumber, CancellationToken ct = default)
     {
@@ -528,6 +678,21 @@ public sealed class SimulationUiService
             true, $"Order accepted: {caseIds.Count} case(s).", details, caseIds);
     }
 
+    private static SimulationOutcome ParseAsn(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var asn = Text(root, "asnNumber") ?? "unknown ASN";
+        var receipt = Text(root, "receiptNumber");
+        var details = new List<string>();
+        details.Add(receipt is null
+            ? "No receipt posted with the notice."
+            : $"Receipt {receipt} posted with the notice.");
+        details.AddRange(AdvanceDetails(root));
+        return new SimulationOutcome(
+            true, $"Shipment notice {asn} recorded.", details, []);
+    }
+
     private static SimulationOutcome ParseDock(string body, string label)
     {
         using var doc = JsonDocument.Parse(body);
@@ -643,13 +808,17 @@ public sealed class SimulationUiService
         string Currency,
         IReadOnlyList<string> CartonIds,
         IReadOnlyList<ItemOption> Items,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> Candidates);
+        IReadOnlyDictionary<string, IReadOnlyList<string>> Candidates,
+        IReadOnlyList<CartonOption> CartonDetails,
+        string SalesOrderItem,
+        decimal SalesOrderQuantity);
 
     private ScenarioBits ReadScenario(List<string> notes)
     {
         var empty = new ScenarioBits(
             string.Empty, string.Empty, [], [],
-            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal));
+            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal),
+            [], string.Empty, 0m);
         try
         {
             var path = ScenarioLoader.ResolvePath(ScenarioEndpoints.ScenarioPath(_config));
@@ -668,6 +837,7 @@ public sealed class SimulationUiService
                 ? c.GetString() ?? string.Empty
                 : string.Empty;
             var cartons = new List<string>();
+            var details = new List<CartonOption>();
             if (root.TryGetProperty("cartons", out var cartonJson) && cartonJson.ValueKind == JsonValueKind.Array)
             {
                 foreach (var carton in cartonJson.EnumerateArray())
@@ -678,8 +848,37 @@ public sealed class SimulationUiService
                         if (!string.IsNullOrWhiteSpace(value))
                         {
                             cartons.Add(value);
+                            var part = carton.TryGetProperty("part", out var partProp)
+                                && partProp.ValueKind == JsonValueKind.String
+                                ? partProp.GetString() ?? string.Empty
+                                : string.Empty;
+                            var units = carton.TryGetProperty("units", out var unitsProp)
+                                && unitsProp.ValueKind == JsonValueKind.Number
+                                && unitsProp.TryGetInt32(out var parsed)
+                                ? parsed
+                                : 0;
+                            details.Add(new CartonOption(value, part, units));
                         }
                     }
+                }
+            }
+
+            var salesItem = string.Empty;
+            var salesQty = 0m;
+            if (root.TryGetProperty("salesOrder", out var salesJson)
+                && salesJson.ValueKind == JsonValueKind.Object)
+            {
+                if (salesJson.TryGetProperty("item", out var itemProp)
+                    && itemProp.ValueKind == JsonValueKind.String)
+                {
+                    salesItem = itemProp.GetString() ?? string.Empty;
+                }
+
+                if (salesJson.TryGetProperty("quantity", out var qtyProp)
+                    && qtyProp.ValueKind == JsonValueKind.Number
+                    && qtyProp.TryGetDecimal(out var qty))
+                {
+                    salesQty = qty;
                 }
             }
 
@@ -738,7 +937,8 @@ public sealed class SimulationUiService
                 candidates.ToDictionary(
                     kv => kv.Key,
                     kv => (IReadOnlyList<string>)kv.Value.Order(StringComparer.Ordinal).ToList(),
-                    StringComparer.Ordinal));
+                    StringComparer.Ordinal),
+                details, salesItem, salesQty);
         }
         catch (Exception ex)
         {
