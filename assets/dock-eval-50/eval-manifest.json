@@ -1,0 +1,256 @@
+{
+  "eval_id": "dock-eval-50",
+  "prompt_version": "carton-read-v1",
+  "images": [
+    {
+      "image": "EVAL-01.jpg",
+      "sha256": "A53AB1E16240FBB438BB0B20AD4B654CD0115FB5D982AB341355544940397E53",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-02.jpg",
+      "sha256": "3407D58EC879FED7AFF1D1801E77930424C2886E37DF137463B29CB993A5D47E",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-03.jpg",
+      "sha256": "955625B8D28B48FC9A7F2FA0EBE9F54A98BC4EEB2FB01962C2526A4DFD32F499",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-04.jpg",
+      "sha256": "5C596E7CD2DE2701ACB81528A1C49AE9DBC1D773533DD937DB81D84D16862B0E",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-05.jpg",
+      "sha256": "1902D0093C9DFE212A973C8DFB42FE490F907956B8C8904B0F413A01CCF9354D",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-06.jpg",
+      "sha256": "D6E2F1887D4C086DD85B8FE1BE8E91F9838419F39A79C406655CAD7322E08A52",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-07.jpg",
+      "sha256": "42FD0F3DFDC061157D7A2102915CD51E68FDC0121199FEF045579D3610E2AC05",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-08.jpg",
+      "sha256": "24B7301743806C25F50CBAE826C1FE69C88F4059B31B6041A1C2A36598CABC50",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-09.jpg",
+      "sha256": "884B127326647A7374D6806E2F6D987F6FC0C40C2DC68E4333713FEE3CA4B7AE",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-10.jpg",
+      "sha256": "19C8B9427A867AC4403FF68E18C7CA7A5AC538D34548A060FB54E9002599E65E",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-11.jpg",
+      "sha256": "4BA904E91BCEBD36E9AFC6FBBA2B46957989EB3136B96A08032C0DCF88F1B076",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-12.jpg",
+      "sha256": "1BF46093032F6296F461E84B0BBD856039587ACEDBB783D613AF558F9C7A7861",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-13.jpg",
+      "sha256": "A24CC91AD4FF580F0B87B4BD6A70C3D51EDF35AF0216908D54AA144B996F62CA",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-14.jpg",
+      "sha256": "6CFA2768FB4DE893E2227CEB8EF4F26D72D33ACC9C823CEDC3B0F5C6A6AFB629",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-15.jpg",
+      "sha256": "73E251C788FA46E6E511E0DB3380543BA4EFBD8410A6565AD5A13D6A9033823E",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-16.jpg",
+      "sha256": "3A6CDADF8F6648FB12E33C91933C5311A74268EAAA5E4ECBF2508FA9C7BEC26B",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-17.jpg",
+      "sha256": "F0002F746CCB8F67703F77A5CDF48929170DA571571F5D355DB0E0DF1FD47074",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-18.jpg",
+      "sha256": "F3333A18199E372B73742C3820B287011898C0843D15BCD540A14024D7E90B94",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-19.jpg",
+      "sha256": "BDC07B81B0D8CD2E98361FAFB4FB87A9F6C0B72258716D22922EF32A97D0CA85",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-20.jpg",
+      "sha256": "B1E9A3B6C99D660E5F9874C01C1C65F6F2F62449D8F94C97124EF88B96A5D1E7",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-21.jpg",
+      "sha256": "0C177288C5CFCCBF1CF497181FB4A358E1D1ADF9C480FDECC361DFB28889B020",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-22.jpg",
+      "sha256": "DC00F539A6282511EDDFFF569025960F78B0F66030CC5FBDC15382C534CA0E24",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-23.jpg",
+      "sha256": "B7AF5C3961538442092432C6B51E0A1D904AECE41262B0849B2E0FE0614F3B9B",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-24.jpg",
+      "sha256": "A06AE67353FE6EB8918343CACBF6AD0CA11E0A5C5D68476BB3ABBB17D78F27FA",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-25.jpg",
+      "sha256": "BABE8AC62986DD65572D599A3646834E710818DF2AB03C90956E335D9E324E93",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-26.jpg",
+      "sha256": "7C16B701CBE97ED7E50A36033F79AD41F1D026DF186F8FB3645492A5EA216412",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-27.jpg",
+      "sha256": "9E01044D2392AB30AE2C59BF30E086EE6F2DC3A2E4E2CB5473EE509F953F60B0",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-28.jpg",
+      "sha256": "D0D25F0CD2F6B05EAFCA6A2E25235A61E2022919E348AD91424B31756C9662EA",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-29.jpg",
+      "sha256": "387ED9CFD2C63596A50DC44DECFF80587FEA1FC6007133A33FB72AD3E4607B37",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-30.jpg",
+      "sha256": "F698AC009AB1D9D271F5BC863D5B742DEC681739197BAA04E652E78F70332F6E",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-31.jpg",
+      "sha256": "658FF7DDDB317D116B8BD4560E6D0EA2FB12D92FD66C0E8C06E90421743C82B4",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-32.jpg",
+      "sha256": "9FA01F7A89DB435E5E4E0A418209A00603F556B739E302C58466EB0D5E19ADF7",
+      "base": "bases/scene-clean-02.jpg"
+    },
+    {
+      "image": "EVAL-33.jpg",
+      "sha256": "9CBA2797387E95EDCC373B3E40C5D4B9EBE289061228446EB69411E07F4CA434",
+      "base": "bases/scene-clean-03.jpg"
+    },
+    {
+      "image": "EVAL-34.jpg",
+      "sha256": "C5C1792C7F070BAB1A56596B66BAFABC65669ED5457ED605AE74F1DD753E470E",
+      "base": "bases/scene-clean-04.jpg"
+    },
+    {
+      "image": "EVAL-35.jpg",
+      "sha256": "A62ED020B045471205D53F4C719546509052243DD9991ED7AFAD75F2A5969687",
+      "base": "bases/scene-clean-05.jpg"
+    },
+    {
+      "image": "EVAL-36.jpg",
+      "sha256": "2719CF4FDFC4AD805CAC15DC329C5A1F2A1B419B33B6B1F335B62378AE461F7D",
+      "base": "bases/scene-clean-01.jpg"
+    },
+    {
+      "image": "EVAL-37.jpg",
+      "sha256": "DB58F1A58EB1F26C652BF6E981B22905B96F6402051A969CD48B39D586DF3551",
+      "base": "bases/scene-crush-01.jpg"
+    },
+    {
+      "image": "EVAL-38.jpg",
+      "sha256": "EF2FDC9F4ABAF88EAC62F767C664BA3912930CD446F383BAE863A73DFCC485E8",
+      "base": "bases/scene-crush-02.jpg"
+    },
+    {
+      "image": "EVAL-39.jpg",
+      "sha256": "EC663ED2AFF3E2D7C4916989202C01E58FED555BDFD18A8FBC4C58C48A7D9C2B",
+      "base": "bases/scene-crush-03.jpg"
+    },
+    {
+      "image": "EVAL-40.jpg",
+      "sha256": "0D6950574187AF2A587F0AD2BFC8502D2D1E03C4F36A2421D8837A34C89C9D8F",
+      "base": "bases/scene-crush-01.jpg"
+    },
+    {
+      "image": "EVAL-41.jpg",
+      "sha256": "2E53FD19A10B9336471426D9B28F4581376C6645D42F91C8BB2312322E0A8C96",
+      "base": "bases/scene-crush-02.jpg"
+    },
+    {
+      "image": "EVAL-42.jpg",
+      "sha256": "1C0691D1E10D69215C1D2F0396982BD4A11F0D734A3E16AB3B31FE1A95281131",
+      "base": "bases/scene-crush-03.jpg"
+    },
+    {
+      "image": "EVAL-43.jpg",
+      "sha256": "CBB414D49FBE3DDCADBAB952CB97120F7DC139DB04BDEAD062DDF343537668B9",
+      "base": "bases/scene-crush-01.jpg"
+    },
+    {
+      "image": "EVAL-44.jpg",
+      "sha256": "5B31DA39E70DC4BF4E31C1F9E2914014C458F459C4C26BAD0C640F4FD982DFF7",
+      "base": "bases/scene-crush-02.jpg"
+    },
+    {
+      "image": "EVAL-45.jpg",
+      "sha256": "FD8547B3E2CF3E30CA948DE1A8C24BEE9856CB79D5A161D20107048C3887E4F1",
+      "base": "bases/scene-hide-01.jpg"
+    },
+    {
+      "image": "EVAL-46.jpg",
+      "sha256": "0E6BBA71B81C4F3AFC1DA3E9B12A9D64F903C04D1D1567271C7E7BE29B16C262",
+      "base": "bases/scene-hide-02.jpg"
+    },
+    {
+      "image": "EVAL-47.jpg",
+      "sha256": "5130140686E39834B3A89FA2DE45EB80D0AD2936849BB805639F8FBCC3A9B710",
+      "base": "bases/scene-hide-01.jpg"
+    },
+    {
+      "image": "EVAL-48.jpg",
+      "sha256": "00FB9AC4E1ED187EB5F46C2A993D00ADC498A8854A19DC83C75A0998D2C48BCC",
+      "base": "bases/scene-hide-02.jpg"
+    },
+    {
+      "image": "EVAL-49.jpg",
+      "sha256": "3FC161ED29F6E00362D7325BF8B80B0E3FBBBAEC819277F677B4306CDEEB29E3",
+      "base": "bases/scene-hide-01.jpg"
+    },
+    {
+      "image": "EVAL-50.jpg",
+      "sha256": "963B34F386E9AE38BC0924FAF594FA9F74B4DCA0A31FBD8C402C61AF45443CAF",
+      "base": "bases/scene-hide-02.jpg"
+    }
+  ]
+}

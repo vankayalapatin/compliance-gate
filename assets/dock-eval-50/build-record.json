@@ -1,0 +1,28 @@
+{
+  "eval_id": "dock-eval-50",
+  "generatedAtUtc": "2026-10-31T17:05:30.970622+00:00",
+  "labeler": "code-compositor-v1",
+  "scene_bases": 10,
+  "finals": 50,
+  "by_problem": {
+    "clean": 10,
+    "missing_mark": 7,
+    "wrong_po": 7,
+    "wrong_part": 6,
+    "smudged_lot": 6,
+    "crushed": 8,
+    "hidden": 6
+  },
+  "by_base": {
+    "bases/scene-clean-01.jpg": 8,
+    "bases/scene-clean-02.jpg": 7,
+    "bases/scene-clean-03.jpg": 7,
+    "bases/scene-clean-04.jpg": 7,
+    "bases/scene-clean-05.jpg": 7,
+    "bases/scene-crush-01.jpg": 3,
+    "bases/scene-crush-02.jpg": 3,
+    "bases/scene-crush-03.jpg": 2,
+    "bases/scene-hide-01.jpg": 3,
+    "bases/scene-hide-02.jpg": 3
+  }
+}

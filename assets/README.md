@@ -56,3 +56,26 @@ then the offline accuracy test replays cache only.
 `images/generations` call with a minimal fictional probe prompt. Model comes
 from `MetaApi:ImageModel`, falling back to `MetaApi:Model`; key and base URL
 from user secrets or env, never logged.
+
+## Findings
+
+Muse Image, factual counts from `dock/build-record.json`: close-up
+single-label AI edits verified 1/1 (IMG-04 reshot); pallet multi-label AI
+edits failed verification 3/3 after one attempt each (IMG-01/02/03) and
+fell back to compositing; text-free base scenes succeeded first-try 2/2
+(demo angles) plus 10/10 (`dock-eval-50/bases/`, no retries). Close-ups
+are fine; multi-label pallet text is not — labels stay code-drawn, the
+image model stays on scenes (docs/DECISIONS.md 47-48).
+
+## Dock eval 50
+
+`dock-eval-50/`: 50 finals for Spark now, Glimmer later. Oracle
+(`answer-key.json`) was decided before any image was built and no reader
+loads it; label problems are code-drawn and certain; 10 text-free
+Muse-image bases carry scenes only. Finals plus `read-prompt.txt` and
+`read-schema.json` are the second-model handoff; each model caches under
+its own `read-cache-<model>/`. Scoring is model-agnostic
+(`Gate.Eval/Vision/DockEval50Scoring.cs`) and reports catches by problem
+type to `accuracy-by-type.csv` plus `spark-report.md`. Crush/hide truth
+is photographic: see `manual-check.md` (14 images) and tick before
+trusting damage/hidden scores.
