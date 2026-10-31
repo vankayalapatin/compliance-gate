@@ -90,7 +90,7 @@ public sealed record InventoryVm(
     decimal Stock,
     IReadOnlyList<InventoryTransaction> Transactions);
 
-/// <summary>Step-by-step reset/replay report rendered on Home.</summary>
+/// <summary>Step-by-step reset/replay report rendered on Decisions.</summary>
 public sealed record ReplayReport(
     DateTimeOffset RanAtUtc,
     bool IsReplay,
