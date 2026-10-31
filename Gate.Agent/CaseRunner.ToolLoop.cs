@@ -270,6 +270,20 @@ public partial class CaseRunner
                     $"Vendor {vendorId} did not pass screening; passing: {string.Join(", ", passing)}.", false);
             }
 
+            if (string.IsNullOrWhiteSpace(reasoning))
+            {
+                return (ToolCallVerdict.Blocked,
+                    "award_supplier needs a one-line reason naming each losing vendor and its blocking rule id.", false);
+            }
+
+            var missing = MissingLoserTokens(reasoning, screenings, vendorId);
+            if (missing.Count > 0)
+            {
+                return (ToolCallVerdict.Blocked,
+                    $"Award reason must name each losing vendor and its blocking rule id; " +
+                    $"missing: {string.Join(", ", missing)}. Read the screening events and retry.", false);
+            }
+
             try
             {
                 await AwardSupplierStepAsync(file, vendorId, reasoning, ct).ConfigureAwait(false);
