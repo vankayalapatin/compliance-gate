@@ -1,4 +1,5 @@
 @page "/records"
+@rendermode InteractiveServer
 @using Gate.Contracts
 @using Gate.Web.Services
 @using Gate.Web.ViewModels
@@ -6,7 +7,12 @@
 
 <PageTitle>Records</PageTitle>
 
-<h1>Records</h1>
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Records</p>
+        <p class="gate-page-sub">Plain ERP ledgers. Pick a document row to open its lines.</p>
+    </div>
+</div>
 
 @if (_loadError is not null)
 {
@@ -14,273 +20,484 @@
 }
 else if (_records is null)
 {
-    <p>Loading records…</p>
+    <p class="gate-meta">Loading records…</p>
 }
 else
 {
     @foreach (var note in _records.Notes)
     {
-        <div class="alert alert-warning" role="alert">@note</div>
+        <div class="gate-notice" role="alert">@note</div>
     }
 
-    <h2>Sales orders</h2>
-    @if (_records.SalesOrders.Count == 0)
+    <div class="gate-tabs" role="tablist" aria-label="Document types">
+        <button role="tab" class="gate-tab @(_tab == "so" ? "active" : "")" @onclick='() => _tab = "so"'>Sales orders (@_records.SalesOrders.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "pr" ? "active" : "")" @onclick='() => _tab = "pr"'>Requisitions (@_records.PurchaseRequisitions.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "po" ? "active" : "")" @onclick='() => _tab = "po"'>Purchase orders (@_records.PurchaseOrders.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "asn" ? "active" : "")" @onclick='() => _tab = "asn"'>ASNs (@_records.Asns.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "receipt" ? "active" : "")" @onclick='() => _tab = "receipt"'>Receipts (@_records.Receipts.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "invoice" ? "active" : "")" @onclick='() => _tab = "invoice"'>Invoices (@_records.Invoices.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "payment" ? "active" : "")" @onclick='() => _tab = "payment"'>Payments (@_records.Payments.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "holds" ? "active" : "")" @onclick='() => _tab = "holds"'>Holds (@_records.OpenHolds.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "inventory" ? "active" : "")" @onclick='() => _tab = "inventory"'>Inventory (@_records.Inventory.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "vendors" ? "active" : "")" @onclick='() => _tab = "vendors"'>Vendors (@_records.Vendors.Count)</button>
+        <button role="tab" class="gate-tab @(_tab == "approvals" ? "active" : "")" @onclick='() => _tab = "approvals"'>Approvals (@_records.Approvals.Count)</button>
+    </div>
+
+    @if (_tab == "so")
     {
-        <p>No sales orders.</p>
-    }
-    @foreach (var so in _records.SalesOrders)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@so.SoNumber</strong> · @so.Status · @so.Currency
-                <ul class="mb-0">
-                    @foreach (var line in so.Lines)
+        @if (_records.SalesOrders.Count == 0)
+        {
+            <p class="gate-meta">No sales orders.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>SO</th><th>Status</th><th>Currency</th><th class="gate-num">Lines</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var so in _records.SalesOrders)
                     {
-                        <li>@line.ItemId: @line.Quantity</li>
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"SO:{so.SoNumber}"))">@so.SoNumber</button></td>
+                            <td>@so.Status</td>
+                            <td>@so.Currency</td>
+                            <td class="gate-num">@so.Lines.Count</td>
+                            <td><OriginChips Number="@so.SoNumber" Source="@null" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"SO:{so.SoNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="5">
+                                    <ul>
+                                        @foreach (var line in so.Lines)
+                                        {
+                                            <li>@line.ItemId: <span class="gate-num">@line.Quantity</span></li>
+                                        }
+                                    </ul>
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Purchase requisitions</h2>
-    @if (_records.PurchaseRequisitions.Count == 0)
+    @if (_tab == "pr")
     {
-        <p>No purchase requisitions.</p>
-    }
-    @foreach (var pr in _records.PurchaseRequisitions)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@pr.PrNumber</strong> · @pr.Status · @pr.EstimatedAmount @pr.Currency
-                · requester @pr.Requester <AgentBanner Source="@pr.Source" />
-                <ul class="mb-0">
-                    @foreach (var line in pr.Lines)
+        @if (_records.PurchaseRequisitions.Count == 0)
+        {
+            <p class="gate-meta">No purchase requisitions.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>PR</th><th>Status</th><th>Requester</th><th class="gate-num">Est. amount</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var pr in _records.PurchaseRequisitions)
                     {
-                        <li>@line.ItemId: @line.Quantity @line.Unit</li>
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"PR:{pr.PrNumber}"))">@pr.PrNumber</button></td>
+                            <td>@pr.Status</td>
+                            <td>@pr.Requester</td>
+                            <td class="gate-num">@pr.EstimatedAmount @pr.Currency</td>
+                            <td><OriginChips Number="@pr.PrNumber" Source="@pr.Source" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"PR:{pr.PrNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="5">
+                                    <ul>
+                                        @foreach (var line in pr.Lines)
+                                        {
+                                            <li>@line.ItemId: <span class="gate-num">@line.Quantity</span> @line.Unit</li>
+                                        }
+                                    </ul>
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Purchase orders</h2>
-    @if (_records.PurchaseOrders.Count == 0)
+    @if (_tab == "po")
     {
-        <p>No purchase orders.</p>
-    }
-    @foreach (var po in _records.PurchaseOrders)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@po.PoNumber</strong> · approval @po.ApprovalStatus · doc @po.DocStatus
-                · vendor @po.VendorId · terms @po.PaymentTermsId · @po.Currency <AgentBanner Source="@po.Source" />
-                <ul class="mb-0">
-                    @foreach (var line in po.Lines)
+        @if (_records.PurchaseOrders.Count == 0)
+        {
+            <p class="gate-meta">No purchase orders.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>PO</th><th>Approval</th><th>Doc status</th><th>Vendor</th><th class="gate-num">Total</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var po in _records.PurchaseOrders)
                     {
-                        <li>@line.PoLineRef @line.ItemId: ordered @line.QtyOrdered, received @line.QtyReceived, invoiced @line.QtyInvoiced, quarantined @line.QtyQuarantined, rejected @line.QtyRejected @@ @line.UnitPrice (@line.LineAmount @po.Currency)</li>
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"PO:{po.PoNumber}"))">@po.PoNumber</button></td>
+                            <td>@po.ApprovalStatus</td>
+                            <td>@po.DocStatus</td>
+                            <td>@po.VendorId · @po.PaymentTermsId</td>
+                            <td class="gate-num">@po.Lines.Sum(l => l.LineAmount) @po.Currency</td>
+                            <td><OriginChips Number="@po.PoNumber" Source="@po.Source" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"PO:{po.PoNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="6">
+                                    <ul>
+                                        @foreach (var line in po.Lines)
+                                        {
+                                            <li>
+                                                @line.PoLineRef @line.ItemId:
+                                                ordered <span class="gate-num">@line.QtyOrdered</span>,
+                                                received <span class="gate-num">@line.QtyReceived</span>,
+                                                invoiced <span class="gate-num">@line.QtyInvoiced</span>,
+                                                quarantined <span class="gate-num">@line.QtyQuarantined</span>,
+                                                rejected <span class="gate-num">@line.QtyRejected</span>
+                                                @@ <span class="gate-num">@line.UnitPrice</span>
+                                                (<span class="gate-num">@line.LineAmount</span> @po.Currency)
+                                            </li>
+                                        }
+                                    </ul>
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>ASNs</h2>
-    @if (_records.Asns.Count == 0)
+    @if (_tab == "asn")
     {
-        <p>No ASNs.</p>
-    }
-    @foreach (var asn in _records.Asns)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@asn.AsnNumber</strong> · PO @asn.PoNumber <AgentBanner Source="@asn.Source" />
-                <ul class="mb-0">
-                    @foreach (var carton in asn.Cartons)
+        @if (_records.Asns.Count == 0)
+        {
+            <p class="gate-meta">No ASNs.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>ASN</th><th>PO</th><th class="gate-num">Cartons</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var asn in _records.Asns)
                     {
-                        <li>@carton.CartonId: @carton.ItemId, @carton.UnitsPerCarton units/carton, lot @carton.LotRef</li>
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"ASN:{asn.AsnNumber}"))">@asn.AsnNumber</button></td>
+                            <td>@asn.PoNumber</td>
+                            <td class="gate-num">@asn.Cartons.Count</td>
+                            <td><OriginChips Number="@asn.AsnNumber" Source="@asn.Source" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"ASN:{asn.AsnNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="4">
+                                    <ul>
+                                        @foreach (var carton in asn.Cartons)
+                                        {
+                                            <li>@carton.CartonId: @carton.ItemId, <span class="gate-num">@carton.UnitsPerCarton</span> units/carton, lot @carton.LotRef</li>
+                                        }
+                                    </ul>
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Receipts</h2>
-    @if (_records.Receipts.Count == 0)
+    @if (_tab == "receipt")
     {
-        <p>No receipts.</p>
-    }
-    @foreach (var receipt in _records.Receipts)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@receipt.Receipt.PoNumber → @receipt.Receipt.ReceiptNumber</strong>
-                · slip @receipt.Receipt.SupplierPackingSlipNumber · @receipt.Receipt.Status <AgentBanner Source="@receipt.Receipt.Source" />
-                <ul class="mb-0">
-                    @foreach (var line in receipt.Receipt.Lines)
+        @if (_records.Receipts.Count == 0)
+        {
+            <p class="gate-meta">No receipts.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Receipt</th><th>PO</th><th>Slip</th><th>Status</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var receipt in _records.Receipts)
                     {
-                        <li>@line.PoLineRef: received @line.QtyReceived, quarantined @line.QtyQuarantined, rejected @line.QtyRejected, lot @line.LotRef@(line.ConditionNote is null ? "" : $" — {line.ConditionNote}")</li>
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"RCP:{receipt.Receipt.ReceiptNumber}"))">@receipt.Receipt.ReceiptNumber</button></td>
+                            <td>@receipt.Receipt.PoNumber</td>
+                            <td>@receipt.Receipt.SupplierPackingSlipNumber</td>
+                            <td>@receipt.Receipt.Status</td>
+                            <td><OriginChips Number="@receipt.Receipt.ReceiptNumber" Source="@receipt.Receipt.Source" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"RCP:{receipt.Receipt.ReceiptNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="5">
+                                    <ul>
+                                        @foreach (var line in receipt.Receipt.Lines)
+                                        {
+                                            <li>@line.PoLineRef: received <span class="gate-num">@line.QtyReceived</span>, quarantined <span class="gate-num">@line.QtyQuarantined</span>, rejected <span class="gate-num">@line.QtyRejected</span>, lot @line.LotRef@(line.ConditionNote is null ? "" : $" — {line.ConditionNote}")</li>
+                                        }
+                                    </ul>
+                                    @foreach (var read in receipt.CachedReads)
+                                    {
+                                        <p class="gate-meta">@read</p>
+                                    }
+                                    @foreach (var image in receipt.ImageFileNames)
+                                    {
+                                        <img class="gate-img" src="dock-images/@image" alt="@image" />
+                                    }
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-                @foreach (var read in receipt.CachedReads)
-                {
-                    <p class="card-text mt-2 mb-0"><small>@read</small></p>
-                }
-                @foreach (var image in receipt.ImageFileNames)
-                {
-                    <img src="dock-images/@image" alt="@image" class="img-thumbnail me-2 mt-2" style="max-width: 320px;" />
-                }
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Invoices</h2>
-    @if (_records.Invoices.Count == 0)
+    @if (_tab == "invoice")
     {
-        <p>No invoices.</p>
-    }
-    @foreach (var inv in _records.Invoices)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@inv.SupplierInvoiceNumber</strong> (@inv.VendorId) · @inv.Status
-                · voucher @(inv.Voucher ?? "none") · @inv.Currency · PO @(inv.PoNumber ?? "none") <AgentBanner Source="@inv.Source" />
-                <ul class="mb-0">
-                    @foreach (var line in inv.Lines)
+        @if (_records.Invoices.Count == 0)
+        {
+            <p class="gate-meta">No invoices.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Invoice</th><th>Vendor</th><th>Status</th><th>PO</th><th class="gate-num">Total</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var inv in _records.Invoices)
                     {
-                        <li>@(line.PoLineRef ?? "no PO line"): @line.Quantity @@ @line.UnitPrice — @line.Disposition@(line.HoldReason is null ? "" : $" ({line.HoldReason})")</li>
+                        var invTotal = inv.Lines.Sum(l => l.Quantity * l.UnitPrice);
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"INV:{inv.VendorId}/{inv.SupplierInvoiceNumber}"))">@inv.SupplierInvoiceNumber</button></td>
+                            <td>@inv.VendorId</td>
+                            <td>@inv.Status@(inv.Voucher is null ? "" : $" · voucher {inv.Voucher}")</td>
+                            <td>@(inv.PoNumber ?? "—")</td>
+                            <td class="gate-num">@invTotal @inv.Currency</td>
+                            <td><OriginChips Number="@inv.SupplierInvoiceNumber" Source="@inv.Source" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"INV:{inv.VendorId}/{inv.SupplierInvoiceNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="6">
+                                    <ul>
+                                        @foreach (var line in inv.Lines)
+                                        {
+                                            <li>@(line.PoLineRef ?? "no PO line"): <span class="gate-num">@line.Quantity</span> @@ <span class="gate-num">@line.UnitPrice</span> = <span class="gate-num">@(line.Quantity * line.UnitPrice)</span> @inv.Currency — @line.Disposition@(line.HoldReason is null ? "" : $" ({line.HoldReason})")</li>
+                                        }
+                                    </ul>
+                                    @foreach (var match in inv.MatchResults)
+                                    {
+                                        <p class="gate-meta">@(match.PoLineRef ?? "header"): @(match.Matched ? "matched" : "NOT matched") — @match.Message</p>
+                                    }
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-                @foreach (var match in inv.MatchResults)
-                {
-                    <p class="card-text mt-1 mb-0"><small>@(match.PoLineRef ?? "header"): @(match.Matched ? "matched" : "NOT matched") — @match.Message</small></p>
-                }
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Payments</h2>
-    @if (_records.Payments.Count == 0)
+    @if (_tab == "payment")
     {
-        <p>No payments.</p>
-    }
-    @foreach (var pay in _records.Payments)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@pay.PaymentNumber</strong> · @pay.Status · @pay.Currency · due @pay.DueDate
-                · bank @pay.PayeeBank.AccountRef (verified=@pay.PayeeBank.Verified) <AgentBanner Source="@pay.Source" />
-                <ul class="mb-0">
-                    @foreach (var line in pay.Lines)
+        @if (_records.Payments.Count == 0)
+        {
+            <p class="gate-meta">No payments.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Payment</th><th>Status</th><th>Due</th><th>Bank</th><th class="gate-num">Total</th><th>Origin</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var pay in _records.Payments)
                     {
-                        <li>@line.VendorId/@line.SupplierInvoiceNumber: @line.Amount @pay.Currency</li>
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"PAY:{pay.PaymentNumber}"))">@pay.PaymentNumber</button></td>
+                            <td>@pay.Status</td>
+                            <td>@pay.DueDate</td>
+                            <td>@pay.PayeeBank.AccountRef (verified=@pay.PayeeBank.Verified)</td>
+                            <td class="gate-num">@pay.Lines.Sum(l => l.Amount) @pay.Currency</td>
+                            <td><OriginChips Number="@pay.PaymentNumber" Source="@pay.Source" Opening="@_records.OpeningNumbers" /></td>
+                        </tr>
+                        @if (IsOpen($"PAY:{pay.PaymentNumber}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="6">
+                                    <ul>
+                                        @foreach (var line in pay.Lines)
+                                        {
+                                            <li>@line.VendorId/@line.SupplierInvoiceNumber: <span class="gate-num">@line.Amount</span> @pay.Currency</li>
+                                        }
+                                    </ul>
+                                </td>
+                            </tr>
+                        }
                     }
-                </ul>
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Inventory</h2>
-    @if (_records.Inventory.Count == 0)
+    @if (_tab == "holds")
     {
-        <p>No inventory rows.</p>
-    }
-    @foreach (var item in _records.Inventory)
-    {
-        <div class="card mb-2">
-            <div class="card-body">
-                <strong>@item.ItemId</strong> · stock @item.Stock
-                <ul class="mb-0">
-                    @foreach (var txn in item.Transactions)
+        @if (_records.OpenHolds.Count == 0)
+        {
+            <p class="gate-meta">No open holds.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Hold</th><th>Rule</th><th>Case</th><th>Blocks</th><th>Reason</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var hold in _records.OpenHolds)
                     {
-                        <li>@txn.ReceiptNumber / @txn.LotRef: @txn.Quantity (@txn.Status)</li>
+                        <tr>
+                            <td>@hold.HoldId (@hold.ReasonCode)</td>
+                            <td>@(hold.RuleId ?? "—")</td>
+                            <td><a href="cases/@hold.CaseId">@hold.CaseId</a></td>
+                            <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
+                            <td>@hold.Note</td>
+                        </tr>
                     }
-                </ul>
-            </div>
-        </div>
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Vendors</h2>
-    @if (_records.Vendors.Count == 0)
+    @if (_tab == "inventory")
     {
-        <p>No vendors.</p>
-    }
-    else
-    {
-        <table class="table">
-            <thead>
-                <tr><th>Vendor</th><th>Name</th><th>Email</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var vendor in _records.Vendors)
-                {
-                    <tr>
-                        <td>@vendor.VendorId</td>
-                        <td>@vendor.Name</td>
-                        <td>@VendorLabels.EmailOrPlaceholder(vendor.Email)</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
-
-    <h2>Open holds</h2>
-    @if (_records.OpenHolds.Count == 0)
-    {
-        <p>No open holds.</p>
-    }
-    else
-    {
-        <table class="table">
-            <thead>
-                <tr><th>Hold</th><th>Rule</th><th>Case</th><th>Blocks</th><th>Reason</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var hold in _records.OpenHolds)
-                {
-                    <tr>
-                        <td>@hold.HoldId (@hold.ReasonCode)</td>
-                        <td>@(hold.RuleId ?? "—")</td>
-                        <td>@hold.CaseId</td>
-                        <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
-                        <td>@hold.Note</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+        @if (_records.Inventory.Count == 0)
+        {
+            <p class="gate-meta">No inventory rows.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Item</th><th class="gate-num">Stock</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _records.Inventory)
+                    {
+                        <tr>
+                            <td><button class="gate-row-toggle" @onclick="@(() => Toggle($"STK:{item.ItemId}"))">@item.ItemId</button></td>
+                            <td class="gate-num">@item.Stock</td>
+                        </tr>
+                        @if (IsOpen($"STK:{item.ItemId}"))
+                        {
+                            <tr class="gate-lines">
+                                <td colspan="2">
+                                    <ul>
+                                        @foreach (var txn in item.Transactions)
+                                        {
+                                            <li>
+                                                @txn.ReceiptNumber / @txn.LotRef:
+                                                <span class="gate-num">@txn.Quantity</span> (@txn.Status)
+                                                @if (RecordLabels.IsOpeningTxn(txn))
+                                                {
+                                                    <span class="gate-chip">@RecordLabels.OpeningData</span>
+                                                }
+                                            </li>
+                                        }
+                                    </ul>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        }
     }
 
-    <h2>Approvals</h2>
-    @if (_records.Approvals.Count == 0)
+    @if (_tab == "vendors")
     {
-        <p>No approvals recorded.</p>
+        @if (_records.Vendors.Count == 0)
+        {
+            <p class="gate-meta">No vendors.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Vendor</th><th>Name</th><th>Email</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var vendor in _records.Vendors)
+                    {
+                        <tr>
+                            <td>@vendor.VendorId</td>
+                            <td>@vendor.Name</td>
+                            <td>@VendorLabels.EmailOrPlaceholder(vendor.Email)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
     }
-    else
+
+    @if (_tab == "approvals")
     {
-        <table class="table">
-            <thead>
-                <tr><th>Document</th><th>Routed to</th><th>Acted by</th><th>Outcome</th><th>Amount / limit</th><th>Comment</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var approval in _records.Approvals)
-                {
-                    <tr>
-                        <td>@approval.DocumentType @approval.DocumentNumber</td>
-                        <td>@approval.RoutedTo</td>
-                        <td>@(approval.ActedBy ?? "—")</td>
-                        <td>@(approval.Approved ? "approved" : "rejected")</td>
-                        <td>@approval.DocumentAmount / @approval.LimitChecked</td>
-                        <td>@(approval.Comment ?? "—")</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+        @if (_records.Approvals.Count == 0)
+        {
+            <p class="gate-meta">No approvals recorded.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Document</th><th>Routed to</th><th>Acted by</th><th>Outcome</th><th class="gate-num">Amount / limit</th><th>Comment</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var approval in _records.Approvals)
+                    {
+                        <tr>
+                            <td>@approval.DocumentType @approval.DocumentNumber</td>
+                            <td>@approval.RoutedTo</td>
+                            <td>@(approval.ActedBy ?? "—")</td>
+                            <td><span class="gate-badge">@(approval.Approved ? "approved" : "rejected")</span></td>
+                            <td class="gate-num">@approval.DocumentAmount / @approval.LimitChecked</td>
+                            <td>@(approval.Comment ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
     }
 }
 
 @code {
     private RecordsVm? _records;
     private string? _loadError;
+    private string _tab = "so";
+    private readonly HashSet<string> _expanded = new(StringComparer.Ordinal);
+
+    private bool IsOpen(string key) => _expanded.Contains(key);
+
+    private void Toggle(string key)
+    {
+        if (!_expanded.Add(key))
+        {
+            _expanded.Remove(key);
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
