@@ -381,6 +381,171 @@ body {
     padding-top: 6px;
 }
 
+/* Round 2: tabs for Records and the outside world. */
+.gate-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    border-bottom: 1px solid var(--gate-border);
+    margin: 12px 0;
+}
+
+.gate-tab {
+    font-size: 13px;
+    padding: 7px 12px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--gate-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.gate-tab:hover {
+    color: var(--gate-text);
+}
+
+.gate-tab.active {
+    color: var(--gate-text);
+    font-weight: 650;
+    border-bottom-color: var(--gate-text);
+}
+
+/* Round 2: right-aligned clean numbers in ledger tables. */
+.gate-table th.gate-num,
+.gate-table td.gate-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Round 2: expandable ledger rows. The header row is a button-styled row. */
+.gate-row-toggle {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+}
+
+.gate-row-toggle:hover {
+    text-decoration: underline;
+}
+
+.gate-lines td {
+    background: var(--gate-soft);
+    font-size: 12px;
+}
+
+.gate-lines ul {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+/* Round 2: order-to-payment chain strip. Current step is dark. */
+.gate-chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin: 8px 0;
+}
+
+.gate-chain-step {
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--gate-border);
+    background: var(--gate-soft);
+    color: #374151;
+    white-space: nowrap;
+}
+
+.gate-chain-step.current {
+    background: var(--gate-text);
+    border-color: var(--gate-text);
+    color: #fff;
+    font-weight: 600;
+}
+
+.gate-chain-arrow {
+    font-size: 12px;
+    color: var(--gate-muted);
+}
+
+/* Round 2: the separate outside-world button. It is not a nav link: a dark
+   pill set apart from the company menu by a divider. */
+.gate-topbar-sep {
+    width: 1px;
+    height: 22px;
+    background: var(--gate-border);
+    margin: 0 10px;
+}
+
+.gate-outside-btn {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--gate-text);
+    color: #fff !important;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.gate-outside-btn:hover {
+    background: #1f2937;
+    color: #fff !important;
+}
+
+/* Round 2: textarea matching the inputs, small thumbnails, progress list. */
+.gate-textarea {
+    font-size: 13px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: var(--gate-text);
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+.gate-textarea:focus {
+    outline: 2px solid #111827;
+    outline-offset: 1px;
+}
+
+.gate-thumb {
+    max-width: 200px;
+    border-radius: 6px;
+    border: 1px solid var(--gate-border);
+    margin-top: 4px;
+    display: block;
+}
+
+.gate-progress {
+    font-size: 13px;
+    margin: 6px 0;
+    padding-left: 20px;
+}
+
+.gate-progress li {
+    margin: 2px 0;
+}
+
+.gate-checkline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    margin: 4px 0;
+}
+
 /* Framework bits kept from the template. */
 #blazor-error-ui {
     background: lightyellow;
