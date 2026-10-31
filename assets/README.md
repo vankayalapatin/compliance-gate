@@ -86,7 +86,9 @@ trusting damage/hidden scores.
 Same oracle-first rules on realistic density: 5-6 small rotated labels
 per photo over 6 text-free Muse pallet scenes, photo effects
 (none/blur/glare/cool) applied after labeling, subtle dents photographic
-only. Spark: one read per photo at 4000 max tokens (6-label reads
+only. Labels carry the real-style battery mark only (no Class 9 diamond)
+and a unique lot per carton, so smudged lots cannot be copied from
+neighbours. Spark: one read per photo at 4000 max tokens (6-label reads
 truncated at 2000), results to `accuracy-by-carton.csv` plus
-`spark-report.md`. Manual checks: `manual-check.md` (10 dent photos plus
-a per-base placement spot check).
+`spark-report.md` (170/170 after the label revision). Manual checks:
+`manual-check.md` (10 dent photos plus a per-base placement spot check).

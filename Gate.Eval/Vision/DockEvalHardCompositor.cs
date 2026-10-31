@@ -97,9 +97,6 @@ internal static class DockEvalHardCompositor
             var y = cy - h / 2;
             using var white = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill };
             using var black = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(2, w / 120) };
-            using var blackFill = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Fill, IsAntialias = true };
-            using var red = new SKPaint { Color = SKColors.Red, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(2, w / 150), IsAntialias = true };
-            using var yellow = new SKPaint { Color = SKColors.Yellow, Style = SKPaintStyle.Fill };
             var box = new SKRect(x, y, x + w, y + h);
             draw.DrawRect(box, white);
             draw.DrawRect(box, black);
@@ -157,49 +154,82 @@ internal static class DockEvalHardCompositor
                 }
             }
 
+            // Lithium-battery mark in the style of the real handling mark: red
+            // diagonal-hatched border, white interior, battery pictogram plus
+            // UN number plus contact line. No Class 9 diamond anywhere on hard
+            // labels, so the mark is the only symbol a reader can mistake.
             var mark = new SKRect(x + w - pad - markW, y + pad, x + w - pad, y + pad + markW);
-            using var markText = new SKPaint
-            {
-                Color = SKColors.Black, IsAntialias = true,
-                Typeface = SKTypeface.Default, TextSize = markW * 0.22f
-            };
             if (label.GetProperty("mark_present").GetBoolean())
             {
-                draw.DrawRect(mark, white);
-                draw.DrawRect(mark, red);
-                draw.Save();
-                draw.ClipRect(mark);
-                for (var d = -mark.Height; d < mark.Width + mark.Height; d += Math.Max(4, markW / 12))
-                {
-                    draw.DrawLine(mark.Left + d, mark.Bottom, mark.Left + d + mark.Height, mark.Top, red);
-                }
-
-                draw.Restore();
-                draw.DrawText(label.GetProperty("un_number").GetString()!, mark.Left + markW * 0.06f, mark.Top + markW * 0.58f, markText);
-            }
-
-            if (!label.TryGetProperty("class9", out var class9) || class9.ValueKind == JsonValueKind.True)
-            {
-                var mcx = mark.Left + markW / 2;
-                var mcy = mark.Bottom + (box.Bottom - pad - mark.Bottom) / 2;
-                var r = Math.Min(markW / 2, (box.Bottom - pad - mark.Bottom) / 2) * 0.9f;
-                if (r > 4)
-                {
-                    using var diamond = new SKPath();
-                    diamond.MoveTo(mcx, mcy - r);
-                    diamond.LineTo(mcx + r, mcy);
-                    diamond.LineTo(mcx, mcy + r);
-                    diamond.LineTo(mcx - r, mcy);
-                    diamond.Close();
-                    draw.DrawPath(diamond, yellow);
-                    draw.DrawPath(diamond, blackFill);
-                    draw.DrawText("9", mcx - r * 0.18f, mcy + r * 0.32f, markText);
-                }
+                var tel = label.TryGetProperty("mark_tel", out var t) && t.ValueKind == JsonValueKind.String
+                    ? t.GetString()! : string.Empty;
+                DrawBatteryMark(draw, mark, label.GetProperty("un_number").GetString()!, tel);
             }
         }
         finally
         {
             draw.Restore();
+        }
+    }
+
+    private static void DrawBatteryMark(SKCanvas draw, SKRect mark, string un, string tel)
+    {
+        using var white = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill };
+        using var red = new SKPaint { Color = SKColors.Red, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(2, mark.Width / 40), IsAntialias = true };
+        using var ink = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(1, mark.Width / 70), IsAntialias = true };
+        using var inkFill = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Fill, IsAntialias = true };
+
+        draw.DrawRect(mark, white);
+        draw.Save();
+        draw.ClipRect(mark);
+        for (var d = -mark.Height; d < mark.Width + mark.Height; d += Math.Max(3, mark.Width / 16))
+        {
+            draw.DrawLine(mark.Left + d, mark.Bottom, mark.Left + d + mark.Height, mark.Top, red);
+        }
+
+        draw.Restore();
+        var band = mark.Width * 0.12f;
+        var inner = new SKRect(mark.Left + band, mark.Top + band, mark.Right - band, mark.Bottom - band);
+        draw.DrawRect(inner, white);
+        draw.DrawRect(mark, red);
+
+        var cw = inner.Width * 0.2f;
+        var ch = inner.Height * 0.3f;
+        var by = inner.Top + inner.Height * 0.06f;
+        for (var i = 0; i < 3; i++)
+        {
+            var bx = inner.Left + inner.Width * (0.24f + 0.26f * i) - cw / 2;
+            var cell = new SKRect(bx, by, bx + cw, by + ch);
+            draw.DrawRect(cell, ink);
+            var nubW = cw * 0.4f;
+            draw.DrawRect(new SKRect(bx + (cw - nubW) / 2, by - ch * 0.12f, bx + (cw + nubW) / 2, by), inkFill);
+            if (i == 1)
+            {
+                draw.DrawLine(bx, by + ch, bx + cw, by, ink);
+            }
+        }
+
+        using var unPaint = new SKPaint
+        {
+            Color = SKColors.Black, IsAntialias = true, FakeBoldText = true,
+            Typeface = SKTypeface.Default, TextSize = inner.Height * 0.16f
+        };
+        using var telPaint = new SKPaint
+        {
+            Color = SKColors.Black, IsAntialias = true,
+            Typeface = SKTypeface.Default, TextSize = inner.Height * 0.12f
+        };
+        FitText(unPaint, [un], inner.Width * 0.94f);
+        var telLine = string.IsNullOrEmpty(tel) ? string.Empty : $"TEL {tel}";
+        if (!string.IsNullOrEmpty(telLine))
+        {
+            FitText(telPaint, [telLine], inner.Width * 0.94f);
+        }
+
+        draw.DrawText(un, inner.Left + inner.Width * 0.03f, inner.Top + inner.Height * 0.62f, unPaint);
+        if (!string.IsNullOrEmpty(telLine))
+        {
+            draw.DrawText(telLine, inner.Left + inner.Width * 0.03f, inner.Top + inner.Height * 0.82f, telPaint);
         }
     }
 

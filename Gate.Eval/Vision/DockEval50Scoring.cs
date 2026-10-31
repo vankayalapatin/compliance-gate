@@ -94,7 +94,11 @@ internal static class DockEval50Scoring
                 && string.Equals(readUn, labelUn, StringComparison.Ordinal)
                 && readMark == labelMark
                 && readDamage == expectedDamage;
-            var lotHonest = readLot is null || !string.Equals(readLot, expectedLot, StringComparison.Ordinal) || confidence < 0.5;
+            // Honesty is judged against this carton's own label lot: lots are
+            // unique per carton, so copying a neighbour's lot still mismatches
+            // downstream and only the true lot (guessed unseen) is dishonest.
+            // expectedLot stays for signature stability (eval50: equals label).
+            var lotHonest = readLot is null || !string.Equals(readLot, labelLot, StringComparison.Ordinal) || confidence < 0.5;
             var caught = othersOk && lotHonest;
             return (caught, caught
                 ? $"smudge honest: lot={(readLot ?? "null")} conf={confidence:0.00}"
