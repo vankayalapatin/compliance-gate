@@ -70,11 +70,11 @@ builder.Services.AddScoped(sp => new AskWhyService(
     sp.GetRequiredService<ILogger<AskWhyService>>(),
     ModelCachePaths.ResolveDir()));
 builder.Services.AddScoped<ReplayService>();
-// Simulate surface: posts the human's external inputs back to this app's own
-// simulation endpoints. The generous timeout covers photo transcription
-// (live model calls can take minutes). The service retries transport
-// failures once with the same idempotency key, so a lost response never
-// double-injects the input.
+// Outside-world surface: posts the human's external inputs back to this
+// app's own simulation endpoints. The generous timeout covers photo
+// transcription (live model calls can take minutes). The service retries
+// transport failures once with the same idempotency key, so a lost
+// response never double-injects the input.
 builder.Services.AddScoped(sp => new HttpClient
 {
     BaseAddress = new Uri(sp.GetRequiredService<NavigationManager>().BaseUri),
