@@ -197,7 +197,7 @@
             {
                 using var stream = file.OpenReadStream(MaxUploadBytes);
                 using var buffer = new MemoryStream();
-                await stream.CopyToAsync(buffer).ConfigureAwait(false);
+                await stream.CopyToAsync(buffer);
                 _uploads.Add(new UploadRow { FileName = file.Name, Bytes = buffer.ToArray() });
             }
             catch (Exception ex)
@@ -216,7 +216,7 @@
             var photos = new List<SimulationPhoto>();
             foreach (var pick in _serverPicks)
             {
-                var (bytes, error) = await Simulate.TryReadDockImageAsync(pick.Key).ConfigureAwait(false);
+                var (bytes, error) = await Simulate.TryReadDockImageAsync(pick.Key);
                 if (bytes is null)
                 {
                     _outcome = new SimulationOutcome(false, error ?? $"Dock image {pick.Key} is not available.", [], []);
@@ -229,11 +229,11 @@
             photos.AddRange(_uploads.Select(u => new SimulationPhoto(u.FileName, u.Bytes, u.CartonHint)));
 
             _outcome = _reshot
-                ? await Simulate.SendReshotAsync(_caseId, _cartons.ToList(), photos).ConfigureAwait(false)
-                : await Simulate.SendDockPhotosAsync(_caseId, photos).ConfigureAwait(false);
+                ? await Simulate.SendReshotAsync(_caseId, _cartons.ToList(), photos)
+                : await Simulate.SendDockPhotosAsync(_caseId, photos);
             if (_outcome.Ok)
             {
-                await OnChanged.InvokeAsync().ConfigureAwait(false);
+                await OnChanged.InvokeAsync();
             }
         }
         catch (Exception ex)
