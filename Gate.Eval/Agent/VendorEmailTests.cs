@@ -188,6 +188,50 @@ public sealed class VendorEmailTests
 
         Assert.Equal("Dear vendor, please help.", email.Body);
         Assert.Contains("V-C/INV-BADPO", email.Subject, StringComparison.Ordinal);
+        var fallback = Load(h, caseId).Events.Single(e =>
+            e.Kind == CaseEventKind.Note
+            && (e.Summary ?? string.Empty).Contains("fell back to raw text instead of structured Spark composition", StringComparison.Ordinal));
+        Assert.Equal("V-C/INV-BADPO", fallback.DocumentNumber);
+        Assert.Equal($"mail:{email.EmailId}", fallback.EvidenceRef);
+    }
+
+    [Fact]
+    public async Task BlankFieldsCompositionFallsBackWithATimelineNote()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        SeedEmail(h, "V-C", "sales@screws.example");
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "INV-BADPO", "V-C", "PO-404",
+            [new SupplierInvoiceLineInput("PO-L9", 5, 10)]));
+        h.Models.QueueResponse("""{"subject":"","body":""}""");
+
+        var email = await h.Runner.SendVendorEmailAsync(caseId, "V-C/INV-BADPO");
+
+        Assert.Contains("V-C/INV-BADPO", email.Subject, StringComparison.Ordinal);
+        Assert.Contains(Load(h, caseId).Events, e =>
+            e.Kind == CaseEventKind.Note
+            && (e.Summary ?? string.Empty).Contains("fell back to raw text instead of structured Spark composition", StringComparison.Ordinal)
+            && string.Equals(e.DocumentNumber, "V-C/INV-BADPO", StringComparison.Ordinal)
+            && string.Equals(e.EvidenceRef, $"mail:{email.EmailId}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task StructuredCompositionWritesNoFallbackNote()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        SeedEmail(h, "V-C", "sales@screws.example");
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "INV-BADPO", "V-C", "PO-404",
+            [new SupplierInvoiceLineInput("PO-L9", 5, 10)]));
+        h.Models.QueueResponse("""{"subject":"Missing PO ref","body":"Please confirm the PO number."}""");
+
+        await h.Runner.SendVendorEmailAsync(caseId, "V-C/INV-BADPO");
+
+        Assert.DoesNotContain(Load(h, caseId).Events, e =>
+            e.Kind == CaseEventKind.Note
+            && (e.Summary ?? string.Empty).Contains("fell back to raw text", StringComparison.Ordinal));
     }
 
     [Fact]
