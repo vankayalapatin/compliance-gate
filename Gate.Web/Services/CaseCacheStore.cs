@@ -33,8 +33,14 @@ public sealed class CaseCacheStore
             return [];
         }
 
+        // Mail files (<CaseId>.mail.json), vendor-identity pendings
+        // (<CaseId>.vendor-identity.json), and memo files
+        // (<MemoId>.memo.json) share the dir but are not cases (mirrors the
+        // agent CaseStore exclusions; memo files belong to MemoFileStore).
         var files = Directory.GetFiles(_dir, "*.json")
             .Where(f => !f.EndsWith(".mail.json", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.EndsWith(".vendor-identity.json", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.EndsWith(".memo.json", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         Array.Sort(files, StringComparer.Ordinal);
         var result = new List<CaseFile>(files.Length);
