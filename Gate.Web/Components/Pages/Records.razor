@@ -286,7 +286,7 @@ else
     {
         try
         {
-            _records = await Views.GetRecordsAsync().ConfigureAwait(false);
+            _records = await Views.GetRecordsAsync();
         }
         catch (Exception ex)
         {
