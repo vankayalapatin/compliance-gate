@@ -1,0 +1,255 @@
+{
+  "model": "muse-spark-1.3-contributor",
+  "reads": {
+    "EVAL-01.jpg": {
+      "ms": 6151,
+      "prompt_tokens": 3231,
+      "completion_tokens": 821
+    },
+    "EVAL-02.jpg": {
+      "ms": 6196,
+      "prompt_tokens": 3075,
+      "completion_tokens": 824
+    },
+    "EVAL-03.jpg": {
+      "ms": 8980,
+      "prompt_tokens": 3163,
+      "completion_tokens": 1206
+    },
+    "EVAL-04.jpg": {
+      "ms": 8831,
+      "prompt_tokens": 3207,
+      "completion_tokens": 1223
+    },
+    "EVAL-05.jpg": {
+      "ms": 8182,
+      "prompt_tokens": 3186,
+      "completion_tokens": 1043
+    },
+    "EVAL-06.jpg": {
+      "ms": 7513,
+      "prompt_tokens": 3186,
+      "completion_tokens": 1087
+    },
+    "EVAL-07.jpg": {
+      "ms": 7006,
+      "prompt_tokens": 3231,
+      "completion_tokens": 968
+    },
+    "EVAL-08.jpg": {
+      "ms": 7265,
+      "prompt_tokens": 3231,
+      "completion_tokens": 764
+    },
+    "EVAL-09.jpg": {
+      "ms": 6244,
+      "prompt_tokens": 3186,
+      "completion_tokens": 872
+    },
+    "EVAL-10.jpg": {
+      "ms": 6343,
+      "prompt_tokens": 3141,
+      "completion_tokens": 830
+    },
+    "EVAL-11.jpg": {
+      "ms": 7639,
+      "prompt_tokens": 3253,
+      "completion_tokens": 1140
+    },
+    "EVAL-12.jpg": {
+      "ms": 9996,
+      "prompt_tokens": 3075,
+      "completion_tokens": 1378
+    },
+    "EVAL-13.jpg": {
+      "ms": 6314,
+      "prompt_tokens": 3119,
+      "completion_tokens": 832
+    },
+    "EVAL-14.jpg": {
+      "ms": 8803,
+      "prompt_tokens": 3163,
+      "completion_tokens": 1362
+    },
+    "EVAL-15.jpg": {
+      "ms": 6448,
+      "prompt_tokens": 3231,
+      "completion_tokens": 989
+    },
+    "EVAL-16.jpg": {
+      "ms": 9215,
+      "prompt_tokens": 3186,
+      "completion_tokens": 1226
+    },
+    "EVAL-17.jpg": {
+      "ms": 9675,
+      "prompt_tokens": 3119,
+      "completion_tokens": 1273
+    },
+    "EVAL-18.jpg": {
+      "ms": 4319,
+      "prompt_tokens": 3141,
+      "completion_tokens": 734
+    },
+    "EVAL-19.jpg": {
+      "ms": 6513,
+      "prompt_tokens": 3031,
+      "completion_tokens": 1118
+    },
+    "EVAL-20.jpg": {
+      "ms": 4981,
+      "prompt_tokens": 3163,
+      "completion_tokens": 732
+    },
+    "EVAL-21.jpg": {
+      "ms": 7701,
+      "prompt_tokens": 2987,
+      "completion_tokens": 1175
+    },
+    "EVAL-22.jpg": {
+      "ms": 7543,
+      "prompt_tokens": 3075,
+      "completion_tokens": 893
+    },
+    "EVAL-23.jpg": {
+      "ms": 5117,
+      "prompt_tokens": 3163,
+      "completion_tokens": 723
+    },
+    "EVAL-24.jpg": {
+      "ms": 6039,
+      "prompt_tokens": 3075,
+      "completion_tokens": 874
+    },
+    "EVAL-25.jpg": {
+      "ms": 4807,
+      "prompt_tokens": 3186,
+      "completion_tokens": 733
+    },
+    "EVAL-26.jpg": {
+      "ms": 6753,
+      "prompt_tokens": 3276,
+      "completion_tokens": 955
+    },
+    "EVAL-27.jpg": {
+      "ms": 9363,
+      "prompt_tokens": 3163,
+      "completion_tokens": 1097
+    },
+    "EVAL-28.jpg": {
+      "ms": 6093,
+      "prompt_tokens": 3141,
+      "completion_tokens": 918
+    },
+    "EVAL-29.jpg": {
+      "ms": 7781,
+      "prompt_tokens": 3253,
+      "completion_tokens": 1136
+    },
+    "EVAL-30.jpg": {
+      "ms": 4029,
+      "prompt_tokens": 3163,
+      "completion_tokens": 622
+    },
+    "EVAL-31.jpg": {
+      "ms": 8863,
+      "prompt_tokens": 3075,
+      "completion_tokens": 1451
+    },
+    "EVAL-32.jpg": {
+      "ms": 6805,
+      "prompt_tokens": 3075,
+      "completion_tokens": 1038
+    },
+    "EVAL-33.jpg": {
+      "ms": 7829,
+      "prompt_tokens": 3141,
+      "completion_tokens": 1057
+    },
+    "EVAL-34.jpg": {
+      "ms": 9495,
+      "prompt_tokens": 3119,
+      "completion_tokens": 1284
+    },
+    "EVAL-35.jpg": {
+      "ms": 7801,
+      "prompt_tokens": 3141,
+      "completion_tokens": 1000
+    },
+    "EVAL-36.jpg": {
+      "ms": 6549,
+      "prompt_tokens": 3119,
+      "completion_tokens": 926
+    },
+    "EVAL-37.jpg": {
+      "ms": 6549,
+      "prompt_tokens": 3186,
+      "completion_tokens": 899
+    },
+    "EVAL-38.jpg": {
+      "ms": 6137,
+      "prompt_tokens": 3095,
+      "completion_tokens": 958
+    },
+    "EVAL-39.jpg": {
+      "ms": 10445,
+      "prompt_tokens": 3141,
+      "completion_tokens": 1258
+    },
+    "EVAL-40.jpg": {
+      "ms": 5828,
+      "prompt_tokens": 3276,
+      "completion_tokens": 816
+    },
+    "EVAL-41.jpg": {
+      "ms": 6261,
+      "prompt_tokens": 3075,
+      "completion_tokens": 843
+    },
+    "EVAL-42.jpg": {
+      "ms": 10415,
+      "prompt_tokens": 3052,
+      "completion_tokens": 1451
+    },
+    "EVAL-43.jpg": {
+      "ms": 8392,
+      "prompt_tokens": 3075,
+      "completion_tokens": 1115
+    },
+    "EVAL-44.jpg": {
+      "ms": 8264,
+      "prompt_tokens": 3075,
+      "completion_tokens": 1203
+    },
+    "EVAL-45.jpg": {
+      "ms": 3721,
+      "prompt_tokens": 3163,
+      "completion_tokens": 277
+    },
+    "EVAL-46.jpg": {
+      "ms": 2743,
+      "prompt_tokens": 3276,
+      "completion_tokens": 289
+    },
+    "EVAL-47.jpg": {
+      "ms": 3529,
+      "prompt_tokens": 3186,
+      "completion_tokens": 300
+    },
+    "EVAL-48.jpg": {
+      "ms": 3528,
+      "prompt_tokens": 3231,
+      "completion_tokens": 330
+    },
+    "EVAL-49.jpg": {
+      "ms": 2761,
+      "prompt_tokens": 2987,
+      "completion_tokens": 329
+    },
+    "EVAL-50.jpg": {
+      "ms": 3482,
+      "prompt_tokens": 3231,
+      "completion_tokens": 333
+    }
+  }
+}

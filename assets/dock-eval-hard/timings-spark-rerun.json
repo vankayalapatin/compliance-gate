@@ -1,0 +1,155 @@
+{
+  "model": "muse-spark-1.3-contributor",
+  "reads": {
+    "HARD-01.jpg": {
+      "ms": 12556,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1801
+    },
+    "HARD-02.jpg": {
+      "ms": 9415,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1320
+    },
+    "HARD-03.jpg": {
+      "ms": 11150,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1666
+    },
+    "HARD-04.jpg": {
+      "ms": 16363,
+      "prompt_tokens": 3345,
+      "completion_tokens": 2418
+    },
+    "HARD-05.jpg": {
+      "ms": 12382,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1809
+    },
+    "HARD-06.jpg": {
+      "ms": 10125,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1547
+    },
+    "HARD-07.jpg": {
+      "ms": 12780,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1851
+    },
+    "HARD-08.jpg": {
+      "ms": 9949,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1665
+    },
+    "HARD-09.jpg": {
+      "ms": 10701,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1430
+    },
+    "HARD-10.jpg": {
+      "ms": 13016,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1980
+    },
+    "HARD-11.jpg": {
+      "ms": 11543,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1540
+    },
+    "HARD-12.jpg": {
+      "ms": 18140,
+      "prompt_tokens": 3345,
+      "completion_tokens": 2322
+    },
+    "HARD-13.jpg": {
+      "ms": 9299,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1502
+    },
+    "HARD-14.jpg": {
+      "ms": 11948,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1671
+    },
+    "HARD-15.jpg": {
+      "ms": 14248,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1974
+    },
+    "HARD-16.jpg": {
+      "ms": 12999,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1824
+    },
+    "HARD-17.jpg": {
+      "ms": 11050,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1596
+    },
+    "HARD-18.jpg": {
+      "ms": 9926,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1527
+    },
+    "HARD-19.jpg": {
+      "ms": 11046,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1943
+    },
+    "HARD-20.jpg": {
+      "ms": 12385,
+      "prompt_tokens": 3345,
+      "completion_tokens": 2056
+    },
+    "HARD-21.jpg": {
+      "ms": 10931,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1604
+    },
+    "HARD-22.jpg": {
+      "ms": 11429,
+      "prompt_tokens": 3345,
+      "completion_tokens": 2019
+    },
+    "HARD-23.jpg": {
+      "ms": 11084,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1719
+    },
+    "HARD-24.jpg": {
+      "ms": 12579,
+      "prompt_tokens": 3345,
+      "completion_tokens": 2056
+    },
+    "HARD-25.jpg": {
+      "ms": 10942,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1919
+    },
+    "HARD-26.jpg": {
+      "ms": 10739,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1786
+    },
+    "HARD-27.jpg": {
+      "ms": 7566,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1342
+    },
+    "HARD-28.jpg": {
+      "ms": 10337,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1782
+    },
+    "HARD-29.jpg": {
+      "ms": 10844,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1578
+    },
+    "HARD-30.jpg": {
+      "ms": 11391,
+      "prompt_tokens": 3345,
+      "completion_tokens": 1803
+    }
+  }
+}
