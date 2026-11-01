@@ -8,14 +8,19 @@ adapter interface, and this file change in the lead session only.
 - `Gate.Contracts/IErpAdapter.cs` — the data-only boundary. Reads return raw
   ERP data (SO, BOM, stock, open POs, vendors, documents, history, ASN,
   receipts, invoices) plus pipeline list queries (open PRs, draft POs, open
-  invoices, open payments, unreceived ASNs) for what-if gather.
-  Writes take intent plus audit actor plus idempotency
-  key; ERP reads limits, amounts, dates, statuses, vouchers, and bank
-  snapshots itself.
+  invoices, open payments, unreceived ASNs) for what-if gather, plus
+  full-list reads per document type, POs-by-vendor, items, all inventory
+  transactions, and pending approvals for the ERP area. Writes take intent
+  plus audit actor plus idempotency key; ERP reads limits, amounts, dates,
+  statuses, vouchers, and bank snapshots itself. Master writes create
+  vendors (V sequence with manual override) and items (manual numbers).
+  Number format, padding, and start come from the scenario number-seq
+  setup; each sequence starts after seeded history.
 - `Gate.Contracts/Documents.cs` — canonical plain-DTO P2P model (vendor, PR,
   PO, confirmation, ASN with cartons, receipt, invoice with line
   dispositions, payment with bank snapshot, settlement, hold with rule id
-  plus case link, approvals, inventory transactions).
+  plus case link, approvals, inventory transactions, pending approvals).
+  Carton splits use `ItemDto.UnitsPerCarton` (ceil per PO line).
 - `Gate.Contracts/ICompliance.cs` — compliance verdicts. C# decides, every
   block cites rule id plus stored source. Document packs (BAT-LI, ELEC)
   apply to critical parts only (`ItemDto.IsCritical`); non-critical parts
@@ -23,7 +28,8 @@ adapter interface, and this file change in the lead session only.
   `PrePayState` (holds plus quarantine plus open reviews); the holds-only
   overload removed in batch 2.
 - `Gate.Contracts/Cases.cs` — agent-side case store shapes (one case per
-  SO shortfall item): `Case` stage plus document links plus block, `CaseEvent`
+  SO shortfall item): `Case` stage plus document links plus block (`IsOpeningData`
+  marks seeded shells with no agent-authored entries), `CaseEvent`
   append-only timeline, `Decision` human card with evidence refs. Kinds
   include `VendorIdentity` (confirm a proposed vendor-master match),
   `PolicyApproval` (approve a memo-to-rule proposal), and `PolicyQuestion`
