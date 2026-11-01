@@ -64,12 +64,12 @@ public sealed class ErpBatch3Tests
     public async Task CreateSalesOrderAfterScenarioSeedSkipsUsedNumber()
     {
         var erp = SeededErp.Create();
-        erp.SeedSalesOrder(new SalesOrder("SO-1", SalesOrderStatus.Created, "USD",
+        erp.SeedSalesOrder(new SalesOrder("SO-0001", SalesOrderStatus.Created, "USD",
             [new SalesOrderLine("GLASS-1", 7)]));
         var so = await erp.CreateSalesOrderAsync("USD",
             [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", Idem());
-        Assert.Equal("SO-2", so.SoNumber);
-        var seeded = await erp.GetSalesOrderAsync("SO-1");
+        Assert.Equal("SO-0002", so.SoNumber);
+        var seeded = await erp.GetSalesOrderAsync("SO-0001");
         Assert.NotNull(seeded);
         Assert.Equal(SalesOrderStatus.Created, seeded.Status);
         Assert.Equal("USD", seeded.Currency);
@@ -82,14 +82,14 @@ public sealed class ErpBatch3Tests
     public async Task CreateSalesOrderAfterSeedRedeliveryReturnsSameOrder()
     {
         var erp = SeededErp.Create();
-        erp.SeedSalesOrder(new SalesOrder("SO-1", SalesOrderStatus.Created, "USD",
+        erp.SeedSalesOrder(new SalesOrder("SO-0001", SalesOrderStatus.Created, "USD",
             [new SalesOrderLine("GLASS-1", 7)]));
         var key = Idem();
         var first = await erp.CreateSalesOrderAsync("USD",
             [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", key);
         var second = await erp.CreateSalesOrderAsync("USD",
             [new SalesOrderLine("BAT-1", 99)], "order-webhook", "order-webhook", key);
-        Assert.Equal("SO-2", first.SoNumber);
+        Assert.Equal("SO-0002", first.SoNumber);
         Assert.Equal(first.SoNumber, second.SoNumber);
         var stored = await erp.GetSalesOrderAsync(first.SoNumber);
         Assert.NotNull(stored);
