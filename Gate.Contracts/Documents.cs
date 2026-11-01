@@ -138,6 +138,15 @@ public sealed record VendorDto(
     /// invoice queries here; a missing address blocks sending.</summary>
     string? Email = null);
 
+/// <summary>One routed-but-unacted approval: a submitted document waiting
+/// on its approver. Seeded decisions project 1:1 from these rows.</summary>
+public sealed record PendingApprovalDto(
+    string DocumentType,
+    string DocumentNumber,
+    string RoutedTo,
+    string SubmittedBy,
+    decimal DocumentAmount);
+
 public sealed record VendorDocumentDto(
     string VendorId,
     string Kind,
