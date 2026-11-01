@@ -57,6 +57,31 @@ public interface IErpAdapter
     Task<IReadOnlyList<HoldDto>> GetOpenHoldsAsync(string? documentNumber, CancellationToken ct = default);
     Task<IReadOnlyList<HoldRelease>> GetHoldHistoryAsync(string holdId, CancellationToken ct = default);
     Task<IReadOnlyList<ApprovalDto>> GetApprovalsAsync(string documentType, string documentNumber, CancellationToken ct = default);
+    /// <summary>Full-list reads for ERP list pages plus POs-by-vendor for
+    /// the supplier portal and the pending-approval projection seed.
+    /// Defaults throw until the ERP layer implements them.</summary>
+    Task<IReadOnlyList<SalesOrder>> GetSalesOrdersAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetSalesOrdersAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<PurchaseRequisition>> GetPurchaseRequisitionsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetPurchaseRequisitionsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<PurchaseOrder>> GetPurchaseOrdersAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetPurchaseOrdersAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<VendorInvoice>> GetVendorInvoicesAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetVendorInvoicesAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<Payment>> GetPaymentsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetPaymentsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<ShipmentReceipt>> GetShipmentReceiptsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetShipmentReceiptsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<AsnDto>> GetAsnsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetAsnsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<PurchaseOrder>> GetPurchaseOrdersByVendorAsync(string vendorId, CancellationToken ct = default) =>
+        throw new NotSupportedException("GetPurchaseOrdersByVendorAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<ItemDto>> GetItemsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetItemsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<InventoryTransaction>> GetAllInventoryTransactionsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetAllInventoryTransactionsAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<PendingApprovalDto>> GetPendingApprovalsAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetPendingApprovalsAsync is implemented by the ERP layer.");
 
     // Writes: caller supplies intent + audit + idempotency key only.
     // ERP assigns numbers (SO/PR/PO at creation; receipt, voucher, payment
@@ -98,4 +123,15 @@ public interface IErpAdapter
     Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default);
     Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default);
     Task<VendorBankDto> VerifyVendorBankAsync(string vendorId, string verifiedBy, string idempotencyKey, CancellationToken ct = default);
+    /// <summary>Master maintenance. Vendor accounts mint from the V number
+    /// sequence; a blank vendorId mints, an explicit one overrides (both
+    /// uniqueness-checked). Name, country, and terms are mandatory; terms
+    /// must exist. Defaults throw until the ERP layer implements them.</summary>
+    Task<VendorDto> CreateVendorAsync(string? vendorId, string name, string countryOfOrigin, string paymentTermsId, string? email, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        throw new NotSupportedException("CreateVendorAsync is implemented by the ERP layer.");
+    /// <summary>Item numbers are manual and required, uniqueness-checked;
+    /// unitsPerCarton must be above zero. Defaults throw until the ERP
+    /// layer implements them.</summary>
+    Task<ItemDto> CreateItemAsync(string itemId, string description, string unit, bool isCritical, int unitsPerCarton, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        throw new NotSupportedException("CreateItemAsync is implemented by the ERP layer.");
 }
