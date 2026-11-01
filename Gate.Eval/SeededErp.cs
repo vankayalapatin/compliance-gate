@@ -26,9 +26,9 @@ internal static class SeededErp
         erp.SeedBom(Glasses, [new BomLine(Battery, 1), new BomLine(Screw, 2)]);
         erp.SeedStock(Battery, 10);
         erp.SeedStock(Screw, 50);
-        erp.SeedVendor(new VendorDto("V-A", "Cheap Cells Ltd", "CN", false, null, "NET0"));
-        erp.SeedVendor(new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0"));
-        erp.SeedVendor(new VendorDto("V-C", "Screws Co", "US", false, null, "NET0"));
+        erp.SeedVendor(new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0"));
+        erp.SeedVendor(new VendorDto("V-B", "Meridian Cellworks Inc", "MX", false, null, "NET0"));
+        erp.SeedVendor(new VendorDto("V-C", "Formosa Fasteners Co", "US", false, null, "NET0"));
         erp.SeedVendorBank(new VendorBankDto("V-A", "BANK-A-TEST", true, DateTimeOffset.UtcNow));
         erp.SeedVendorBank(new VendorBankDto("V-B", "BANK-B-TEST", true, DateTimeOffset.UtcNow));
         erp.SeedVendorBank(new VendorBankDto("V-C", "BANK-C-TEST", true, DateTimeOffset.UtcNow));
