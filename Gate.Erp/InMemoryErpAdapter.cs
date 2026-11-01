@@ -42,12 +42,14 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     private readonly List<ApprovalDto> _approvals = new();
     private readonly Dictionary<(string Type, string Number), string> _requesters = new();
     private readonly Dictionary<(string Type, string Number), string> _routedTo = new();
+    private readonly Dictionary<(string Type, string Number), string> _submittedBy = new();
     private readonly Dictionary<string, List<string>> _poNotes = new();
     private readonly Dictionary<string, List<InventoryTransaction>> _inventory = new();
     private readonly Dictionary<string, (string PoNumber, string PoLineRef, string ItemId)> _lotMap = new();
     private readonly List<Settlement> _settlements = new();
     private readonly List<HeldRelease> _heldReleases = new();
-    private readonly Dictionary<string, int> _sequences = new();
+    private readonly Dictionary<string, long> _sequences = new();
+    private readonly Dictionary<string, (string? Format, int Padding)> _seqFormats = new();
     private readonly Dictionary<string, object> _idem = new();
     private readonly Dictionary<string, decimal> _paidAmounts = new();
     private string _baseCurrency = string.Empty;
@@ -88,16 +90,48 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         _holds.Clear(); _holdHistory.Clear(); _approvals.Clear(); _requesters.Clear();
         _routedTo.Clear(); _poNotes.Clear(); _inventory.Clear(); _lotMap.Clear();
         _settlements.Clear(); _heldReleases.Clear(); _sequences.Clear(); _idem.Clear();
+        _seqFormats.Clear(); _submittedBy.Clear();
         _paidAmounts.Clear(); _baseCurrency = string.Empty;
         _lastPrice.Clear(); _autoApproveThreshold = 0;
     }
 
+    /// <summary>Applies one scenario number-sequence rule: stores the format
+    /// and starts the counter at Start, or after the max seeded number when
+    /// seeded rows already run higher.</summary>
+    public void ConfigureSequence(string prefix, string? format, int padding, long start)
+    {
+        var next = Math.Max(start, MaxSeededNumber(prefix) + 1);
+        _sequences[prefix] = next;
+        _seqFormats[prefix] = (format, padding);
+    }
+
+    private long MaxSeededNumber(string prefix)
+    {
+        var max = 0L;
+        void Scan(string number)
+        {
+            if (NumberSequences.TryParseNumber(prefix, number, out var n) && n > max) max = n;
+        }
+        foreach (var so in _salesOrders.Keys) Scan(so);
+        foreach (var pr in _prs.Keys) Scan(pr);
+        foreach (var po in _pos.Keys) Scan(po);
+        foreach (var r in _receipts.Keys) Scan(r);
+        foreach (var a in _asns.Keys) Scan(a);
+        foreach (var h in _holds.Keys) Scan(h);
+        foreach (var v in _vendors.Keys) Scan(v);
+        foreach (var p in _payments.Keys) Scan(p);
+        foreach (var i in _invoices.Values) if (i.Voucher is not null) Scan(i.Voucher);
+        return max;
+    }
+
     private string Next(string prefix)
     {
-        _sequences.TryGetValue(prefix, out var n);
-        n++;
-        _sequences[prefix] = n;
-        return $"{prefix}-{n}";
+        if (!_sequences.TryGetValue(prefix, out var n)) n = NumberSequences.DefaultStart;
+        _sequences[prefix] = n + 1;
+        var (format, padding) = _seqFormats.TryGetValue(prefix, out var cfg)
+            ? cfg
+            : ((string?)null, NumberSequences.DefaultPadding);
+        return NumberSequences.FormatNumber(prefix, format, padding, n);
     }
 
     private T Idem<T>(string key, Func<T> create)
@@ -166,6 +200,83 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         return Task.FromResult<IReadOnlyList<AsnDto>>(
             _asns.Values.Where(a => !receivedPo.Contains(a.PoNumber))
                 .OrderBy(a => a.AsnNumber).ToList());
+    }
+
+    public Task<IReadOnlyList<SalesOrder>> GetSalesOrdersAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<SalesOrder>>(
+            _salesOrders.Values.OrderBy(s => s.SoNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<PurchaseRequisition>> GetPurchaseRequisitionsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PurchaseRequisition>>(
+            _prs.Values.OrderBy(p => p.PrNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<PurchaseOrder>> GetPurchaseOrdersAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PurchaseOrder>>(
+            _pos.Values.OrderBy(p => p.PoNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<VendorInvoice>> GetVendorInvoicesAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<VendorInvoice>>(
+            _invoices.Values
+                .OrderBy(i => i.VendorId, StringComparer.Ordinal)
+                .ThenBy(i => i.SupplierInvoiceNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<Payment>> GetPaymentsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Payment>>(
+            _payments.Values.OrderBy(p => p.PaymentNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<ShipmentReceipt>> GetShipmentReceiptsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ShipmentReceipt>>(
+            _receipts.Values.OrderBy(r => r.ReceiptNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<AsnDto>> GetAsnsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<AsnDto>>(
+            _asns.Values.OrderBy(a => a.AsnNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<PurchaseOrder>> GetPurchaseOrdersByVendorAsync(string vendorId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PurchaseOrder>>(
+            _pos.Values.Where(p => string.Equals(p.VendorId, vendorId, StringComparison.Ordinal))
+                .OrderBy(p => p.PoNumber, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<ItemDto>> GetItemsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ItemDto>>(
+            _items.Values.OrderBy(i => i.ItemId, StringComparer.Ordinal).ToList());
+
+    public Task<IReadOnlyList<InventoryTransaction>> GetAllInventoryTransactionsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<InventoryTransaction>>(
+            _inventory.Values.SelectMany(l => l)
+                .OrderBy(t => t.ItemId, StringComparer.Ordinal)
+                .ThenBy(t => t.ReceiptNumber, StringComparer.Ordinal)
+                .ThenBy(t => t.LotRef, StringComparer.Ordinal)
+                .ThenBy(t => t.Status).ToList());
+
+    public Task<IReadOnlyList<PendingApprovalDto>> GetPendingApprovalsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PendingApprovalDto>>(
+            _routedTo
+                .Where(kv => IsAwaitingDecision(kv.Key.Type, kv.Key.Number))
+                .OrderBy(kv => kv.Key.Type, StringComparer.Ordinal)
+                .ThenBy(kv => kv.Key.Number, StringComparer.Ordinal)
+                .Select(kv => new PendingApprovalDto(
+                    kv.Key.Type,
+                    kv.Key.Number,
+                    kv.Value,
+                    _submittedBy.TryGetValue(kv.Key, out var by) && !string.IsNullOrWhiteSpace(by)
+                        ? by
+                        : _requesters.GetValueOrDefault(kv.Key, string.Empty),
+                    ResolveDocumentAmount(kv.Key.Type, kv.Key.Number)))
+                .ToList());
+
+    private bool IsAwaitingDecision(string documentType, string documentNumber)
+    {
+        return documentType switch
+        {
+            "PR" => _prs.TryGetValue(documentNumber, out var pr) && pr.Status == PrStatus.Submitted,
+            "PO" => _pos.TryGetValue(documentNumber, out var po) && po.ApprovalStatus == PoApprovalStatus.InReview,
+            "Invoice" => _invoices.Values
+                .FirstOrDefault(i => InvoiceDoc(i.VendorId, i.SupplierInvoiceNumber) == documentNumber) is { } inv
+                && inv.Status == InvoiceStatus.Matched,
+            "Payment" => _payments.TryGetValue(documentNumber, out var pay) && pay.Status == PaymentStatus.Submitted,
+            _ => false
+        };
     }
 
     public Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default) =>
@@ -305,6 +416,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 default: throw new InvalidOperationException($"Unknown document {documentType} {documentNumber}.");
             }
             _routedTo[(documentType, documentNumber)] = routedTo;
+            _submittedBy[(documentType, documentNumber)] = submittedBy;
             return null;
         });
         return Task.CompletedTask;
@@ -848,6 +960,39 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             _payments[posted.PaymentNumber] = posted;
             _payments.Remove(draftPaymentNumber);
             return posted;
+        }));
+
+    public Task<VendorDto> CreateVendorAsync(string? vendorId, string name, string countryOfOrigin, string paymentTermsId, string? email, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"vendor:{idempotencyKey}", () =>
+        {
+            if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Vendor name is required.");
+            if (string.IsNullOrWhiteSpace(countryOfOrigin)) throw new InvalidOperationException("Vendor country of origin is required.");
+            if (string.IsNullOrWhiteSpace(paymentTermsId)) throw new InvalidOperationException("Payment terms are required.");
+            if (!_terms.ContainsKey(paymentTermsId)) throw new InvalidOperationException($"Unknown payment terms {paymentTermsId}.");
+            string id;
+            if (string.IsNullOrWhiteSpace(vendorId))
+            {
+                do { id = Next("V"); } while (_vendors.ContainsKey(id));
+            }
+            else
+            {
+                id = vendorId;
+                if (_vendors.ContainsKey(id)) throw new InvalidOperationException($"Vendor {id} already exists.");
+            }
+            var vendor = new VendorDto(id, name, countryOfOrigin, false, null, paymentTermsId, email);
+            _vendors[id] = vendor;
+            return vendor;
+        }));
+
+    public Task<ItemDto> CreateItemAsync(string itemId, string description, string unit, bool isCritical, int unitsPerCarton, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
+        Task.FromResult(Idem($"item:{idempotencyKey}", () =>
+        {
+            if (string.IsNullOrWhiteSpace(itemId)) throw new InvalidOperationException("Item id is required.");
+            if (_items.ContainsKey(itemId)) throw new InvalidOperationException($"Item {itemId} already exists.");
+            if (unitsPerCarton <= 0) throw new InvalidOperationException("Units per carton must be above zero.");
+            var item = new ItemDto(itemId, description, isCritical, unitsPerCarton, unit);
+            _items[itemId] = item;
+            return item;
         }));
 
     public Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default) =>
