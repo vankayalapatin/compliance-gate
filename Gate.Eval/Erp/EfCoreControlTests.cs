@@ -39,6 +39,7 @@ public sealed class EfCoreControlTests
         await using var fx = await EfCoreTestDb.CreateAsync();
         var applied = await fx.Db.Database.GetAppliedMigrationsAsync();
         Assert.Contains("20261030000000_InitialCreate", applied);
+        Assert.Contains("20261101000000_SequenceFormatAndSubmittedBy", applied);
         var vendors = await fx.Adapter.GetVendorsAsync();
         Assert.Equal(3, vendors.Count);
     }
