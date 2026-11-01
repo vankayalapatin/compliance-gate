@@ -15,6 +15,8 @@ public sealed class SequenceRow
 {
     public string Name { get; set; } = string.Empty;
     public long Next { get; set; }
+    public string? Format { get; set; }
+    public int Padding { get; set; }
 }
 
 public sealed class IdempotencyRow
@@ -409,4 +411,5 @@ public sealed class RoutedToRow
     public string DocumentType { get; set; } = string.Empty;
     public string DocumentNumber { get; set; } = string.Empty;
     public string RoutedTo { get; set; } = string.Empty;
+    public string SubmittedBy { get; set; } = string.Empty;
 }
