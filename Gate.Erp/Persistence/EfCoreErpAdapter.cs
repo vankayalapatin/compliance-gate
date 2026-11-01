@@ -46,17 +46,28 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
     {
         var row = await _db.Sequences.FindAsync([prefix], ct).ConfigureAwait(false);
         long n;
+        string? format;
+        int padding;
         if (row is null)
         {
-            n = 1;
-            _db.Sequences.Add(new SequenceRow { Name = prefix, Next = 2 });
+            n = NumberSequences.DefaultStart;
+            format = null;
+            padding = NumberSequences.DefaultPadding;
+            _db.Sequences.Add(new SequenceRow
+            {
+                Name = prefix, Next = n + 1, Format = format, Padding = padding
+            });
         }
         else
         {
             n = row.Next;
             row.Next = n + 1;
+            format = row.Format;
+            // Rows written before the format migration carry padding 0, which
+            // means unpadded; only loader-configured and new rows are padded.
+            padding = row.Padding;
         }
-        return $"{prefix}-{n}";
+        return NumberSequences.FormatNumber(prefix, format, padding, n);
     }
 
     private async Task<T?> ReplayAsync<T>(string key, CancellationToken ct)
@@ -259,6 +270,177 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
             if (dto is not null) result.Add(dto);
         }
         return result;
+    }
+
+    public async Task<IReadOnlyList<SalesOrder>> GetSalesOrdersAsync(CancellationToken ct = default)
+    {
+        var numbers = await _db.SalesOrders.OrderBy(s => s.SoNumber)
+            .Select(s => s.SoNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<SalesOrder>();
+        foreach (var number in numbers)
+        {
+            var so = await GetSalesOrderAsync(number, ct).ConfigureAwait(false);
+            if (so is not null) result.Add(so);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<PurchaseRequisition>> GetPurchaseRequisitionsAsync(CancellationToken ct = default)
+    {
+        var numbers = await _db.PurchaseRequisitions.OrderBy(p => p.PrNumber)
+            .Select(p => p.PrNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<PurchaseRequisition>();
+        foreach (var number in numbers)
+        {
+            var pr = await GetPrAsync(number, ct).ConfigureAwait(false);
+            if (pr is not null) result.Add(pr);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<PurchaseOrder>> GetPurchaseOrdersAsync(CancellationToken ct = default)
+    {
+        var numbers = await _db.PurchaseOrders.OrderBy(p => p.PoNumber)
+            .Select(p => p.PoNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<PurchaseOrder>();
+        foreach (var number in numbers)
+        {
+            var po = await ReadPoAsync(number, ct).ConfigureAwait(false);
+            if (po is not null) result.Add(po);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<VendorInvoice>> GetVendorInvoicesAsync(CancellationToken ct = default)
+    {
+        var keys = await _db.VendorInvoices
+            .OrderBy(i => i.VendorId).ThenBy(i => i.SupplierInvoiceNumber)
+            .Select(i => new { i.VendorId, i.SupplierInvoiceNumber }).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<VendorInvoice>();
+        foreach (var key in keys)
+        {
+            var inv = await ReadInvoiceAsync(key.VendorId, key.SupplierInvoiceNumber, ct).ConfigureAwait(false);
+            if (inv is not null) result.Add(inv);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<Payment>> GetPaymentsAsync(CancellationToken ct = default)
+    {
+        var numbers = await _db.Payments.OrderBy(p => p.PaymentNumber)
+            .Select(p => p.PaymentNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<Payment>();
+        foreach (var number in numbers)
+        {
+            var pay = await ReadPaymentAsync(number, ct).ConfigureAwait(false);
+            if (pay is not null) result.Add(pay);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<ShipmentReceipt>> GetShipmentReceiptsAsync(CancellationToken ct = default)
+    {
+        var numbers = await _db.ShipmentReceipts.OrderBy(r => r.ReceiptNumber)
+            .Select(r => r.ReceiptNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<ShipmentReceipt>();
+        foreach (var number in numbers)
+        {
+            var receipt = await GetReceiptAsync(number, ct).ConfigureAwait(false);
+            if (receipt is not null) result.Add(receipt);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<AsnDto>> GetAsnsAsync(CancellationToken ct = default)
+    {
+        var numbers = await _db.Asns.OrderBy(a => a.AsnNumber)
+            .Select(a => a.AsnNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<AsnDto>();
+        foreach (var number in numbers)
+        {
+            var asn = await GetAsnAsync(number, ct).ConfigureAwait(false);
+            if (asn is not null) result.Add(asn);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<PurchaseOrder>> GetPurchaseOrdersByVendorAsync(string vendorId, CancellationToken ct = default)
+    {
+        var numbers = await _db.PurchaseOrders.Where(p => p.VendorId == vendorId)
+            .OrderBy(p => p.PoNumber).Select(p => p.PoNumber).ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<PurchaseOrder>();
+        foreach (var number in numbers)
+        {
+            var po = await ReadPoAsync(number, ct).ConfigureAwait(false);
+            if (po is not null) result.Add(po);
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<ItemDto>> GetItemsAsync(CancellationToken ct = default)
+    {
+        var rows = await _db.Items.OrderBy(i => i.ItemId).ToListAsync(ct).ConfigureAwait(false);
+        return rows.Select(i => new ItemDto(i.ItemId, i.Description, i.IsCritical, i.UnitsPerCarton, i.Unit)).ToList();
+    }
+
+    public async Task<IReadOnlyList<InventoryTransaction>> GetAllInventoryTransactionsAsync(CancellationToken ct = default)
+    {
+        var rows = await _db.InventoryTransactions
+            .OrderBy(t => t.ItemId).ThenBy(t => t.ReceiptRef).ThenBy(t => t.LotRef).ThenBy(t => t.Status)
+            .ToListAsync(ct).ConfigureAwait(false);
+        return rows.Select(t => new InventoryTransaction(t.ItemId, t.ReceiptRef, t.LotRef, Enum<InventoryStatus>(t.Status), t.Quantity)).ToList();
+    }
+
+    public async Task<IReadOnlyList<PendingApprovalDto>> GetPendingApprovalsAsync(CancellationToken ct = default)
+    {
+        var routed = await _db.RoutedTo
+            .OrderBy(r => r.DocumentType).ThenBy(r => r.DocumentNumber)
+            .ToListAsync(ct).ConfigureAwait(false);
+        var result = new List<PendingApprovalDto>();
+        foreach (var row in routed)
+        {
+            if (!await IsAwaitingDecisionAsync(row.DocumentType, row.DocumentNumber, ct).ConfigureAwait(false)) continue;
+            var submittedBy = row.SubmittedBy;
+            if (string.IsNullOrWhiteSpace(submittedBy))
+            {
+                submittedBy = (await _db.Requesters
+                    .FindAsync([row.DocumentType, row.DocumentNumber], ct).ConfigureAwait(false))?.Requester
+                    ?? string.Empty;
+            }
+            var amount = await ResolveDocumentAmountAsync(row.DocumentType, row.DocumentNumber, ct).ConfigureAwait(false);
+            result.Add(new PendingApprovalDto(row.DocumentType, row.DocumentNumber, row.RoutedTo, submittedBy, amount));
+        }
+        return result;
+    }
+
+    private async Task<bool> IsAwaitingDecisionAsync(string documentType, string documentNumber, CancellationToken ct)
+    {
+        switch (documentType)
+        {
+            case "PR":
+            {
+                var pr = await _db.PurchaseRequisitions.FindAsync([documentNumber], ct).ConfigureAwait(false);
+                return pr is not null && Enum<PrStatus>(pr.Status) == PrStatus.Submitted;
+            }
+            case "PO":
+            {
+                var po = await _db.PurchaseOrders.FindAsync([documentNumber], ct).ConfigureAwait(false);
+                return po is not null && Enum<PoApprovalStatus>(po.ApprovalStatus) == PoApprovalStatus.InReview;
+            }
+            case "Invoice":
+            {
+                var parts = documentNumber.Split('/', 2);
+                if (parts.Length != 2) return false;
+                var inv = await _db.VendorInvoices.FindAsync([parts[0], parts[1]], ct).ConfigureAwait(false);
+                return inv is not null && Enum<InvoiceStatus>(inv.Status) == InvoiceStatus.Matched;
+            }
+            case "Payment":
+            {
+                var pay = await _db.Payments.FindAsync([documentNumber], ct).ConfigureAwait(false);
+                return pay is not null && Enum<PaymentStatus>(pay.Status) == PaymentStatus.Submitted;
+            }
+            default: return false;
+        }
     }
 
     public async Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default)
