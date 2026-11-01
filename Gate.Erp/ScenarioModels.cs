@@ -42,6 +42,46 @@ public sealed record ScenarioCartonPlan(int UnitsPerCarton, int Cartons);
 
 public sealed record ScenarioSmallPo(string Key, string Item, decimal Quantity, string Vendor, decimal UnitPrice);
 
+/// <summary>One number-sequence rule: how the loader formats and starts the
+/// counter for a document prefix. Format is a template with {prefix} and
+/// {number} slots; the number is zero-padded to Padding digits (0 means no
+/// padding). Start is the first number unless seeded rows already run higher,
+/// in which case the sequence continues after the max seeded number.</summary>
+public sealed record ScenarioNumberSequence(
+    string Prefix,
+    string? Format = null,
+    int Padding = 0,
+    long Start = 1);
+
+public sealed record ScenarioLifecycleInvoice(string Key, string Number, decimal Quantity, string Stage);
+
+/// <summary>Lifecycle seed intents: one non-short item plus its vendor carry
+/// a document at every P2P stage so list pages, pending queues, and history
+/// have rows on a fresh load. All quantities, references, supplier numbers,
+/// and routing names come from the scenario file, never from code. Invoice
+/// stages are received, matched, submitted, approved, or posted; the posted
+/// invoices back the draft, submitted, approved, and posted seed payments.
+/// Total invoice quantity must not exceed the backbone receipt.</summary>
+public sealed record ScenarioLifecycle(
+    string Item,
+    string Vendor,
+    decimal PrDraftQty,
+    decimal PrSubmittedQty,
+    string PrSubmittedTo,
+    decimal PrApprovedQty,
+    decimal PoDraftQty,
+    decimal PoSubmittedQty,
+    string PoSubmittedTo,
+    decimal PoApprovedQty,
+    decimal BackboneQty,
+    string PackingSlip,
+    string Asn,
+    string Carton,
+    string Lot,
+    string InvoiceSubmittedTo,
+    string PaySubmittedTo,
+    IReadOnlyList<ScenarioLifecycleInvoice> Invoices);
+
 public sealed record ScenarioFile(
     [property: JsonPropertyName("$comment")] string? Comment,
     string Name,
@@ -60,7 +100,9 @@ public sealed record ScenarioFile(
     IReadOnlyList<ScenarioDelegation> Delegations,
     decimal AutoApproveUnder,
     ScenarioCartonPlan CartonPlan,
-    IReadOnlyList<ScenarioSmallPo> SmallPos);
+    IReadOnlyList<ScenarioSmallPo> SmallPos,
+    IReadOnlyList<ScenarioNumberSequence>? NumberSequences = null,
+    ScenarioLifecycle? Lifecycle = null);
 
 /// <summary>One generated id recorded for a scenario event.</summary>
 public sealed record ManifestDocument(string Event, string DocType, string Number);
