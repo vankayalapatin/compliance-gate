@@ -50,9 +50,9 @@ internal sealed class EfCoreTestDb : IAsyncDisposable
         db.BomLines.Add(new BomRow { ItemId = "GLASS-1", ComponentItemId = "SCR-9", QtyPer = 2 });
         db.InventoryTransactions.Add(new InventoryRow { RowId = Guid.NewGuid().ToString("N"), ItemId = "BAT-1", ReceiptRef = "OPENING", LotRef = "OPENING", Status = "Available", Quantity = 10 });
         db.InventoryTransactions.Add(new InventoryRow { RowId = Guid.NewGuid().ToString("N"), ItemId = "SCR-9", ReceiptRef = "OPENING", LotRef = "OPENING", Status = "Available", Quantity = 50 });
-        db.Vendors.Add(new VendorRow { VendorId = "V-A", Name = "Cheap Cells Ltd", CountryOfOrigin = "CN", IsBlocked = false, BlockReason = null, PaymentTermsId = "NET0" });
-        db.Vendors.Add(new VendorRow { VendorId = "V-B", Name = "Compliant Cells Inc", CountryOfOrigin = "MX", IsBlocked = false, BlockReason = null, PaymentTermsId = "NET0" });
-        db.Vendors.Add(new VendorRow { VendorId = "V-C", Name = "Screws Co", CountryOfOrigin = "US", IsBlocked = false, BlockReason = null, PaymentTermsId = "NET0" });
+        db.Vendors.Add(new VendorRow { VendorId = "V-A", Name = "CinderVolt Energy Ltd", CountryOfOrigin = "CN", IsBlocked = false, BlockReason = null, PaymentTermsId = "NET0" });
+        db.Vendors.Add(new VendorRow { VendorId = "V-B", Name = "Meridian Cellworks Inc", CountryOfOrigin = "MX", IsBlocked = false, BlockReason = null, PaymentTermsId = "NET0" });
+        db.Vendors.Add(new VendorRow { VendorId = "V-C", Name = "Formosa Fasteners Co", CountryOfOrigin = "US", IsBlocked = false, BlockReason = null, PaymentTermsId = "NET0" });
         db.VendorBanks.Add(new VendorBankRow { VendorId = "V-A", AccountRef = "BANK-A-TEST", Verified = true, VerifiedAt = stamp });
         db.VendorBanks.Add(new VendorBankRow { VendorId = "V-B", AccountRef = "BANK-B-TEST", Verified = true, VerifiedAt = stamp });
         db.VendorBanks.Add(new VendorBankRow { VendorId = "V-C", AccountRef = "BANK-C-TEST", Verified = true, VerifiedAt = stamp });
