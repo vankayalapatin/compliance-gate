@@ -1,4 +1,4 @@
-// Adapter-backed view models for Decisions, Cases, and Records. Every
+// Adapter-backed view models for Decisions, Cases, and ERP. Every
 // value comes from the case cache, the run manifest, the scenario file
 // (carton-to-image display mapping only), or the ERP adapter at runtime.
 // Missing documents surface as notes; nothing is silently omitted.
@@ -205,7 +205,7 @@ public sealed class CaseViewService
     private ChainStepVm PrStep(Case kase) =>
         kase.PrNumber is null
             ? new ChainStepVm(CaseChain.PrLabel, null, "not created", null)
-            : new ChainStepVm(CaseChain.PrLabel, kase.PrNumber, "linked", "Detail on Records.");
+            : new ChainStepVm(CaseChain.PrLabel, kase.PrNumber, "linked", "Detail on ERP.");
 
     private async Task<ChainStepVm> PoStepAsync(Case kase, CancellationToken ct)
     {
@@ -236,22 +236,64 @@ public sealed class CaseViewService
     private static ChainStepVm ReceiptStep(Case kase) =>
         kase.ReceiptNumber is null
             ? new ChainStepVm(CaseChain.ReceiptLabel, null, "not posted", null)
-            : new ChainStepVm(CaseChain.ReceiptLabel, kase.ReceiptNumber, "posted", "Detail on Records.");
+            : new ChainStepVm(CaseChain.ReceiptLabel, kase.ReceiptNumber, "posted", "Detail on ERP.");
 
     private static ChainStepVm InvoicesStep(Case kase) =>
         kase.Invoices.Count == 0
             ? new ChainStepVm(CaseChain.InvoicesLabel, null, "none", null)
             : new ChainStepVm(CaseChain.InvoicesLabel, string.Join("; ", kase.Invoices.Select(i => $"{i.VendorId}/{i.SupplierInvoiceNumber}")),
-                $"{kase.Invoices.Count} invoice(s)", "Detail on Records.");
+                $"{kase.Invoices.Count} invoice(s)", "Detail on ERP.");
 
     private static ChainStepVm PaymentsStep(Case kase) =>
         kase.PaymentNumbers.Count == 0
             ? new ChainStepVm(CaseChain.PaymentsLabel, null, "none", null)
             : new ChainStepVm(CaseChain.PaymentsLabel, string.Join("; ", kase.PaymentNumbers),
-                $"{kase.PaymentNumbers.Count} payment(s)", "Detail on Records.");
+                $"{kase.PaymentNumbers.Count} payment(s)", "Detail on ERP.");
 
     public async Task<IReadOnlyList<UserDto>> ListUsersAsync(CancellationToken ct = default) =>
         await _erp.GetUsersAsync(ct).ConfigureAwait(false);
+
+    /// <summary>Run-manifest document numbers: rows matching them are seeded
+    /// history ("opening data"). Shared with the ERP area so record pages
+    /// chip opening rows the same way the ledgers do.</summary>
+    public (IReadOnlySet<string> Opening, IReadOnlyList<string> Notes) GetOpeningNumbers()
+    {
+        var notes = new List<string>();
+        var opening = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var doc in ReadManifestDocuments(notes))
+        {
+            opening.Add(doc.Number);
+        }
+
+        return (opening, notes);
+    }
+
+    /// <summary>Dock images plus cached reads for one receipt: the ASN's
+    /// cartons map through the scenario carton-to-image display mapping,
+    /// reads come from the offline vision cache only. Shared with the ERP
+    /// receipt record page.</summary>
+    public ReceiptVm GetReceiptMedia(ShipmentReceipt receipt, AsnDto? asn)
+    {
+        var notes = new List<string>();
+        var cartonImages = ReadCartonImages(notes);
+        var asns = asn is null ? [] : (IReadOnlyList<AsnDto>)[asn];
+        var images = ImagesForReceipt(receipt, asns, cartonImages);
+        var reads = new List<string>(notes);
+        foreach (var image in images)
+        {
+            try
+            {
+                var read = _photos.TryCachedRead(image);
+                reads.Add(read is null ? $"{image}: no cached read." : $"{image}: {read}");
+            }
+            catch (Exception ex)
+            {
+                reads.Add($"{image}: cached read refused ({ex.Message}).");
+            }
+        }
+
+        return new ReceiptVm(receipt, images, reads);
+    }
 
     public async Task<IReadOnlyList<DelegationDto>> ListDelegationsAsync(CancellationToken ct = default) =>
         await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);

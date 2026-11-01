@@ -1,7 +1,7 @@
 {
   "$comment": "Company KB v1 (company truth). SYNC overlap sections (items, sourcingPolicies, mirror*) mirror scenarios/demo-v1.json exactly; KB-only sections (legalEntities, sitesWarehouses, fiscalCalendar, approvalMatrix, regionRules, documents) are KB truth with no scenario counterpart. Fiscal calendar unseeded in v1: history reports use the labeled trailing-12-month approximation. All names and numbers fictional.",
   "version": "kbv1",
-  "hash": "45e285bfbb40ef0042c186630487ecbf856426e44453cce643eaddaee029198a",
+  "hash": "31b8fc7c373908b0648d447380e6b824f0a21a177401cdf91da2abff7aa7c24a",
   "legalEntities": [
     { "id": "LE-1", "name": "Fictional Smart-Glasses Co", "country": "US", "currency": "USD" }
   ],
@@ -40,9 +40,9 @@
     { "id": "Finn Finance", "role": "payment-approver", "signingLimit": 100000, "limitCurrency": "USD" }
   ],
   "mirrorVendors": [
-    { "id": "V-A", "name": "Cheap Cells Ltd", "country": "CN" },
-    { "id": "V-B", "name": "Compliant Cells Inc", "country": "MX" },
-    { "id": "V-C", "name": "Screws Co", "country": "TW" }
+    { "id": "V-A", "name": "CinderVolt Energy Ltd", "country": "CN" },
+    { "id": "V-B", "name": "Meridian Cellworks Inc", "country": "MX" },
+    { "id": "V-C", "name": "Formosa Fasteners Co", "country": "TW" }
   ],
   "mirrorPaymentTerms": [
     { "id": "NET30", "netDays": 30 }

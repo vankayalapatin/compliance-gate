@@ -1,0 +1,727 @@
+@page "/erp/new/{Kind}"
+@page "/erp/new/{Kind}/{Preset}"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Gate.Contracts
+@using Gate.Web.Components.Erp
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject ErpViewService Views
+@inject ErpActionService Actions
+@inject ActingUserState Acting
+@inject NavigationManager Nav
+@inject ILogger<ErpNew> Log
+
+<PageTitle>ERP — New @ErpModules.TitleFor(Kind)</PageTitle>
+
+<div class="gate-erp">
+    <ErpSidebar CurrentSlug="@Kind" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">New @NewTitle()</p>
+                <p class="gate-page-sub"><a href="@ErpModules.ListHref(Kind)">&#8592; @ErpModules.TitleFor(Kind)</a> · acting as @(Acting.CurrentUserId ?? "nobody selected")</p>
+            </div>
+        </div>
+        @if (_loading)
+        {
+            <p class="gate-meta">Loading…</p>
+        }
+        else
+        {
+            @foreach (var note in _notes)
+            {
+                <div class="gate-notice" role="alert">@note</div>
+            }
+            @if (_error is not null)
+            {
+                <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @_error</div>
+            }
+            @if (!ErpRoutes.CanCreate(Kind))
+            {
+                <p class="gate-meta">This list has no create: ASNs arrive from vendors, stock derives from receipts, and holds derive from decisions.</p>
+            }
+            else if (Kind == "so")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-currency">Currency *</label>
+                        <input class="gate-input" id="erp-new-currency" value="@_currency" @onchange="e => _currency = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <p class="gate-section-title">Lines *</p>
+                    @foreach (var row in _soRows)
+                    {
+                        <div class="gate-erp-formrow">
+                            <input class="gate-input" placeholder="Item id *" aria-label="Item id" value="@row.Item" @onchange="e => row.Item = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Quantity *" aria-label="Quantity" value="@row.Qty" @onchange="e => row.Qty = e.Value?.ToString() ?? string.Empty" />
+                            <button class="gate-btn" disabled="@_busy" @onclick="() => _soRows.Remove(row)">Remove</button>
+                        </div>
+                    }
+                    <div class="gate-actions">
+                        <button class="gate-btn" disabled="@_busy" @onclick='() => _soRows.Add(new SoRow())'>Add line</button>
+                    </div>
+                </section>
+            }
+            else if (Kind == "pr")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-requester">Requester (user id) *</label>
+                        <input class="gate-input" id="erp-new-requester" value="@_requester" @onchange="e => _requester = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <p class="gate-section-title">Lines *</p>
+                    @foreach (var row in _prRows)
+                    {
+                        <div class="gate-erp-formrow">
+                            <input class="gate-input" placeholder="Item id *" aria-label="Item id" value="@row.Item" @onchange="e => row.Item = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Quantity *" aria-label="Quantity" value="@row.Qty" @onchange="e => row.Qty = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Unit *" aria-label="Unit" value="@row.Unit" @onchange="e => row.Unit = e.Value?.ToString() ?? string.Empty" />
+                            <button class="gate-btn" disabled="@_busy" @onclick="() => _prRows.Remove(row)">Remove</button>
+                        </div>
+                    }
+                    <div class="gate-actions">
+                        <button class="gate-btn" disabled="@_busy" @onclick='() => _prRows.Add(new PrRow())'>Add line</button>
+                    </div>
+                </section>
+            }
+            else if (Kind == "po")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-pr">Approved PR *</label>
+                        <select class="gate-select" id="erp-new-pr" value="@_prNumber" @onchange="e => _prNumber = e.Value?.ToString() ?? string.Empty">
+                            <option value="">— pick —</option>
+                            @foreach (var pr in _approvedPrs)
+                            {
+                                <option value="@pr.PrNumber">@pr.PrNumber — @ErpFormat.Money(pr.EstimatedAmount, pr.Currency) (@pr.Requester)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-vendor">Vendor *</label>
+                        <select class="gate-select" id="erp-new-vendor" value="@_vendor" @onchange="e => _vendor = e.Value?.ToString() ?? string.Empty">
+                            <option value="">— pick —</option>
+                            @foreach (var vendor in _vendors)
+                            {
+                                <option value="@vendor.VendorId">@vendor.VendorId — @vendor.Name@(vendor.IsBlocked ? " (blocked)" : "")</option>
+                            }
+                        </select>
+                    </div>
+                    <p class="gate-meta">Lines come from the PR; the vendor prices them. A blocked vendor or missing price is refused by the ERP.</p>
+                </section>
+            }
+            else if (Kind == "invoice")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-supplierinv">Supplier invoice number *</label>
+                        <input class="gate-input" id="erp-new-supplierinv" value="@_supplierInv" @onchange="e => _supplierInv = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-invpo">Purchase order</label>
+                        <select class="gate-select" id="erp-new-invpo" value="@_poNumber" @onchange="OnInvoicePoChanged">
+                            <option value="">— none —</option>
+                            @foreach (var po in _pos)
+                            {
+                                <option value="@po.PoNumber">@po.PoNumber — @po.VendorId (@po.ApprovalStatus / @po.DocStatus)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-invvendor">Vendor *</label>
+                        <select class="gate-select" id="erp-new-invvendor" value="@_vendor" @onchange="e => _vendor = e.Value?.ToString() ?? string.Empty">
+                            <option value="">— pick —</option>
+                            @foreach (var vendor in _vendors)
+                            {
+                                <option value="@vendor.VendorId">@vendor.VendorId — @vendor.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <p class="gate-section-title">Lines *</p>
+                    @foreach (var row in _invRows)
+                    {
+                        <div class="gate-erp-formrow">
+                            <input class="gate-input" placeholder="PO line" aria-label="PO line" value="@row.PoLineRef" @onchange="e => row.PoLineRef = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Quantity *" aria-label="Quantity" value="@row.Qty" @onchange="e => row.Qty = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Unit price *" aria-label="Unit price" value="@row.Price" @onchange="e => row.Price = e.Value?.ToString() ?? string.Empty" />
+                            <button class="gate-btn" disabled="@_busy" @onclick="() => _invRows.Remove(row)">Remove</button>
+                        </div>
+                    }
+                    <div class="gate-actions">
+                        <button class="gate-btn" disabled="@_busy" @onclick='() => _invRows.Add(new InvRow())'>Add line</button>
+                    </div>
+                </section>
+            }
+            else if (Kind == "payment")
+            {
+                <section class="gate-card">
+                    <p class="gate-card-title">Payment run over due invoices</p>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-payupto">Pay up to (empty means no date limit)</label>
+                        <input class="gate-input" id="erp-new-payupto" type="date" value="@_payUpTo" @onchange="e => _payUpTo = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    @if (_openInvoices.Count == 0)
+                    {
+                        <p class="gate-meta">No open invoices to pay.</p>
+                    }
+                    else
+                    {
+                        <table class="gate-table">
+                            <thead>
+                                <tr><th>Pay</th><th>Invoice</th><th>Vendor</th><th>Status</th><th class="gate-num">Total</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var inv in _openInvoices)
+                                {
+                                    var doc = ErpDocTypes.InvoiceDocNumber(inv.VendorId, inv.SupplierInvoiceNumber);
+                                    <tr>
+                                        <td><input type="checkbox" checked="@_paySelection.Contains(doc)" @onchange="e => TogglePay(doc, e.Value)" aria-label="Pay @doc" /></td>
+                                        <td>@inv.SupplierInvoiceNumber</td>
+                                        <td>@inv.VendorId</td>
+                                        <td>@inv.Status</td>
+                                        <td class="gate-num">@ErpFormat.Money(inv.Lines.Sum(l => l.Quantity * l.UnitPrice), inv.Currency)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+            else if (Kind == "receipt")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-asn">ASN *</label>
+                        <select class="gate-select" id="erp-new-asn" value="@_asnNumber" @onchange="OnAsnChanged">
+                            <option value="">— pick —</option>
+                            @foreach (var asn in _asns)
+                            {
+                                <option value="@asn.AsnNumber">@asn.AsnNumber — PO @asn.PoNumber (@asn.Cartons.Count carton(s))</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-slip">Supplier packing slip *</label>
+                        <input class="gate-input" id="erp-new-slip" value="@_slip" @onchange="e => _slip = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <p class="gate-section-title">Lines * (one row per carton, PO line required)</p>
+                    @foreach (var row in _rcpRows)
+                    {
+                        <div class="gate-erp-formrow">
+                            <input class="gate-input" placeholder="PO line *" aria-label="PO line" value="@row.PoLineRef" @onchange="e => row.PoLineRef = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Received *" aria-label="Received" value="@row.Received" @onchange="e => row.Received = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Quarantined" aria-label="Quarantined" value="@row.Quarantined" @onchange="e => row.Quarantined = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Rejected" aria-label="Rejected" value="@row.Rejected" @onchange="e => row.Rejected = e.Value?.ToString() ?? string.Empty" />
+                            <input class="gate-input" placeholder="Lot *" aria-label="Lot" value="@row.LotRef" @onchange="e => row.LotRef = e.Value?.ToString() ?? string.Empty" />
+                            <button class="gate-btn" disabled="@_busy" @onclick="() => _rcpRows.Remove(row)">Remove</button>
+                        </div>
+                        <div class="gate-field">
+                            <input class="gate-input" placeholder="Condition note" aria-label="Condition note" value="@row.Condition" @onchange="e => row.Condition = e.Value?.ToString() ?? string.Empty" />
+                        </div>
+                    }
+                    <div class="gate-actions">
+                        <button class="gate-btn" disabled="@_busy" @onclick='() => _rcpRows.Add(new RcpRow())'>Add line</button>
+                    </div>
+                </section>
+            }
+            else if (Kind == "vendor")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-vendorid">Vendor id (blank mints one, override allowed)</label>
+                        <input class="gate-input" id="erp-new-vendorid" value="@_vendorId" @onchange="e => _vendorId = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-vendorname">Name *</label>
+                        <input class="gate-input" id="erp-new-vendorname" value="@_vendorName" @onchange="e => _vendorName = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-country">Country of origin *</label>
+                        <input class="gate-input" id="erp-new-country" value="@_country" @onchange="e => _country = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-terms">Payment terms id *</label>
+                        <input class="gate-input" id="erp-new-terms" value="@_terms" @onchange="e => _terms = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-email">Email</label>
+                        <input class="gate-input" id="erp-new-email" value="@_email" @onchange="e => _email = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <p class="gate-meta">Terms must exist; the ERP refuses unknown terms.</p>
+                </section>
+            }
+            else if (Kind == "item")
+            {
+                <section class="gate-card">
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-itemid">Item id (manual) *</label>
+                        <input class="gate-input" id="erp-new-itemid" value="@_itemId" @onchange="e => _itemId = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-itemdesc">Description *</label>
+                        <input class="gate-input" id="erp-new-itemdesc" value="@_itemDesc" @onchange="e => _itemDesc = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-itemunit">Unit *</label>
+                        <input class="gate-input" id="erp-new-itemunit" value="@_itemUnit" @onchange="e => _itemUnit = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-checkline" for="erp-new-critical">
+                            <input type="checkbox" id="erp-new-critical" checked="@_critical" @onchange="e => _critical = e.Value is true" />
+                            Critical part
+                        </label>
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="erp-new-pack">Units per carton *</label>
+                        <input class="gate-input" id="erp-new-pack" value="@_packSize" @onchange="e => _packSize = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                </section>
+            }
+            @if (ErpRoutes.CanCreate(Kind))
+            {
+                <div class="gate-actions">
+                    <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="SubmitAsync">Create @NewTitle()</button>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string Kind { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Preset { get; set; }
+
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private readonly List<string> _notes = [];
+
+    private IReadOnlyList<PurchaseRequisition> _approvedPrs = [];
+    private IReadOnlyList<PurchaseOrder> _pos = [];
+    private IReadOnlyList<VendorDto> _vendors = [];
+    private IReadOnlyList<AsnDto> _asns = [];
+    private IReadOnlyList<VendorInvoice> _openInvoices = [];
+
+    private string _currency = string.Empty;
+    private string _requester = string.Empty;
+    private string _prNumber = string.Empty;
+    private string _vendor = string.Empty;
+    private string _poNumber = string.Empty;
+    private string _supplierInv = string.Empty;
+    private string _slip = string.Empty;
+    private string _payUpTo = string.Empty;
+    private string _asnNumber = string.Empty;
+    private string _vendorId = string.Empty;
+    private string _vendorName = string.Empty;
+    private string _country = string.Empty;
+    private string _terms = string.Empty;
+    private string _email = string.Empty;
+    private string _itemId = string.Empty;
+    private string _itemDesc = string.Empty;
+    private string _itemUnit = string.Empty;
+    private bool _critical;
+    private string _packSize = string.Empty;
+
+    private readonly List<SoRow> _soRows = [new()];
+    private readonly List<PrRow> _prRows = [new()];
+    private readonly List<InvRow> _invRows = [new()];
+    private readonly List<RcpRow> _rcpRows = [new()];
+    private readonly HashSet<string> _paySelection = new(StringComparer.Ordinal);
+
+    private sealed class SoRow
+    {
+        public string Item { get; set; } = string.Empty;
+        public string Qty { get; set; } = string.Empty;
+    }
+
+    private sealed class PrRow
+    {
+        public string Item { get; set; } = string.Empty;
+        public string Qty { get; set; } = string.Empty;
+        public string Unit { get; set; } = string.Empty;
+    }
+
+    private sealed class InvRow
+    {
+        public string PoLineRef { get; set; } = string.Empty;
+        public string Qty { get; set; } = string.Empty;
+        public string Price { get; set; } = string.Empty;
+    }
+
+    private sealed class RcpRow
+    {
+        public string PoLineRef { get; set; } = string.Empty;
+        public string Received { get; set; } = string.Empty;
+        public string Quarantined { get; set; } = string.Empty;
+        public string Rejected { get; set; } = string.Empty;
+        public string LotRef { get; set; } = string.Empty;
+        public string Condition { get; set; } = string.Empty;
+    }
+
+    private string NewTitle() =>
+        Kind switch
+        {
+            "so" => "sales order",
+            "pr" => "purchase requisition",
+            "po" => "purchase order",
+            "invoice" => "invoice",
+            "payment" => "payment draft",
+            "receipt" => "receipt",
+            "vendor" => "vendor",
+            "item" => "item",
+            _ => ErpModules.TitleFor(Kind),
+        };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+        _notes.Clear();
+        try
+        {
+            _requester = Acting.CurrentUserId ?? string.Empty;
+            if (Kind == "po")
+            {
+                await LoadPickersAsync(needPrs: true, needVendors: true);
+                if (Preset is not null)
+                {
+                    _prNumber = Preset;
+                }
+            }
+            else if (Kind == "invoice")
+            {
+                await LoadPickersAsync(needPos: true, needVendors: true);
+                if (Preset is not null)
+                {
+                    _poNumber = Preset;
+                    var po = await Views.GetPoAsync(Preset);
+                    if (po is not null)
+                    {
+                        _vendor = po.VendorId;
+                    }
+                }
+            }
+            else if (Kind == "payment")
+            {
+                var open = await Views.ListOpenInvoicesAsync();
+                _openInvoices = open.Rows;
+                _notes.AddRange(open.Notes);
+            }
+            else if (Kind == "receipt")
+            {
+                var asns = await Views.ListUnreceivedAsnsAsync();
+                _asns = asns.Rows;
+                _notes.AddRange(asns.Notes);
+                if (Preset is not null)
+                {
+                    _asnNumber = Preset;
+                    await PrefillReceiptRowsAsync(Preset);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "New-form pickers failed for {Kind}.", Kind);
+            _notes.Add($"Picker lists failed: {ex.Message}.");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadPickersAsync(bool needPrs = false, bool needPos = false, bool needVendors = false)
+    {
+        if (needPrs)
+        {
+            var prs = await Views.ListApprovedPrsAsync();
+            _approvedPrs = prs.Rows;
+            _notes.AddRange(prs.Notes);
+        }
+
+        if (needPos)
+        {
+            var pos = await Views.ListPurchaseOrdersAsync();
+            _pos = pos.Rows;
+            _notes.AddRange(pos.Notes);
+        }
+
+        if (needVendors)
+        {
+            var vendors = await Views.ListVendorsAsync();
+            _vendors = vendors.Rows;
+            _notes.AddRange(vendors.Notes);
+        }
+    }
+
+    private void OnInvoicePoChanged(ChangeEventArgs e)
+    {
+        _poNumber = e.Value?.ToString() ?? string.Empty;
+        var po = _pos.FirstOrDefault(p =>
+            string.Equals(p.PoNumber, _poNumber, StringComparison.Ordinal));
+        if (po is not null)
+        {
+            _vendor = po.VendorId;
+        }
+    }
+
+    private async Task OnAsnChanged(ChangeEventArgs e)
+    {
+        _asnNumber = e.Value?.ToString() ?? string.Empty;
+        await PrefillReceiptRowsAsync(_asnNumber);
+    }
+
+    private async Task PrefillReceiptRowsAsync(string asnNumber)
+    {
+        _rcpRows.Clear();
+        if (string.IsNullOrWhiteSpace(asnNumber))
+        {
+            return;
+        }
+
+        var asn = _asns.FirstOrDefault(a =>
+                string.Equals(a.AsnNumber, asnNumber, StringComparison.Ordinal))
+            ?? await Views.GetAsnAsync(asnNumber);
+        if (asn is null)
+        {
+            _notes.Add($"ASN {asnNumber} not found in ERP; receipt lines stay blank.");
+            return;
+        }
+
+        _poNumber = asn.PoNumber;
+        foreach (var carton in asn.Cartons)
+        {
+            _rcpRows.Add(new RcpRow { LotRef = carton.LotRef });
+        }
+    }
+
+    private void TogglePay(string doc, object? value)
+    {
+        if (value is true)
+        {
+            _paySelection.Add(doc);
+        }
+        else
+        {
+            _paySelection.Remove(doc);
+        }
+    }
+
+    private static bool TryQty(string raw, out decimal qty) =>
+        decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out qty) && qty > 0;
+
+    private static bool TryMoney(string raw, out decimal amount) =>
+        decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out amount) && amount >= 0;
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var outcome = Kind switch
+            {
+                "so" => await SubmitSalesOrderAsync(),
+                "pr" => await SubmitPrAsync(),
+                "po" => await Actions.CreatePoAsync(_prNumber, _vendor, Acting.CurrentUserId),
+                "invoice" => await SubmitInvoiceAsync(),
+                "payment" => await SubmitPaymentAsync(),
+                "receipt" => await SubmitReceiptAsync(),
+                "vendor" => await Actions.CreateVendorAsync(
+                    _vendorId, _vendorName, _country, _terms, _email, Acting.CurrentUserId),
+                "item" => await SubmitItemAsync(),
+                _ => new ErpOutcome(false, $"This list has no create."),
+            };
+            if (outcome.Ok && outcome.CreatedKey is not null)
+            {
+                Nav.NavigateTo(ErpRoutes.RecordHref(Kind, outcome.CreatedKey, outcome.CreatedKey2));
+            }
+            else if (!outcome.Ok)
+            {
+                _error = outcome.Message;
+            }
+            else
+            {
+                _error = "The ERP accepted the create but returned no number; reload the list.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Create {Kind} failed.", Kind);
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task<ErpOutcome> SubmitSalesOrderAsync()
+    {
+        var lines = new List<SalesOrderLine>();
+        foreach (var row in _soRows)
+        {
+            if (string.IsNullOrWhiteSpace(row.Item) && string.IsNullOrWhiteSpace(row.Qty))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(row.Item) || !TryQty(row.Qty.Trim(), out var qty))
+            {
+                return Task.FromResult(new ErpOutcome(false, "Every sales-order line needs an item and a quantity above zero."));
+            }
+
+            lines.Add(new SalesOrderLine(row.Item.Trim(), qty));
+        }
+
+        return Actions.CreateSalesOrderAsync(_currency, lines, Acting.CurrentUserId);
+    }
+
+    private Task<ErpOutcome> SubmitPrAsync()
+    {
+        var lines = new List<PurchaseRequisitionLine>();
+        foreach (var row in _prRows)
+        {
+            if (string.IsNullOrWhiteSpace(row.Item)
+                && string.IsNullOrWhiteSpace(row.Qty)
+                && string.IsNullOrWhiteSpace(row.Unit))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(row.Item)
+                || !TryQty(row.Qty.Trim(), out var qty)
+                || string.IsNullOrWhiteSpace(row.Unit))
+            {
+                return Task.FromResult(new ErpOutcome(false, "Every PR line needs an item, a quantity above zero, and a unit."));
+            }
+
+            lines.Add(new PurchaseRequisitionLine(row.Item.Trim(), qty, row.Unit.Trim()));
+        }
+
+        return Actions.CreatePrAsync(_requester, lines, Acting.CurrentUserId);
+    }
+
+    private Task<ErpOutcome> SubmitInvoiceAsync()
+    {
+        var lines = new List<InvoiceLineInput>();
+        foreach (var row in _invRows)
+        {
+            if (string.IsNullOrWhiteSpace(row.PoLineRef)
+                && string.IsNullOrWhiteSpace(row.Qty)
+                && string.IsNullOrWhiteSpace(row.Price))
+            {
+                continue;
+            }
+
+            if (!TryQty(row.Qty.Trim(), out var qty) || !TryMoney(row.Price.Trim(), out var price))
+            {
+                return Task.FromResult(new ErpOutcome(false, "Every invoice line needs a quantity above zero and a unit price."));
+            }
+
+            lines.Add(new InvoiceLineInput(
+                string.IsNullOrWhiteSpace(row.PoLineRef) ? null : row.PoLineRef.Trim(),
+                qty, price));
+        }
+
+        return Actions.CreateInvoiceAsync(
+            _supplierInv, _vendor, string.IsNullOrWhiteSpace(_poNumber) ? null : _poNumber,
+            lines, Acting.CurrentUserId);
+    }
+
+    private Task<ErpOutcome> SubmitPaymentAsync()
+    {
+        var invoices = new List<InvoiceKey>();
+        foreach (var doc in _paySelection.OrderBy(d => d, StringComparer.Ordinal))
+        {
+            var parts = doc.Split('/', 2);
+            if (parts.Length == 2)
+            {
+                invoices.Add(new InvoiceKey(parts[0], parts[1]));
+            }
+        }
+
+        DateOnly? payUpTo = null;
+        if (!string.IsNullOrWhiteSpace(_payUpTo))
+        {
+            if (!DateOnly.TryParse(_payUpTo.Trim(), CultureInfo.InvariantCulture, out var parsed))
+            {
+                return Task.FromResult(new ErpOutcome(false, "Pay-up-to date is not a valid date."));
+            }
+
+            payUpTo = parsed;
+        }
+
+        return Actions.CreatePaymentDraftAsync(invoices, payUpTo, Acting.CurrentUserId);
+    }
+
+    private async Task<ErpOutcome> SubmitReceiptAsync()
+    {
+        var asn = _asns.FirstOrDefault(a =>
+                string.Equals(a.AsnNumber, _asnNumber, StringComparison.Ordinal))
+            ?? (string.IsNullOrWhiteSpace(_asnNumber) ? null : await Views.GetAsnAsync(_asnNumber));
+        if (asn is null)
+        {
+            return new ErpOutcome(false, "ASN is required.");
+        }
+
+        var lines = new List<ReceiptLine>();
+        foreach (var row in _rcpRows)
+        {
+            var blank = string.IsNullOrWhiteSpace(row.PoLineRef)
+                && string.IsNullOrWhiteSpace(row.Received)
+                && string.IsNullOrWhiteSpace(row.Quarantined)
+                && string.IsNullOrWhiteSpace(row.Rejected)
+                && string.IsNullOrWhiteSpace(row.LotRef)
+                && string.IsNullOrWhiteSpace(row.Condition);
+            if (blank)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(row.PoLineRef)
+                || !TryQty(row.Received.Trim(), out var received)
+                || string.IsNullOrWhiteSpace(row.LotRef))
+            {
+                return new ErpOutcome(false, "Every receipt line needs a PO line, a received quantity above zero, and a lot.");
+            }
+
+            if (!TrySplit(row.Quarantined, out var quarantined) || !TrySplit(row.Rejected, out var rejected))
+            {
+                return new ErpOutcome(false, "Quarantined and rejected quantities must be zero or above.");
+            }
+
+            lines.Add(new ReceiptLine(row.PoLineRef.Trim(), received, quarantined, rejected,
+                row.LotRef.Trim(),
+                string.IsNullOrWhiteSpace(row.Condition) ? null : row.Condition.Trim()));
+        }
+
+        return await Actions.PostReceiptAsync(asn.PoNumber, _slip, lines, Acting.CurrentUserId);
+
+        static bool TrySplit(string raw, out decimal qty)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                qty = 0;
+                return true;
+            }
+
+            return decimal.TryParse(raw.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out qty)
+                && qty >= 0;
+        }
+    }
+
+    private Task<ErpOutcome> SubmitItemAsync()
+    {
+        if (!int.TryParse(_packSize.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pack))
+        {
+            return Task.FromResult(new ErpOutcome(false, "Units per carton must be a whole number above zero."));
+        }
+
+        return Actions.CreateItemAsync(
+            _itemId, _itemDesc, _itemUnit, _critical, pack, Acting.CurrentUserId);
+    }
+}

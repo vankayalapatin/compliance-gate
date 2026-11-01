@@ -30,7 +30,7 @@ public sealed class ScreeningTests
     [Fact]
     public async Task BundledSnapshotPassesCleanVendorSilently()
     {
-        var verdict = await ScreeningVerdictAsync(new ComplianceEngine(), "Compliant Cells Inc");
+        var verdict = await ScreeningVerdictAsync(new ComplianceEngine(), "Meridian Cellworks Inc");
         Assert.Equal(VerdictKind.Pass, verdict.Kind);
         Assert.False(string.IsNullOrWhiteSpace(verdict.Source));
     }

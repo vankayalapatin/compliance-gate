@@ -10,7 +10,7 @@ public sealed class CorpExceptionTests
     private readonly ComplianceEngine _engine = new();
 
     private static VendorDto Vendor() =>
-        new("V-A", "Cheap Cells Ltd", "CN", false, null, "NET0");
+        new("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
 
     private static IReadOnlyList<VendorDocumentDto> FullDocs() =>
     [

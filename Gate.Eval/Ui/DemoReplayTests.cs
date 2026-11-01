@@ -1,11 +1,17 @@
-// Demo reset-plus-replay: progress reports each step as it lands, the
-// report carries the full result, replay mode pins on, and the whole run
-// is local (scenario reload, cache clear, cache counts — zero live calls).
-// Paths arrive via in-memory configuration only — this class never touches
-// GATE_MANIFEST / GATE_SCENARIO (see RecordsViewTests). No live calls.
+// Reset-plus-replay behind the top-bar controls: progress reports each step
+// as it lands, the report carries the full result, replay mode pins on, and
+// the whole run is local (scenario reload, cache clear, cache counts — zero
+// live calls). Service tests prove the run; component tests prove the top
+// bar asks to confirm before any reset. Paths arrive via in-memory
+// configuration only — this class never touches GATE_MANIFEST /
+// GATE_SCENARIO (see RecordsViewTests). No live calls.
+using Bunit;
 using Gate.Erp;
+using Gate.Web.Components;
 using Gate.Web.Services;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Gate.Eval.Ui;
 
@@ -86,5 +92,50 @@ public sealed class DemoReplayTests
         Assert.Null(report.Error);
         Assert.True(report.IsReplay);
         Assert.NotEmpty(report.Steps);
+    }
+
+    [Fact]
+    public void TopBar_ResetAsksToConfirmFirst()
+    {
+        var (service, replay, _) = Create();
+        using var ctx = new TestContext();
+        ctx.Services.AddSingleton(service);
+        ctx.Services.AddSingleton(replay);
+        ctx.Services.AddSingleton<ILogger<ReplayControls>>(UiTestLogger<ReplayControls>.Instance);
+
+        using var page = ctx.RenderComponent<ReplayControls>();
+        Assert.Contains("Live", page.Markup);
+
+        page.Find("button").Click();
+        Assert.Contains("Confirm reset", page.Markup);
+        Assert.False(replay.IsReplay);
+
+        page.FindAll("button")
+            .First(b => b.TextContent.Contains("Cancel", StringComparison.Ordinal))
+            .Click();
+        Assert.DoesNotContain("Confirm reset", page.Markup);
+        Assert.False(replay.IsReplay);
+    }
+
+    [Fact]
+    public void TopBar_ConfirmRunsResetAndReplay()
+    {
+        var (service, replay, _) = Create();
+        using var ctx = new TestContext();
+        ctx.Services.AddSingleton(service);
+        ctx.Services.AddSingleton(replay);
+        ctx.Services.AddSingleton<ILogger<ReplayControls>>(UiTestLogger<ReplayControls>.Instance);
+
+        using var page = ctx.RenderComponent<ReplayControls>();
+        page.Find("button").Click();
+        page.FindAll("button")
+            .First(b => b.TextContent.Contains("Confirm reset", StringComparison.Ordinal))
+            .Click();
+
+        page.WaitForAssertion(
+            () => Assert.Contains("Reset done", page.Markup),
+            TimeSpan.FromSeconds(30));
+        Assert.True(replay.IsReplay);
+        Assert.Contains("Replay", page.Markup);
     }
 }

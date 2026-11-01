@@ -23,7 +23,7 @@ else if (_files is null)
 }
 else if (_files.Count == 0)
 {
-    <p class="gate-meta">No cases in the cache yet. Place an order from the outside world, or reset-and-replay from Demo.</p>
+    <p class="gate-meta">No cases in the cache yet. Place an order from the outside world.</p>
 }
 else
 {
@@ -32,16 +32,20 @@ else
         var pending = file.Decisions.Count(d => d.Status == DecisionStatus.Pending);
         <section class="gate-card">
             <div class="gate-card-head">
-                <p class="gate-card-title"><a href="cases/@file.Case.CaseId">@file.Case.CaseId</a></p>
+                <p class="gate-card-title"><a href="cases/@file.Case.CaseId">@CaseDisplay.DisplayName(file.Case)</a></p>
                 <div class="gate-card-badges">
                     <span class="gate-badge">@file.Case.Stage</span>
+                    @if (file.Case.IsOpeningData)
+                    {
+                        <span class="gate-chip">opening data</span>
+                    }
                     @if (pending > 0)
                     {
                         <span class="gate-badge gate-badge-dark">@pending pending</span>
                     }
                 </div>
             </div>
-            <p class="gate-meta">SO @file.Case.SoNumber · item @file.Case.ItemId · scenario @file.Case.ScenarioName</p>
+            <p class="gate-meta">@file.Case.CaseId · SO @file.Case.SoNumber · item @file.Case.ItemId · scenario @file.Case.ScenarioName</p>
             <ChainStrip Steps="@CaseChain.Strip(file.Case)" />
             @if (file.Case.BlockedByRuleId is null)
             {
@@ -63,7 +67,10 @@ else
     {
         try
         {
-            _files = await CaseStore.ListAsync();
+            // Real agent runs only: opening-data shells stay out of the list.
+            _files = (await CaseStore.ListAsync())
+                .Where(f => !f.Case.IsOpeningData)
+                .ToList();
         }
         catch (Exception ex)
         {

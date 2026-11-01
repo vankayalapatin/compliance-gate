@@ -1,6 +1,7 @@
 /* ComplianceGate shell + Decisions (round 1). Hand-built and monochrome:
-   white surfaces, thin light-grey borders, near-black text. The only color
-   anywhere here is the subtle purple agent-made chip. No gradients. */
+   white cards on a very light grey app background, thin light-grey
+   borders, near-black text. The only color anywhere here is the subtle
+   purple agent-made chip. No gradients. */
 
 :root {
     --gate-bg: #ffffff;
@@ -12,6 +13,13 @@
     --gate-agent-bg: #faf5ff;
     --gate-agent-border: #e9d5ff;
     --gate-agent-text: #6b21a8;
+    /* Card skin: every section sits in its own white card on the app grey. */
+    --gate-app-bg: #f3f4f6;
+    --gate-card-bg: #ffffff;
+    --gate-card-border: #e5e7eb;
+    --gate-card-radius: 8px;
+    --gate-card-pad: 12px 14px;
+    --gate-card-gap: 12px;
 }
 
 html, body {
@@ -20,7 +28,7 @@ html, body {
 
 body {
     margin: 0;
-    background: var(--gate-bg);
+    background: var(--gate-app-bg);
     color: var(--gate-text);
     font-size: 14px;
     line-height: 1.45;
@@ -77,6 +85,21 @@ body {
     margin-left: auto;
     display: flex;
     align-items: center;
+}
+
+/* Round 3: reset + replay lives in the top bar. Compact inline cluster. */
+.gate-replay {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.gate-replay .gate-meta {
+    margin: 0;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .gate-acting {
@@ -170,13 +193,14 @@ body {
     margin: 6px 0 0;
 }
 
-/* Cards: small, white, thin grey border. */
+/* Cards: every section in its own white card — rounded corners, soft
+   border, clear padding, space between cards. */
 .gate-card {
-    border: 1px solid var(--gate-border);
-    border-radius: 8px;
-    background: #fff;
-    padding: 12px 14px;
-    margin: 0 0 10px;
+    border: 1px solid var(--gate-card-border);
+    border-radius: var(--gate-card-radius);
+    background: var(--gate-card-bg);
+    padding: var(--gate-card-pad);
+    margin: 0 0 var(--gate-card-gap);
 }
 
 .gate-card-head {
@@ -544,6 +568,154 @@ body {
     gap: 6px;
     font-size: 13px;
     margin: 4px 0;
+}
+
+/* Round 3: ERP and Outside are a full app shell. The page breaks out of
+   the centered column; the sidebar sits at the left edge full-height below
+   the top bar, and the content fills the rest. Narrow screens stack. */
+.gate-main:has(.gate-erp) {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}
+
+.gate-erp {
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+    min-height: calc(100vh - 53px);
+}
+
+.gate-erp-side {
+    width: 232px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--gate-border);
+    background: #fff;
+    padding: 12px;
+    position: sticky;
+    top: 52px;
+    height: calc(100vh - 52px);
+    overflow-y: auto;
+}
+
+.gate-erp-module {
+    margin-bottom: 4px;
+}
+
+.gate-erp-module-btn {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gate-text);
+    background: none;
+    border: none;
+    padding: 6px 4px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+}
+
+.gate-erp-module-btn:hover {
+    background: var(--gate-soft);
+}
+
+.gate-erp-caret {
+    display: inline-block;
+    width: 14px;
+    color: var(--gate-muted);
+}
+
+.gate-erp-links {
+    list-style: none;
+    margin: 2px 0 8px;
+    padding-left: 22px;
+}
+
+.gate-erp-links li {
+    margin: 2px 0;
+}
+
+.gate-erp-links a {
+    font-size: 13px;
+    color: #374151;
+    text-decoration: none;
+    padding: 3px 6px;
+    border-radius: 6px;
+    display: inline-block;
+}
+
+.gate-erp-links a:hover {
+    background: var(--gate-soft);
+    color: var(--gate-text);
+}
+
+.gate-erp-links a.active {
+    background: var(--gate-chip);
+    color: var(--gate-text);
+    font-weight: 650;
+}
+
+.gate-erp-body {
+    flex: 1;
+    min-width: 0;
+    padding: 20px 16px 48px;
+}
+
+/* Sidebar leaf buttons (Outside vendors): look like sidebar links but never
+   navigate — selection stays in the page. */
+.gate-erp-link-btn {
+    font-size: 13px;
+    color: #374151;
+    text-decoration: none;
+    padding: 3px 6px;
+    border-radius: 6px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+}
+
+.gate-erp-link-btn:hover {
+    background: var(--gate-soft);
+    color: var(--gate-text);
+}
+
+.gate-erp-link-btn.active {
+    background: var(--gate-chip);
+    color: var(--gate-text);
+    font-weight: 650;
+}
+
+.gate-erp-formrow {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    align-items: center;
+}
+
+.gate-erp-formrow .gate-input {
+    flex: 1;
+    min-width: 0;
+}
+
+@media (max-width: 720px) {
+    .gate-erp {
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .gate-erp-side {
+        width: auto;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--gate-border);
+        padding-bottom: 8px;
+        position: static;
+        overflow: visible;
+    }
+
+    .gate-erp-formrow {
+        flex-wrap: wrap;
+    }
 }
 
 /* Framework bits kept from the template. */

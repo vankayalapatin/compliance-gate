@@ -1,0 +1,56 @@
+@rendermode InteractiveServer
+@using Gate.Contracts
+<nav class="gate-erp-side" aria-label="Outside actors">
+    <div class="gate-erp-module">
+        <button class="gate-erp-module-btn" @onclick='() => Select.InvokeAsync("shop")' aria-current="@(Selected == "shop" ? "page" : null)">
+            <span class="gate-erp-caret" aria-hidden="true">▸</span>
+            Customer shop
+        </button>
+    </div>
+    <div class="gate-erp-module">
+        <button class="gate-erp-module-btn" @onclick="ToggleSuppliers" aria-expanded="@_suppliersOpen">
+            <span class="gate-erp-caret" aria-hidden="true">@(_suppliersOpen ? "▾" : "▸")</span>
+            Suppliers (@Vendors.Count)
+        </button>
+        @if (_suppliersOpen)
+        {
+            <ul class="gate-erp-links">
+                @if (Vendors.Count == 0)
+                {
+                    <li><span class="gate-meta">No vendors in the ERP.</span></li>
+                }
+                @foreach (var vendor in Vendors)
+                {
+                    var key = $"vendor:{vendor.VendorId}";
+                    <li>
+                        <button type="button" class="gate-erp-link-btn @(Selected == key ? "active" : null)" aria-current="@(Selected == key ? "page" : null)" @onclick="() => Select.InvokeAsync(key)">@vendor.VendorId — @vendor.Name</button>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+    <div class="gate-erp-module">
+        <button class="gate-erp-module-btn" @onclick='() => Select.InvokeAsync("dock")' aria-current="@(Selected == "dock" ? "page" : null)">
+            <span class="gate-erp-caret" aria-hidden="true">▸</span>
+            Dock
+        </button>
+    </div>
+</nav>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<VendorDto> Vendors { get; set; } = [];
+
+    [Parameter]
+    public string Selected { get; set; } = "shop";
+
+    [Parameter]
+    public EventCallback<string> Select { get; set; }
+
+    private bool _suppliersOpen = true;
+
+    private void ToggleSuppliers()
+    {
+        _suppliersOpen = !_suppliersOpen;
+    }
+}

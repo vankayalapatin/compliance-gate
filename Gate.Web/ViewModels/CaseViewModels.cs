@@ -204,6 +204,57 @@ public static class AgentSummary
     }
 }
 
+/// <summary>Readable case display names for the Cases list and detail.
+/// Keys and routes stay the case id; the name is SO plus item plus a
+/// stage summary built from runtime values only.</summary>
+public static class CaseDisplay
+{
+    public const string NoAgentRun = "no agent run";
+
+    /// <summary>Live cases read SO plus item plus stage. Opening shells carry
+    /// no SO or item, so they read their seeded document ref plus stage;
+    /// a shell with no ref at all falls back to its case id.</summary>
+    public static string DisplayName(Case kase)
+    {
+        if (!string.IsNullOrWhiteSpace(kase.SoNumber) && !string.IsNullOrWhiteSpace(kase.ItemId))
+        {
+            return $"SO {kase.SoNumber} · {kase.ItemId} · {StageSummary(kase.Stage)}";
+        }
+
+        var doc = kase.PrNumber is not null ? $"PR {kase.PrNumber}"
+            : kase.PoNumber is not null ? $"PO {kase.PoNumber}"
+            : kase.Invoices.Count > 0
+                ? $"Invoice {kase.Invoices[0].VendorId}/{kase.Invoices[0].SupplierInvoiceNumber}"
+            : kase.PaymentNumbers.Count > 0 ? $"Payment {kase.PaymentNumbers[0]}"
+            : kase.AsnNumber is not null ? $"ASN {kase.AsnNumber}"
+            : kase.ReceiptNumber is not null ? $"Receipt {kase.ReceiptNumber}"
+            : kase.CaseId;
+        return $"{doc} · {StageSummary(kase.Stage)}";
+    }
+
+    public static string StageSummary(CaseStage stage) =>
+        stage switch
+        {
+            CaseStage.Created => "order created",
+            CaseStage.ShortfallComputed => "shortfall computed",
+            CaseStage.PrSubmitted => "PR submitted",
+            CaseStage.PrApproved => "PR approved",
+            CaseStage.VendorScreened => "vendor screened",
+            CaseStage.PoPlaced => "PO placed",
+            CaseStage.PoAcknowledged => "PO acknowledged",
+            CaseStage.AsnRecorded => "ASN recorded",
+            CaseStage.ReceiptPosted => "receipt posted",
+            CaseStage.DockChecked => "dock checked",
+            CaseStage.InvoiceMatched => "invoice matched",
+            CaseStage.PaymentRequested => "payment requested",
+            CaseStage.PaymentPartial => "partially paid",
+            CaseStage.Resolved => "resolved",
+            CaseStage.Closed => "closed",
+            CaseStage.Cancelled => "cancelled",
+            _ => stage.ToString(),
+        };
+}
+
 public sealed record CaseDetailVm(
     Case Case,
     IReadOnlyList<ChainStepVm> Chain,

@@ -1,11 +1,13 @@
-// Outside-world service tests: the supplier ASN post wires to its
-// endpoint path with the runner input shape, the inbox prefill derives
-// from the runtime PO plus scenario cartons, options carry carton details
-// plus the scenario order line, outcome text sanitizes endpoint paths to
-// friendly flow names, and no .razor shows an endpoint name. All sources
-// are temp (scenario, manifest, fake ERP, temp cache, temp dock dir —
-// never the demo numbers). Paths arrive via in-memory configuration, so
-// these tests never touch GATE_MANIFEST / GATE_SCENARIO. No live calls.
+// Outside-world service tests: document-driven portal lists (POs by
+// vendor, expected trucks), the ACK plus ASN posts wire to their endpoint
+// paths with the runner input shapes, the inbox prefill derives from the
+// runtime PO lines plus item pack sizes, the new shop order mints a shop
+// id and resolves the ERP-minted SO, outcome text sanitizes endpoint
+// paths to friendly flow names, and no .razor shows an endpoint name. All
+// sources are temp (scenario, manifest, fake ERP, temp cache, temp dock
+// dir — never the demo numbers). Paths arrive via in-memory
+// configuration, so these tests never touch GATE_MANIFEST /
+// GATE_SCENARIO. No live calls.
 using System.Net;
 using System.Text.Json;
 using Gate.Agent;
@@ -89,6 +91,7 @@ public sealed class OutsideWorldTests
         erp.SeedPaymentTerms(new PaymentTermsDto("NET0", 0));
         erp.SeedVendor(new VendorDto("V-1", "Mail Vendor", "US", false, null, "NET0", "vendor@test.example"));
         erp.SeedVendorPrice("V-1", "ITEM-1", 10m);
+        erp.SeedItem(new ItemDto("ITEM-1", "Test item", false, 6, "EA"));
         erp.SeedUser(new UserDto("requester", "requester", 50m, "TST"));
         erp.SeedUser(new UserDto("approver", "approver", 1_000_000m, "TST"));
 
@@ -225,7 +228,7 @@ public sealed class OutsideWorldTests
     }
 
     [Fact]
-    public async Task InboxPrefillDerivesFromRuntimePoAndCartons()
+    public async Task InboxPrefillDerivesFromRuntimePoAndPackSizes()
     {
         var h = Create();
         var (poNumber, poLineRef) = await SeedPoAsync(h);
@@ -244,10 +247,11 @@ public sealed class OutsideWorldTests
         Assert.NotNull(inbox.AsnPrefill);
         Assert.Equal($"ASN-{poNumber}", inbox.AsnPrefill.AsnNumber);
         Assert.Equal($"PACK-{poNumber}", inbox.AsnPrefill.PackingSlipNumber);
-        Assert.Equal(2, inbox.AsnPrefill.Cartons!.Count);
-        Assert.Equal($"{poNumber}-CTN-A", inbox.AsnPrefill.Cartons[0].LotRef);
-        Assert.Equal(6, inbox.AsnPrefill.Cartons[0].UnitsPerCarton);
-        Assert.Equal("ITEM-1", inbox.AsnPrefill.Cartons[1].ItemId);
+        var carton = Assert.Single(inbox.AsnPrefill.Cartons!);
+        Assert.Equal($"{poNumber}-{poLineRef}-1", carton.CartonId);
+        Assert.Equal("ITEM-1", carton.ItemId);
+        Assert.Equal(5, carton.UnitsPerCarton);
+        Assert.Equal($"{poNumber}-{poLineRef}-1-LOT", carton.LotRef);
 
         Assert.NotNull(inbox.InvoicePrefill);
         Assert.Equal($"INV-{poNumber}", inbox.InvoicePrefill.Number);
@@ -257,6 +261,166 @@ public sealed class OutsideWorldTests
         Assert.Equal(poLineRef, invLine.PoLineRef);
         Assert.Equal(5m, invLine.Quantity);
         Assert.Equal(10m, invLine.UnitPrice);
+    }
+
+    [Fact]
+    public async Task InboxForPoResolvesCaseAndShipPlan()
+    {
+        var h = Create();
+        var (poNumber, poLineRef) = await SeedPoAsync(h);
+        await WriteCaseAsync(h, poNumber);
+
+        var inbox = await h.Service.GetSupplierInboxForPoAsync(poNumber);
+
+        Assert.NotNull(inbox);
+        Assert.Equal("CASE-1", inbox.CaseId);
+        Assert.NotNull(inbox.Po);
+        Assert.Equal(poNumber, inbox.Po.PoNumber);
+        Assert.NotNull(inbox.AsnPrefill);
+        Assert.Equal($"{poNumber}-{poLineRef}-1", inbox.AsnPrefill.Cartons!.Single().CartonId);
+        Assert.NotNull(inbox.InvoicePrefill);
+    }
+
+    [Fact]
+    public async Task InboxForMissingPoReadsNull()
+    {
+        var h = Create();
+
+        Assert.Null(await h.Service.GetSupplierInboxForPoAsync("PO-MISSING"));
+    }
+
+    [Fact]
+    public void ShipPlanSplitsLinesByPackSize()
+    {
+        var notes = new List<string>();
+        var cartons = OutsideShipPlan.Build(
+            "PO-7",
+            [new InboxPoLineVm("PO-L1", "ITEM-1", 12m, 10m, 120m)],
+            _ => 5,
+            notes);
+
+        Assert.Equal(3, cartons.Count);
+        Assert.Equal("PO-7-PO-L1-1", cartons[0].CartonId);
+        Assert.Equal(5, cartons[0].UnitsPerCarton);
+        Assert.Equal("PO-7-PO-L1-3", cartons[2].CartonId);
+        Assert.Equal(2, cartons[2].UnitsPerCarton);
+        Assert.Equal(12, cartons.Sum(c => c.UnitsPerCarton));
+        Assert.All(cartons, c => Assert.EndsWith("-LOT", c.LotRef));
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void ShipPlanMissingPackSizeYieldsEditableRowPlusNote()
+    {
+        var notes = new List<string>();
+        var cartons = OutsideShipPlan.Build(
+            "PO-7",
+            [
+                new InboxPoLineVm("PO-L1", "ITEM-X", 4m, 10m, 40m),
+                new InboxPoLineVm("PO-L2", "ITEM-1", 0m, 10m, 0m),
+            ],
+            item => item == "ITEM-1" ? 5 : null,
+            notes);
+
+        var fallback = Assert.Single(cartons);
+        Assert.Equal("PO-7-PO-L1-1", fallback.CartonId);
+        Assert.Equal(0, fallback.UnitsPerCarton);
+        Assert.Equal(2, notes.Count);
+    }
+
+    [Fact]
+    public async Task SupplierPosListByVendor()
+    {
+        var h = Create();
+        var (poNumber, _) = await SeedPoAsync(h);
+
+        var listed = await h.Service.ListSupplierPosAsync("V-1");
+        var empty = await h.Service.ListSupplierPosAsync("V-NOPE");
+
+        Assert.Contains(listed.Pos, p => p.PoNumber == poNumber);
+        Assert.Empty(listed.Notes);
+        Assert.Empty(empty.Pos);
+    }
+
+    [Fact]
+    public async Task ExpectedTrucksLinkAsnToCase()
+    {
+        var h = Create();
+        var (poNumber, _) = await SeedPoAsync(h);
+        await WriteCaseAsync(h, poNumber);
+        await h.Erp.CreateAsnAsync(
+            "ASN-7", poNumber, RecordSource.Vendor, "V-1",
+            [new AsnCarton("CTN-7", "ITEM-1", 5, "LOT-7")], Guid.NewGuid().ToString("N"));
+
+        var trucks = await h.Service.ListExpectedTrucksAsync();
+
+        var truck = Assert.Single(trucks.Trucks);
+        Assert.Equal("ASN-7", truck.AsnNumber);
+        Assert.Equal(poNumber, truck.PoNumber);
+        Assert.Equal("V-1", truck.VendorId);
+        Assert.Equal("CASE-1", truck.CaseId);
+        Assert.Equal("CTN-7", Assert.Single(truck.Cartons).CartonId);
+    }
+
+    [Fact]
+    public async Task SendAckPostsAckShapeAndParsesPo()
+    {
+        var h = Create();
+        Respond(h, """{"poNumber":"PO-7","step":"Acknowledged","complete":false}""");
+
+        var outcome = await h.Service.SendAckAsync("CASE-1");
+
+        Assert.Equal(1, h.Http.CallCount);
+        Assert.Equal(SimulationUiService.AckPath, h.Http.LastRequest!.RequestUri!.AbsolutePath);
+        var sent = SentAs<SupplierAckInput>(h);
+        Assert.Equal("CASE-1", sent.CaseId);
+        Assert.False(string.IsNullOrWhiteSpace(sent.IdempotencyKey));
+        Assert.True(outcome.Ok, outcome.Summary);
+        Assert.Contains("PO-7", outcome.Summary);
+    }
+
+    [Fact]
+    public async Task SendAckRefusesBlankCase()
+    {
+        var h = Create();
+
+        var outcome = await h.Service.SendAckAsync("  ");
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("Case", outcome.Summary);
+        Assert.Equal(0, h.Http.CallCount);
+    }
+
+    [Fact]
+    public async Task SendNewShopOrderMintsShopIdAndResolvesSo()
+    {
+        var h = Create();
+        Respond(h, """{"caseIds":["CASE-1"],"advances":[]}""");
+        await WriteCaseAsync(h, "PO-7");
+
+        var placed = await h.Service.SendNewShopOrderAsync(new NewShopOrder(
+            "ui-outside", null, null, [new OrderLineForm("ITEM-1", 5m)], "TST"));
+
+        Assert.True(placed.Outcome.Ok, placed.Outcome.Summary);
+        Assert.StartsWith("SHOP-", placed.ShopOrderId);
+        var sent = SentAs<OrderWebhookInput>(h);
+        Assert.Equal(placed.ShopOrderId, sent.SoNumber);
+        Assert.Equal(["SO-7"], placed.MintedSoNumbers);
+    }
+
+    [Fact]
+    public async Task SendNewShopOrderRefusesNullAndEmptyLines()
+    {
+        var h = Create();
+
+        var nullPlaced = await h.Service.SendNewShopOrderAsync(null);
+        var emptyPlaced = await h.Service.SendNewShopOrderAsync(
+            new NewShopOrder("ui-outside", null, null, [], "TST"));
+
+        Assert.False(nullPlaced.Outcome.Ok);
+        Assert.False(emptyPlaced.Outcome.Ok);
+        Assert.Contains("line", emptyPlaced.Outcome.Summary);
+        Assert.Equal(0, h.Http.CallCount);
     }
 
     [Fact]
@@ -270,8 +434,7 @@ public sealed class OutsideWorldTests
         Assert.NotNull(inbox);
         Assert.Null(inbox.Po);
         Assert.Null(inbox.InvoicePrefill);
-        Assert.NotNull(inbox.AsnPrefill);
-        Assert.Equal("LOT-CTN-A", inbox.AsnPrefill.Cartons![0].LotRef);
+        Assert.Null(inbox.AsnPrefill);
         Assert.NotEmpty(inbox.Notes);
     }
 
@@ -292,6 +455,9 @@ public sealed class OutsideWorldTests
         Assert.Contains(
             "supplier shipment notice",
             OutsideWorldLabels.Sanitize($"POST {SimulationUiService.AsnPath} returned 400."));
+        Assert.Contains(
+            OutsideWorldLabels.AckFlow,
+            OutsideWorldLabels.Sanitize($"POST {SimulationUiService.AckPath} returned 400."));
         Assert.Contains(
             "dock photos",
             OutsideWorldLabels.Sanitize($"POST {SimulationUiService.DockPhotosPath} failed."));

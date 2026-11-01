@@ -154,7 +154,7 @@ public sealed class VendorEmailLiveTests
             "Thanks for flagging this — you're right, INV-MISS went out with an old PO reference on our side. " +
             "Sorry for the confusion.\n" +
             "\n" +
-            $"Please book those 5 units as invoice INV-FIX under Compliant Cells (V-B) against your PO {poNumber}, " +
+            $"Please book those 5 units as invoice INV-FIX under Meridian Cellworks (V-B) against your PO {poNumber}, " +
             $"line {poLine.PoLineRef}, at {price} per unit. " +
             "Everything else on the shipment stays as billed on INV-MAIN.\n" +
             "\n" +
@@ -162,7 +162,7 @@ public sealed class VendorEmailLiveTests
             "\n" +
             "Best regards,\n" +
             "Maria Santos\n" +
-            "Accounts Receivable, Compliant Cells Inc",
+            "Accounts Receivable, Meridian Cellworks Inc",
             InReplyTo: query.EmailId, EmailId: $"{caseId}-r-001"));
         Assert.Equal("V-B", reply.VendorId);
         var stored = await erp.GetInvoiceAsync("V-B", "INV-FIX");

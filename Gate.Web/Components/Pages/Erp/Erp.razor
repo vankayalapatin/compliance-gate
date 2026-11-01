@@ -1,0 +1,12 @@
+@page "/erp"
+@using Gate.Web.ViewModels
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        // No landing cards: straight to the first list (Sales orders).
+        var first = ErpModules.All[0].Lists[0].Slug;
+        Nav.NavigateTo(ErpModules.ListHref(first), replace: true);
+    }
+}

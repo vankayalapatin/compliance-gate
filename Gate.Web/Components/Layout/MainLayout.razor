@@ -5,11 +5,12 @@
     <nav class="gate-nav" aria-label="Primary">
         <NavLink href="" Match="NavLinkMatch.All">Decisions</NavLink>
         <NavLink href="cases">Cases</NavLink>
-        <NavLink href="records">Records</NavLink>
+        <NavLink href="erp">ERP</NavLink>
         <NavLink href="policies">Policies</NavLink>
-        <NavLink href="demo">Demo</NavLink>
     </nav>
     <div class="gate-topbar-right">
+        <ReplayControls @rendermode="InteractiveServer" />
+        <span class="gate-topbar-sep" aria-hidden="true"></span>
         <a class="gate-outside-btn" href="outside" title="The other side: customer shop, supplier inbox, dock camera">Outside world &#8594;</a>
         <span class="gate-topbar-sep" aria-hidden="true"></span>
         <UserSwitcher @rendermode="InteractiveServer" />

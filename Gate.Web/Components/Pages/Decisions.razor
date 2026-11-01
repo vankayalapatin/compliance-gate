@@ -37,11 +37,13 @@ else if (_selected is null)
 }
 else
 {
-    <p class="gate-section-title">Pending for @_selected (@_pending.Count)</p>
-    @if (_pending.Count == 0)
-    {
-        <p class="gate-meta">No pending decisions for @_selected.</p>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Pending for @_selected (@_pending.Count)</p>
+        @if (_pending.Count == 0)
+        {
+            <p class="gate-meta">No pending decisions for @_selected.</p>
+        }
+    </section>
     @foreach (var card in _pending)
     {
         var d = card.Decision;
@@ -124,33 +126,35 @@ else
         </section>
     }
 
-    <p class="gate-section-title">Decided by me (@_history.Count)</p>
-    @if (_history.Count == 0)
-    {
-        <p class="gate-meta">Nothing decided by @_selected yet.</p>
-    }
-    else
-    {
-        <table class="gate-table">
-            <thead>
-                <tr><th>Decision</th><th>Case</th><th>Kind</th><th>Outcome</th><th>Decided at</th><th>Comment</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var card in _history)
-                {
-                    var h = card.Decision;
-                    <tr>
-                        <td>@h.DecisionId — @h.Title</td>
-                        <td><a href="cases/@h.CaseId">@h.CaseId</a></td>
-                        <td>@h.Kind</td>
-                        <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
-                        <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
-                        <td>@(h.Comment ?? "—")</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Decided by me (@_history.Count)</p>
+        @if (_history.Count == 0)
+        {
+            <p class="gate-meta">Nothing decided by @_selected yet.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Decision</th><th>Case</th><th>Kind</th><th>Outcome</th><th>Decided at</th><th>Comment</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var card in _history)
+                    {
+                        var h = card.Decision;
+                        <tr>
+                            <td>@h.DecisionId — @h.Title</td>
+                            <td><a href="cases/@h.CaseId">@h.CaseId</a></td>
+                            <td>@h.Kind</td>
+                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
+                            <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                            <td>@(h.Comment ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
 
 }
 

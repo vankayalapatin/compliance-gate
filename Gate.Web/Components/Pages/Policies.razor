@@ -7,6 +7,7 @@
 @using Gate.Web.ViewModels
 @inject PolicyViewService Views
 @inject PolicyOutcomeService Outcomes
+@inject MemoSubmitService MemoSubmit
 @inject CaseViewService UsersSvc
 @inject ActingUserState Acting
 @inject ILogger<Policies> Log
@@ -24,6 +25,81 @@
     </div>
 </div>
 
+<section class="gate-card">
+    <p class="gate-card-title">New memo</p>
+    <p class="gate-meta">Paste a board memo or upload a text file. Intake runs it into a Spark proposal through the memo runner; the proposal, its questions, or the refusal shows below, and new cards join the lists.</p>
+    <div class="gate-field">
+        <label class="gate-label" for="memo-author">Author</label>
+        <input class="gate-input" id="memo-author" @bind="_memoAuthor" />
+    </div>
+    <div class="gate-field">
+        <label class="gate-label" for="memo-text">Memo text</label>
+        <textarea class="gate-textarea" id="memo-text" rows="6" @bind="_memoText"></textarea>
+    </div>
+    <div class="gate-field">
+        <label class="gate-label" for="memo-file">Upload a file instead (replaces the pasted text)</label>
+        <div><InputFile id="memo-file" accept=".txt,.md,.text,.markdown" OnChange="OnMemoFileAsync" /></div>
+        @if (_memoFileName is not null)
+        {
+            <p class="gate-meta">@_memoFileName loaded into the memo text.</p>
+        }
+    </div>
+    <div class="gate-actions">
+        <button class="gate-btn gate-btn-primary" disabled="@_memoBusy" @onclick="SubmitMemoAsync">Submit memo</button>
+        @if (_memoBusy)
+        {
+            <span class="gate-meta">Running intake + proposal…</span>
+        }
+    </div>
+    @if (_memoError is not null)
+    {
+        <ErrorBox Message="@_memoError" />
+    }
+    @if (_memoResult is not null)
+    {
+        @if (!_memoResult.Ok)
+        {
+            <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @_memoResult.Error</div>
+        }
+        else
+        {
+            <p class="gate-row"><span class="gate-label">Memo @_memoResult.MemoId</span> — @_memoResult.Summary</p>
+            @if (_memoResult.Statements.Count > 0)
+            {
+                <p class="gate-row"><span class="gate-label">Spark interpretation:</span></p>
+                <ul class="gate-list">
+                    @foreach (var statement in _memoResult.Statements)
+                    {
+                        <li>@statement</li>
+                    }
+                </ul>
+            }
+            @if (_memoResult.Questions.Count > 0)
+            {
+                <p class="gate-row"><span class="gate-label">Open questions:</span></p>
+                <ul class="gate-list">
+                    @foreach (var question in _memoResult.Questions)
+                    {
+                        <li>@question</li>
+                    }
+                </ul>
+            }
+            @if (_memoResult.ValidationErrors.Count > 0)
+            {
+                <div class="gate-notice gate-notice-error" role="alert">
+                    <strong>Validation refuses (@_memoResult.ValidationErrors.Count error(s)):</strong>
+                    <ul class="gate-list">
+                        @foreach (var error in _memoResult.ValidationErrors)
+                        {
+                            <li>@error</li>
+                        }
+                    </ul>
+                </div>
+            }
+        }
+    }
+</section>
+
 @if (_loadError is not null)
 {
     <ErrorBox Message="@_loadError" />
@@ -38,11 +114,13 @@ else if (_selected is null)
 }
 else
 {
-    <p class="gate-section-title">Pending questions for @_selected (@_pendingQuestions.Count)</p>
-    @if (_pendingQuestions.Count == 0)
-    {
-        <p class="gate-meta">No pending policy questions for @_selected.</p>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Pending questions for @_selected (@_pendingQuestions.Count)</p>
+        @if (_pendingQuestions.Count == 0)
+        {
+            <p class="gate-meta">No pending policy questions for @_selected.</p>
+        }
+    </section>
     @foreach (var card in _pendingQuestions)
     {
         var d = card.Decision;
@@ -136,11 +214,13 @@ else
         </section>
     }
 
-    <p class="gate-section-title">Pending approvals for @_selected (@_pendingApprovals.Count)</p>
-    @if (_pendingApprovals.Count == 0)
-    {
-        <p class="gate-meta">No pending policy approvals for @_selected.</p>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Pending approvals for @_selected (@_pendingApprovals.Count)</p>
+        @if (_pendingApprovals.Count == 0)
+        {
+            <p class="gate-meta">No pending policy approvals for @_selected.</p>
+        }
+    </section>
     @foreach (var card in _pendingApprovals)
     {
         var d = card.Decision;
@@ -449,51 +529,55 @@ else
         </section>
     }
 
-    <p class="gate-section-title">Decided by me (@(_historyQuestions.Count + _historyApprovals.Count))</p>
-    @if (_historyQuestions.Count + _historyApprovals.Count == 0)
-    {
-        <p class="gate-meta">Nothing decided by @_selected yet.</p>
-    }
-    else
-    {
-        <table class="gate-table">
-            <thead>
-                <tr><th>Decision</th><th>Memo</th><th>Kind</th><th>Outcome</th><th>Decided at</th><th>Comment</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var card in _historyQuestions)
-                {
-                    var h = card.Decision;
-                    <tr>
-                        <td>@h.DecisionId — @h.Title</td>
-                        <td>@card.MemoId</td>
-                        <td>PolicyQuestion</td>
-                        <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
-                        <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
-                        <td>@(h.Comment ?? "—")</td>
-                    </tr>
-                }
-                @foreach (var card in _historyApprovals)
-                {
-                    var h = card.Decision;
-                    <tr>
-                        <td>@h.DecisionId — @h.Title</td>
-                        <td>@card.MemoId</td>
-                        <td>PolicyApproval</td>
-                        <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
-                        <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
-                        <td>@(h.Comment ?? "—")</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Decided by me (@(_historyQuestions.Count + _historyApprovals.Count))</p>
+        @if (_historyQuestions.Count + _historyApprovals.Count == 0)
+        {
+            <p class="gate-meta">Nothing decided by @_selected yet.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Decision</th><th>Memo</th><th>Kind</th><th>Outcome</th><th>Decided at</th><th>Comment</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var card in _historyQuestions)
+                    {
+                        var h = card.Decision;
+                        <tr>
+                            <td>@h.DecisionId — @h.Title</td>
+                            <td>@card.MemoId</td>
+                            <td>PolicyQuestion</td>
+                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
+                            <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                            <td>@(h.Comment ?? "—")</td>
+                        </tr>
+                    }
+                    @foreach (var card in _historyApprovals)
+                    {
+                        var h = card.Decision;
+                        <tr>
+                            <td>@h.DecisionId — @h.Title</td>
+                            <td>@card.MemoId</td>
+                            <td>PolicyApproval</td>
+                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
+                            <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                            <td>@(h.Comment ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
 
-    <p class="gate-section-title">Activations (@_activations.Count)</p>
-    @if (_activations.Count == 0)
-    {
-        <p class="gate-meta">No published activations yet.</p>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Activations (@_activations.Count)</p>
+        @if (_activations.Count == 0)
+        {
+            <p class="gate-meta">No published activations yet.</p>
+        }
+    </section>
     @foreach (var activation in _activations)
     {
         var a = activation.Activation;
@@ -559,9 +643,17 @@ else
     private IReadOnlyList<PolicyQuestionCardVm> _historyQuestions = [];
     private IReadOnlyList<PolicyApprovalCardVm> _historyApprovals = [];
     private IReadOnlyList<string> _covering = [];
+    private const long MaxMemoUploadBytes = 256L * 1024;
+
     private string? _selected;
     private string? _loadError;
     private bool _busy;
+    private string _memoAuthor = string.Empty;
+    private string _memoText = string.Empty;
+    private string? _memoFileName;
+    private bool _memoBusy;
+    private string? _memoError;
+    private MemoSubmitResult? _memoResult;
     private readonly Dictionary<string, string> _chosenOptions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _declineNotes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _effective = new(StringComparer.Ordinal);
@@ -776,18 +868,20 @@ else
         if (_users is null)
         {
             _selected = null;
-            return;
         }
-
-        var current = Acting.CurrentUserId;
-        if (current is not null
-            && _users.Any(u => string.Equals(u.UserId, current, StringComparison.Ordinal)))
+        else
         {
-            _selected = current;
-            return;
+            var current = Acting.CurrentUserId;
+            _selected = current is not null
+                && _users.Any(u => string.Equals(u.UserId, current, StringComparison.Ordinal))
+                ? current
+                : DecisionBoard.PickDefaultUserId(_users);
         }
 
-        _selected = DecisionBoard.PickDefaultUserId(_users);
+        if (string.IsNullOrWhiteSpace(_memoAuthor))
+        {
+            _memoAuthor = _selected ?? string.Empty;
+        }
     }
 
     private void Recompute()
@@ -835,6 +929,57 @@ else
         _questions = await Views.ListQuestionCardsAsync();
         _approvals = await Views.ListApprovalCardsAsync();
         _activations = await Views.ListActivationsAsync();
+    }
+
+    private async Task OnMemoFileAsync(InputFileChangeEventArgs e)
+    {
+        _memoError = null;
+        var file = e.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var stream = file.OpenReadStream(MaxMemoUploadBytes);
+            using var reader = new StreamReader(stream);
+            _memoText = await reader.ReadToEndAsync();
+            _memoFileName = file.Name;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Memo upload {File} failed.", file.Name);
+            _memoError = $"Upload {file.Name} failed: {ex.Message}.";
+            _memoFileName = null;
+        }
+    }
+
+    private async Task SubmitMemoAsync()
+    {
+        _memoBusy = true;
+        _memoError = null;
+        _memoResult = null;
+        try
+        {
+            _memoResult = await MemoSubmit.SubmitAsync(_memoAuthor, _memoText);
+            if (_memoResult.Ok)
+            {
+                _memoText = string.Empty;
+                _memoFileName = null;
+                await RefreshAsync();
+                Recompute();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Memo submit failed.");
+            _memoError = $"Memo submit failed: {ex.Message}";
+        }
+        finally
+        {
+            _memoBusy = false;
+        }
     }
 
     private async Task AnswerAsync(PolicyQuestionCardVm card)

@@ -1,0 +1,302 @@
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Simulate
+
+<div id="dock">
+    @if (_loading)
+    {
+        <p class="gate-meta">Loading expected trucks…</p>
+    }
+    @if (_loadError is not null)
+    {
+        <ErrorBox Message="@_loadError" />
+    }
+    @if (_trucks is not null)
+    {
+        @foreach (var note in _trucks.Notes)
+        {
+            <div class="gate-notice" role="alert">@note</div>
+        }
+        <section class="gate-card">
+            <div class="gate-card-head">
+                <p class="gate-card-title">Expected trucks (@_trucks.Trucks.Count)</p>
+            </div>
+            <p class="gate-meta">You are the dock camera. Each truck is an unreceived shipment notice. Images in, reads out: the run transcribes and judges every label.</p>
+            @if (_trucks.Trucks.Count == 0)
+            {
+                <p class="gate-meta">No expected trucks; nothing is waiting at the dock.</p>
+            }
+        </section>
+        @foreach (var truck in _trucks.Trucks)
+        {
+            var state = StateFor(truck.AsnNumber);
+            <section class="gate-card">
+                <div class="gate-card-head">
+                    <p class="gate-card-title">Truck @truck.AsnNumber</p>
+                    <div class="gate-card-badges">
+                        <span class="gate-chip">PO @truck.PoNumber</span>
+                        @if (truck.VendorId is not null)
+                        {
+                            <span class="gate-chip">@truck.VendorId</span>
+                        }
+                    </div>
+                </div>
+                @if (truck.CaseId is null)
+                {
+                    <div class="gate-notice" role="alert">No case links this truck yet; photos wait for the case.</div>
+                }
+                else
+                {
+                    <p class="gate-meta">Case <a href="cases/@truck.CaseId">@truck.CaseId</a></p>
+                }
+                <p class="gate-row"><span class="gate-label">Cartons (@truck.Cartons.Count):</span></p>
+                @if (truck.Cartons.Count == 0)
+                {
+                    <p class="gate-meta">No cartons on this notice.</p>
+                }
+                else
+                {
+                    <ul class="gate-list">
+                        @foreach (var carton in truck.Cartons)
+                        {
+                            <li>@carton.CartonId · @carton.ItemId · @carton.UnitsPerCarton units · lot @carton.LotRef</li>
+                        }
+                    </ul>
+                }
+                <label class="gate-checkline" for="reshot-@truck.AsnNumber">
+                    <input type="checkbox" id="reshot-@truck.AsnNumber" checked="@state.Reshot" @onchange="e => state.Reshot = e.Value is true" />
+                    Reshot (follow-up reads for picked cartons)
+                </label>
+                @if (state.Reshot)
+                {
+                    <p class="gate-row"><span class="gate-label">Cartons covered:</span></p>
+                    @foreach (var carton in truck.Cartons)
+                    {
+                        <label class="gate-checkline" for="reshot-@truck.AsnNumber-@carton.CartonId">
+                            <input type="checkbox" id="reshot-@truck.AsnNumber-@carton.CartonId"
+                                   checked="@state.ReshotCartons.Contains(carton.CartonId, StringComparer.Ordinal)"
+                                   @onchange="e => ToggleReshotCarton(state, carton.CartonId, e.Value is true)" />
+                            @carton.CartonId
+                        </label>
+                    }
+                }
+                <p class="gate-row"><span class="gate-label">Counter images</span></p>
+                @if (Options.DockImages.Count == 0)
+                {
+                    <p class="gate-meta">No images on the counter; upload files below.</p>
+                }
+                @foreach (var image in Options.DockImages)
+                {
+                    <div class="gate-field">
+                        <label class="gate-checkline" for="dockimg-@truck.AsnNumber-@image">
+                            <input type="checkbox" id="dockimg-@truck.AsnNumber-@image"
+                                   checked="@state.ServerPicks.ContainsKey(image)"
+                                   @onchange="e => ToggleServerImage(state, image, e.Value is true)" />
+                            @image
+                        </label>
+                        <img src="dock-images/@image" alt="@image" class="gate-thumb" />
+                        <select class="gate-select" value="@HintFor(state, image)" @onchange="e => SetHint(state, image, e.Value?.ToString())" disabled="@(!state.ServerPicks.ContainsKey(image))">
+                            <option value="">— no carton hint —</option>
+                            @foreach (var carton in truck.Cartons)
+                            {
+                                <option value="@carton.CartonId">@carton.CartonId</option>
+                            }
+                        </select>
+                    </div>
+                }
+                <p class="gate-row"><span class="gate-label">Upload files</span></p>
+                <InputFile id="@($"dock-upload-{truck.AsnNumber}")" multiple accept=".jpg,.jpeg" OnChange="e => OnUploadAsync(state, e)" />
+                @foreach (var row in state.Uploads)
+                {
+                    <div class="gate-field">
+                        <span class="gate-row">@row.FileName (@row.Bytes.Length bytes)</span>
+                        <select class="gate-select" @bind="row.CartonHint">
+                            <option value="">— no carton hint —</option>
+                            @foreach (var carton in truck.Cartons)
+                            {
+                                <option value="@carton.CartonId">@carton.CartonId</option>
+                            }
+                        </select>
+                        <div class="gate-actions">
+                            <button class="gate-btn" disabled="@_busy" @onclick="() => state.Uploads.Remove(row)">Remove</button>
+                        </div>
+                    </div>
+                }
+                <div class="gate-actions">
+                    <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="() => SubmitAsync(truck)">@(state.Reshot ? "Send reshot" : "Send dock photos")</button>
+                    @if (_busy)
+                    {
+                        <span class="gate-meta">Transcribing and judging…</span>
+                    }
+                </div>
+                @if (state.UploadError is not null)
+                {
+                    <ErrorBox Message="@state.UploadError" />
+                }
+                <OutcomeBox Outcome="@state.Outcome" CaseId="@truck.CaseId" />
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private const long MaxUploadBytes = 15L * 1024 * 1024;
+
+    [Parameter]
+    public SimulateOptions Options { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private ExpectedTrucks? _trucks;
+    private string? _loadError;
+    private bool _loading = true;
+    private bool _busy;
+    private readonly Dictionary<string, TruckState> _states = new(StringComparer.Ordinal);
+
+    private sealed class TruckState
+    {
+        public bool Reshot;
+        public SimulationOutcome? Outcome;
+        public string? UploadError;
+        public readonly HashSet<string> ReshotCartons = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, string?> ServerPicks = new(StringComparer.Ordinal);
+        public readonly List<UploadRow> Uploads = [];
+    }
+
+    private sealed class UploadRow
+    {
+        public string FileName { get; set; } = string.Empty;
+        public byte[] Bytes { get; set; } = [];
+        public string? CartonHint { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _trucks = await Simulate.ListExpectedTrucksAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Expected trucks failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private TruckState StateFor(string asnNumber)
+    {
+        if (!_states.TryGetValue(asnNumber, out var state))
+        {
+            state = new TruckState();
+            _states[asnNumber] = state;
+        }
+
+        return state;
+    }
+
+    private static string HintFor(TruckState state, string image) =>
+        state.ServerPicks.TryGetValue(image, out var hint) ? hint ?? string.Empty : string.Empty;
+
+    private static void SetHint(TruckState state, string image, string? hint)
+    {
+        if (state.ServerPicks.ContainsKey(image))
+        {
+            state.ServerPicks[image] = string.IsNullOrWhiteSpace(hint) ? null : hint;
+        }
+    }
+
+    private static void ToggleServerImage(TruckState state, string image, bool picked)
+    {
+        if (picked)
+        {
+            state.ServerPicks.TryAdd(image, null);
+        }
+        else
+        {
+            state.ServerPicks.Remove(image);
+        }
+    }
+
+    private static void ToggleReshotCarton(TruckState state, string carton, bool picked)
+    {
+        if (picked)
+        {
+            state.ReshotCartons.Add(carton);
+        }
+        else
+        {
+            state.ReshotCartons.Remove(carton);
+        }
+    }
+
+    private async Task OnUploadAsync(TruckState state, InputFileChangeEventArgs e)
+    {
+        state.UploadError = null;
+        foreach (var file in e.GetMultipleFiles())
+        {
+            try
+            {
+                using var stream = file.OpenReadStream(MaxUploadBytes);
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                state.Uploads.Add(new UploadRow { FileName = file.Name, Bytes = buffer.ToArray() });
+            }
+            catch (Exception ex)
+            {
+                state.UploadError = $"Upload {file.Name} failed: {ex.Message}.";
+            }
+        }
+    }
+
+    private async Task SubmitAsync(ExpectedTruckVm truck)
+    {
+        var state = StateFor(truck.AsnNumber);
+        _busy = true;
+        state.Outcome = null;
+        try
+        {
+            var photos = new List<SimulationPhoto>();
+            foreach (var pick in state.ServerPicks)
+            {
+                var (bytes, error) = await Simulate.TryReadDockImageAsync(pick.Key);
+                if (bytes is null)
+                {
+                    state.Outcome = new SimulationOutcome(false, error ?? $"Image {pick.Key} is not available.", [], []);
+                    return;
+                }
+
+                photos.Add(new SimulationPhoto(pick.Key, bytes, pick.Value));
+            }
+
+            photos.AddRange(state.Uploads.Select(u => new SimulationPhoto(u.FileName, u.Bytes, u.CartonHint)));
+
+            state.Outcome = state.Reshot
+                ? await Simulate.SendReshotAsync(truck.CaseId, state.ReshotCartons.ToList(), photos)
+                : await Simulate.SendDockPhotosAsync(truck.CaseId, photos);
+            if (state.Outcome.Ok)
+            {
+                await ReloadAsync();
+                await OnChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            state.Outcome = new SimulationOutcome(false, $"Dock photos failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

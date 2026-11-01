@@ -2,6 +2,16 @@
   "$comment": "ComplianceGate demo scenario v1. Single source of truth for demo seed. Intents only: no SO/PR/PO/ASN/RCP/INV/PAY numbers appear here; the loader mints every document number from sqlite number sequences at posting and records them in scenarios/run-manifest.json. All names, prices, quantities, and dates are fictional. Currency is USD (decimal) on each header.",
   "name": "demo-v1",
   "currency": "USD",
+  "numberSequences": [
+    { "prefix": "SO", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "PR", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "PO", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "RCT", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "V", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "PAYDRAFT", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "PAY", "format": "{prefix}-{number}", "padding": 4, "start": 1001 },
+    { "prefix": "HLD", "format": "{prefix}-{number}", "padding": 4, "start": 1001 }
+  ],
   "salesOrder": { "item": "GLASS-1", "quantity": 1300 },
   "bom": [
     { "item": "GLASS-1", "component": "BAT-1", "qtyPer": 1 },
@@ -15,14 +25,15 @@
   "items": [
     { "id": "BAT-1", "description": "Battery cell", "critical": true, "packSize": 100, "unit": "EA" },
     { "id": "SCR-9", "description": "Screw", "critical": false, "packSize": 1, "unit": "EA" },
-    { "id": "GLASS-1", "description": "Smart glasses", "critical": false, "packSize": 1, "unit": "EA" }
+    { "id": "GLASS-1", "description": "Smart glasses", "critical": false, "packSize": 1, "unit": "EA" },
+    { "id": "WID-7", "description": "Widget (lifecycle seed)", "critical": false, "packSize": 20, "unit": "EA" }
   ],
   "paymentTerms": [
     { "id": "NET30", "netDays": 30 }
   ],
   "vendors": [
     {
-      "id": "V-A", "name": "Cheap Cells Ltd", "country": "CN", "role": "cheaper-blocked",
+      "id": "V-A", "name": "CinderVolt Energy Ltd", "country": "CN", "role": "cheaper-blocked",
       "item": "BAT-1", "unitPrice": 14.20, "terms": "NET30", "bankAccount": "BANK-A-001",
       "email": "sales@cheapcells.example",
       "documents": [
@@ -33,7 +44,7 @@
       ]
     },
     {
-      "id": "V-B", "name": "Compliant Cells Inc", "country": "MX", "role": "compliant-winner",
+      "id": "V-B", "name": "Meridian Cellworks Inc", "country": "MX", "role": "compliant-winner",
       "item": "BAT-1", "unitPrice": 18.50, "terms": "NET30", "bankAccount": "BANK-B-001",
       "email": "sales@compliantcells.example",
       "documents": [
@@ -44,9 +55,15 @@
       ]
     },
     {
-      "id": "V-C", "name": "Screws Co", "country": "TW", "role": "straight-through",
+      "id": "V-C", "name": "Formosa Fasteners Co", "country": "TW", "role": "straight-through",
       "item": "SCR-9", "unitPrice": 0.40, "terms": "NET30", "bankAccount": "BANK-C-001",
       "email": "sales@screwsco.example",
+      "documents": []
+    },
+    {
+      "id": "V-L", "name": "Bluepine Parts Co", "country": "US", "role": "lifecycle-seed",
+      "item": "WID-7", "unitPrice": 22.00, "terms": "NET30", "bankAccount": "BANK-L-001",
+      "email": "sales@lifecycle.example",
       "documents": []
     }
   ],
@@ -90,6 +107,35 @@
     { "key": "bank-test", "item": "BAT-1", "quantity": 40, "vendor": "V-B", "unitPrice": 18.50 },
     { "key": "missing-fields-test", "item": "SCR-9", "quantity": 200, "vendor": "V-C", "unitPrice": 0.40 }
   ],
+  "lifecycle": {
+    "item": "WID-7",
+    "vendor": "V-L",
+    "prDraftQty": 50,
+    "prSubmittedQty": 50,
+    "prSubmittedTo": "Dana Director",
+    "prApprovedQty": 50,
+    "poDraftQty": 50,
+    "poSubmittedQty": 50,
+    "poSubmittedTo": "Del Delegate",
+    "poApprovedQty": 50,
+    "backboneQty": 160,
+    "packingSlip": "PACK-LC-1",
+    "asn": "ASN-LC-1",
+    "carton": "CTN-LC-1",
+    "lot": "LOT-LC-1",
+    "invoiceSubmittedTo": "Amy AP Clerk",
+    "paySubmittedTo": "Finn Finance",
+    "invoices": [
+      { "key": "received", "number": "INV-LC-R", "quantity": 20, "stage": "received" },
+      { "key": "matched", "number": "INV-LC-M", "quantity": 20, "stage": "matched" },
+      { "key": "submitted", "number": "INV-LC-S", "quantity": 20, "stage": "submitted" },
+      { "key": "approved", "number": "INV-LC-A", "quantity": 20, "stage": "approved" },
+      { "key": "payDraft", "number": "INV-LC-D", "quantity": 20, "stage": "posted" },
+      { "key": "paySubmitted", "number": "INV-LC-P", "quantity": 20, "stage": "posted" },
+      { "key": "payApproved", "number": "INV-LC-G", "quantity": 20, "stage": "posted" },
+      { "key": "paid", "number": "INV-LC-F", "quantity": 20, "stage": "posted" }
+    ]
+  },
   "invoiceIntents": {
     "main": { "vendor": "V-B", "part": "BAT-1", "quantity": 1200, "unitPrice": 18.50 },
     "duplicate": { "smallPo": "duplicate-test", "reusePostedNumber": true },

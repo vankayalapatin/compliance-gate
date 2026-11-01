@@ -541,7 +541,7 @@ public sealed class VendorEmailTests
             "PO-GHOST", "PR-GHOST", "V-GHOST", "NET0",
             PoApprovalStatus.Approved, PoDocStatus.Open, "USD",
             RecordSource.P2pAgent, "planner", "ghost-po", []);
-        var erp = new GhostVendorErp(po, [new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0")]);
+        var erp = new GhostVendorErp(po, [new VendorDto("V-B", "Meridian Cellworks Inc", "MX", false, null, "NET0")]);
         var models = new FakeModelClient();
         var compliance = new RecordingComplianceEngine();
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,

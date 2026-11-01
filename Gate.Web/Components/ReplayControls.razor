@@ -1,0 +1,78 @@
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject ReplayService Replay
+@inject ReplayState State
+@inject ILogger<ReplayControls> Log
+
+<div class="gate-replay">
+    @if (State.IsReplay)
+    {
+        <span class="gate-badge gate-badge-dark" title="Replay mode on — zero live calls">Replay</span>
+    }
+    else
+    {
+        <span class="gate-badge">Live</span>
+    }
+    @if (!_confirming)
+    {
+        <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = true">Reset + replay offline</button>
+    }
+    else
+    {
+        <span class="gate-meta">Reset to scenario start?</span>
+        <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="ResetAsync">Confirm reset</button>
+        <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = false">Cancel</button>
+    }
+    @if (_busy)
+    {
+        <span class="gate-meta">Working…</span>
+    }
+    else if (_summary is not null)
+    {
+        <span class="gate-meta" title="@_full">@_summary</span>
+    }
+</div>
+
+@code {
+    private bool _confirming;
+    private bool _busy;
+    private string? _summary;
+    private string? _full;
+
+    private async Task ResetAsync()
+    {
+        _busy = true;
+        _summary = null;
+        _full = null;
+        try
+        {
+            // Progress posts back to the captured sync context; the render
+            // still marshals through InvokeAsync per the service-event rule.
+            var progress = new Progress<string>(step =>
+            {
+                _ = InvokeAsync(() =>
+                {
+                    _summary = step;
+                    StateHasChanged();
+                });
+            });
+            var report = await Replay.ResetAndReplayAsync(progress);
+            _confirming = false;
+            _full = report.Error ?? string.Join(" | ", report.Steps.Concat(report.Warnings));
+            _summary = report.Error is not null
+                ? "Reset failed."
+                : $"Reset done ({report.Steps.Count} steps).";
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Reset + replay failed.");
+            _summary = "Reset failed.";
+            _full = ex.Message;
+            _confirming = false;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

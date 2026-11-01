@@ -19,7 +19,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task Corp02BlocksCheaperVendorOverCap()
     {
-        var vendor = new VendorDto("V-A", "Cheap Cells Ltd", "CN", false, null, "NET0");
+        var vendor = new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
         var docs = FullDocs("V-A");
         // (59 + 10) / (100 + 10) = 62.7%: award breaches the 60% cap.
         var history = new[]
@@ -38,7 +38,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task Corp02PassesCompliantVendor()
     {
-        var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0");
+        var vendor = new VendorDto("V-B", "Meridian Cellworks Inc", "MX", false, null, "NET0");
         var docs = FullDocs("V-B");
         // (38 + 10) / (100 + 10) = 43.6%: award stays within the 60% cap.
         var history = new[]
@@ -55,7 +55,7 @@ public sealed class ComplianceTests
     [Fact]
     public async Task MissingUn383Blocks()
     {
-        var vendor = new VendorDto("V-B", "Compliant Cells Inc", "MX", false, null, "NET0");
+        var vendor = new VendorDto("V-B", "Meridian Cellworks Inc", "MX", false, null, "NET0");
         var docs = new[]
         {
             new VendorDocumentDto("V-B", "SDS", "sds-b", true),

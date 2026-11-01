@@ -1,0 +1,333 @@
+@page "/erp/record/{Kind}/{Key}"
+@page "/erp/record/invoice/{Vendor}/{Number}"
+@rendermode InteractiveServer
+@using Gate.Web.Components.Erp
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject ErpViewService Views
+@inject ErpActionService Actions
+@inject ActingUserState Acting
+@inject ILogger<ErpRecord> Log
+@implements IDisposable
+
+<PageTitle>ERP — @(_record?.Title ?? $"{Kind} {Key}")</PageTitle>
+
+<div class="gate-erp">
+    <ErpSidebar CurrentSlug="@Kind" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">@(_record?.Title ?? $"{ErpModules.TitleFor(Kind)} {Key}")</p>
+                <p class="gate-page-sub"><a href="@ErpModules.ListHref(Kind)">&#8592; @ErpModules.TitleFor(Kind)</a></p>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_record is null)
+        {
+            <p class="gate-meta">Loading record…</p>
+        }
+        else
+        {
+            @foreach (var note in _record.Notes)
+            {
+                <div class="gate-notice" role="alert">@note</div>
+            }
+            @if (_lastOutcome is not null)
+            {
+                @if (_lastOutcome.Ok)
+                {
+                    <div class="gate-notice gate-notice-ok" role="alert">@_lastOutcome.Message</div>
+                }
+                else
+                {
+                    <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @_lastOutcome.Message</div>
+                }
+            }
+            <section class="gate-card">
+                <div class="gate-card-head">
+                    <p class="gate-card-title">@_record.Title</p>
+                    <div class="gate-card-badges">
+                        @foreach (var badge in _record.StatusBadges)
+                        {
+                            <span class="gate-badge">@badge</span>
+                        }
+                        <AgentBanner Source="@_record.SourceName" />
+                        <OriginChips Number="@_record.OriginNumber" Source="@null" Opening="@_record.OpeningNumbers" />
+                    </div>
+                </div>
+                @foreach (var fact in _record.Header)
+                {
+                    <p class="gate-row">
+                        <span class="gate-label">@fact.Label:</span>
+                        @if (fact.Href is null)
+                        {
+                            @fact.Value
+                        }
+                        else
+                        {
+                            <a href="@fact.Href">@fact.Value</a>
+                        }
+                    </p>
+                }
+            </section>
+
+            @foreach (var table in _record.LineTables)
+            {
+                <section class="gate-card">
+                    <p class="gate-card-title">@table.Title</p>
+                    @if (table.Rows.Count == 0)
+                    {
+                        <p class="gate-meta">None.</p>
+                    }
+                    else
+                    {
+                        <table class="gate-table">
+                            <thead>
+                                <tr>
+                                    @foreach (var column in table.Columns)
+                                    {
+                                        <th class="@(column.Numeric ? "gate-num" : "")">@column.Header</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in table.Rows)
+                                {
+                                    <tr>
+                                        @for (var i = 0; i < table.Columns.Count && i < row.Count; i++)
+                                        {
+                                            var cell = row[i];
+                                            <td class="@(table.Columns[i].Numeric ? "gate-num" : "")">
+                                                @if (cell.Href is null)
+                                                {
+                                                    @cell.Text
+                                                }
+                                                else
+                                                {
+                                                    <a href="@cell.Href">@cell.Text</a>
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+
+            @if (_record.CachedReads.Count > 0 || _record.ImageFileNames.Count > 0)
+            {
+                <section class="gate-card">
+                    <p class="gate-card-title">Photos and reads</p>
+                    @foreach (var read in _record.CachedReads)
+                    {
+                        <p class="gate-meta">@read</p>
+                    }
+                    @foreach (var image in _record.ImageFileNames)
+                    {
+                        <img class="gate-img" src="dock-images/@image" alt="@image" />
+                    }
+                </section>
+            }
+
+            @if (_record.Related.Count > 0)
+            {
+                <section class="gate-card">
+                    <p class="gate-card-title">Related documents</p>
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Document</th><th>Status</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var related in _record.Related)
+                            {
+                                <tr>
+                                    <td><a href="@related.Href">@related.Label</a></td>
+                                    <td>@related.Status</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </section>
+            }
+
+            @if (_record.Actions.Count > 0)
+            {
+                <section class="gate-card">
+                    <p class="gate-card-title">Actions (acting as @(Acting.CurrentUserId ?? "nobody selected"))</p>
+                </section>
+                @foreach (var action in _record.Actions)
+                {
+                    <section class="gate-card">
+                        <p class="gate-card-title">@action.Label</p>
+                        <p class="gate-meta">@action.Hint</p>
+                        @foreach (var input in action.Inputs)
+                        {
+                            <div class="gate-field">
+                                <label class="gate-label" for="erp-@action.Id-@input.Key">
+                                    @input.Label@(input.Required ? " *" : "")
+                                </label>
+                                @if (input.Options is null)
+                                {
+                                    <input class="gate-input" id="erp-@action.Id-@input.Key"
+                                           value="@InputFor(action.Id, input.Key)"
+                                           @onchange="e => SetInput(action.Id, input.Key, e.Value?.ToString() ?? string.Empty)" />
+                                }
+                                else
+                                {
+                                    <select class="gate-select" id="erp-@action.Id-@input.Key"
+                                            value="@InputFor(action.Id, input.Key)"
+                                            @onchange="e => SetInput(action.Id, input.Key, e.Value?.ToString() ?? string.Empty)">
+                                        <option value="">— pick —</option>
+                                        @foreach (var option in input.Options)
+                                        {
+                                            <option value="@option">@option</option>
+                                        }
+                                    </select>
+                                }
+                            </div>
+                        }
+                        <div class="gate-actions">
+                            <button class="gate-btn gate-btn-primary" disabled="@_busy"
+                                    @onclick="() => AttemptAsync(action.Id)">@action.Label</button>
+                        </div>
+                        @if (_outcomes.TryGetValue(action.Id, out var outcome))
+                        {
+                            @if (outcome.Ok)
+                            {
+                                <div class="gate-notice gate-notice-ok" role="alert">@outcome.Message</div>
+                            }
+                            else
+                            {
+                                <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @outcome.Message</div>
+                            }
+                        }
+                    </section>
+                }
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string Kind { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Key { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Vendor { get; set; }
+
+    [Parameter]
+    public string? Number { get; set; }
+
+    private ErpRecordVm? _record;
+    private string? _loadError;
+    private ErpOutcome? _lastOutcome;
+    private bool _busy;
+    private readonly Dictionary<string, Dictionary<string, string>> _inputs = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ErpOutcome> _outcomes = new(StringComparer.Ordinal);
+
+    private string InputFor(string actionId, string key)
+    {
+        if (_inputs.TryGetValue(actionId, out var values)
+            && values.TryGetValue(key, out var value))
+        {
+            return value;
+        }
+
+        return string.Empty;
+    }
+
+    private void SetInput(string actionId, string key, string value)
+    {
+        if (!_inputs.TryGetValue(actionId, out var values))
+        {
+            values = new Dictionary<string, string>(StringComparer.Ordinal);
+            _inputs[actionId] = values;
+        }
+
+        values[key] = value;
+    }
+
+    protected override void OnInitialized()
+    {
+        Acting.OnChange += OnActingChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _inputs.Clear();
+        _outcomes.Clear();
+        _lastOutcome = null;
+        await ReloadAsync();
+    }
+
+    public void Dispose()
+    {
+        Acting.OnChange -= OnActingChanged;
+    }
+
+    private void OnActingChanged()
+    {
+        // Service-raised event: marshal state touches and the render to the
+        // Dispatcher via InvokeAsync.
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private string EffectiveKey() =>
+        Kind == "invoice" && Vendor is not null && Number is not null ? Vendor : Key;
+
+    private string? EffectiveKey2() =>
+        Kind == "invoice" && Vendor is not null && Number is not null ? Number : null;
+
+    private async Task ReloadAsync()
+    {
+        _loadError = null;
+        try
+        {
+            _record = await Views.GetRecordAsync(Kind, EffectiveKey(), EffectiveKey2());
+            if (_record is null)
+            {
+                _loadError = $"Unknown ERP record kind '{Kind}'.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Record {Kind} {Key} failed to load.", Kind, Key);
+            _loadError = $"Record {Kind} {Key} failed to load: {ex.Message}";
+        }
+    }
+
+    private async Task AttemptAsync(string actionId)
+    {
+        _busy = true;
+        try
+        {
+            // No pre-checks: the attempt runs through the ERP and every
+            // control refusal comes back as the outcome message.
+            _inputs.TryGetValue(actionId, out var values);
+            var outcome = await Actions.AttemptAsync(
+                Kind, EffectiveKey(), EffectiveKey2(), actionId,
+                values ?? new Dictionary<string, string>(StringComparer.Ordinal),
+                Acting.CurrentUserId);
+            _outcomes[actionId] = outcome;
+            _lastOutcome = outcome;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Action {Action} failed for {Kind} {Key}.", actionId, Kind, Key);
+            _outcomes[actionId] = new ErpOutcome(false, $"Action failed: {ex.Message}");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

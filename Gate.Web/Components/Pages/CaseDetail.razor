@@ -21,16 +21,27 @@ else if (_detail is null)
 {
     <p class="gate-meta">Loading case…</p>
 }
+else if (_detail.Case.IsOpeningData)
+{
+    <section class="gate-card">
+        <p class="gate-meta">Opening record — see Decisions or ERP.</p>
+    </section>
+}
 else
 {
     <section class="gate-card">
         <div class="gate-card-head">
-            <p class="gate-card-title">SO @_detail.Case.SoNumber · item @_detail.Case.ItemId</p>
+            <p class="gate-card-title">@CaseDisplay.DisplayName(_detail.Case)</p>
             <div class="gate-card-badges">
                 <span class="gate-badge">@_detail.Case.Stage</span>
+                @if (_detail.Case.IsOpeningData)
+                {
+                    <span class="gate-chip">opening data</span>
+                }
                 <span class="gate-chip">@_detail.Case.ScenarioName</span>
             </div>
         </div>
+        <p class="gate-meta">@_detail.Case.CaseId</p>
         <ChainStrip Steps="@_detail.Chain" />
         @if (_detail.Case.BlockedByRuleId is null)
         {
@@ -42,121 +53,141 @@ else
         }
     </section>
 
-    <p class="gate-section-title">Chain</p>
-    <table class="gate-table">
-        <thead>
-            <tr><th>Step</th><th>Document</th><th>Status</th><th>Detail</th></tr>
-        </thead>
-        <tbody>
-            @foreach (var step in _detail.Chain)
-            {
-                <tr>
-                    <td>@step.Label @if (step.IsCurrent)
-                        {
-                            <span class="gate-badge gate-badge-dark">current</span>
-                        }</td>
-                    <td>@(step.DocumentNumber ?? "—")</td>
-                    <td>@step.Status</td>
-                    <td>@(step.Detail ?? "—")</td>
-                </tr>
-            }
-        </tbody>
-    </table>
+    <section class="gate-card">
+        <p class="gate-card-title">Chain</p>
+        <table class="gate-table">
+            <thead>
+                <tr><th>Step</th><th>Document</th><th>Status</th><th>Detail</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var step in _detail.Chain)
+                {
+                    <tr>
+                        <td>@step.Label @if (step.IsCurrent)
+                            {
+                                <span class="gate-badge gate-badge-dark">current</span>
+                            }</td>
+                        <td>@(step.DocumentNumber ?? "—")</td>
+                        <td>@step.Status</td>
+                        <td>@(step.Detail ?? "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
 
-    <p class="gate-section-title">What the agent did</p>
-    @if (_detail.Summary.Did.Count == 0)
+    @if (_detail.Case.IsOpeningData)
     {
-        <p class="gate-meta">Nothing recorded yet.</p>
+        <section class="gate-card">
+            <p class="gate-card-title">What the agent did</p>
+            <p class="gate-meta">@CaseDisplay.NoAgentRun — this is opening data with no agent run behind it.</p>
+        </section>
     }
     else
     {
         <section class="gate-card">
-            <ul class="gate-list">
-                @foreach (var line in _detail.Summary.Did)
-                {
-                    <li>@line</li>
-                }
-            </ul>
+            <p class="gate-card-title">What the agent did</p>
+            @if (_detail.Summary.Did.Count == 0)
+            {
+                <p class="gate-meta">Nothing recorded yet.</p>
+            }
+            else
+            {
+                <ul class="gate-list">
+                    @foreach (var line in _detail.Summary.Did)
+                    {
+                        <li>@line</li>
+                    }
+                </ul>
+            }
         </section>
-    }
 
-    <p class="gate-section-title">What it tried and was stopped from doing</p>
-    @if (_detail.Summary.Stopped.Count == 0)
-    {
-        <p class="gate-meta">No refusals, blocks, or waits recorded.</p>
-    }
-    else
-    {
-        <table class="gate-table">
-            <thead>
-                <tr><th>At</th><th>What</th><th>Rule</th><th>Reason</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var attempt in _detail.Summary.Stopped)
-                {
-                    <tr>
-                        <td>@(attempt.At?.ToString("u") ?? "—")</td>
-                        <td>@attempt.What</td>
-                        <td>@(attempt.RuleId ?? "—")</td>
-                        <td>@attempt.Reason</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+        <section class="gate-card">
+            <p class="gate-card-title">What it tried and was stopped from doing</p>
+            @if (_detail.Summary.Stopped.Count == 0)
+            {
+                <p class="gate-meta">No refusals, blocks, or waits recorded.</p>
+            }
+            else
+            {
+                <table class="gate-table">
+                    <thead>
+                        <tr><th>At</th><th>What</th><th>Rule</th><th>Reason</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var attempt in _detail.Summary.Stopped)
+                        {
+                            <tr>
+                                <td>@(attempt.At?.ToString("u") ?? "—")</td>
+                                <td>@attempt.What</td>
+                                <td>@(attempt.RuleId ?? "—")</td>
+                                <td>@attempt.Reason</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </section>
     }
 
     @if (_detail.OpenHolds.Count > 0)
     {
-        <p class="gate-section-title">Open holds</p>
-        <table class="gate-table">
-            <thead>
-                <tr><th>Hold</th><th>Rule</th><th>Blocks</th><th>Note</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var hold in _detail.OpenHolds)
-                {
-                    <tr>
-                        <td>@hold.HoldId</td>
-                        <td>@(hold.RuleId ?? "—")</td>
-                        <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
-                        <td>@hold.Note</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+        <section class="gate-card">
+            <p class="gate-card-title">Open holds</p>
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Hold</th><th>Rule</th><th>Blocks</th><th>Note</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var hold in _detail.OpenHolds)
+                    {
+                        <tr>
+                            <td>@hold.HoldId</td>
+                            <td>@(hold.RuleId ?? "—")</td>
+                            <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
+                            <td>@hold.Note</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
     }
 
-    <p class="gate-section-title">Decisions</p>
-    @if (_detail.Decisions.Count == 0)
-    {
-        <p class="gate-meta">No decisions on this case.</p>
-    }
-    else
-    {
-        <table class="gate-table">
-            <thead>
-                <tr><th>Decision</th><th>Kind</th><th>Status</th><th>Rule</th><th class="gate-num">Amount</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var d in _detail.Decisions)
-                {
-                    <tr>
-                        <td><a href="decisions">@d.DecisionId</a> — @d.Title</td>
-                        <td>@d.Kind</td>
-                        <td><span class="gate-badge">@d.Status</span></td>
-                        <td>@(d.RuleId is null ? "—" : $"{d.RuleId}: {d.Reason}")</td>
-                        <td class="gate-num">@(d.Amount is null ? "—" : $"{d.Amount} {d.Currency}")</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Decisions</p>
+        @if (_detail.Decisions.Count == 0)
+        {
+            <p class="gate-meta">No decisions on this case.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Decision</th><th>Kind</th><th>Status</th><th>Rule</th><th class="gate-num">Amount</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var d in _detail.Decisions)
+                    {
+                        <tr>
+                            <td><a href="decisions">@d.DecisionId</a> — @d.Title</td>
+                            <td>@d.Kind</td>
+                            <td><span class="gate-badge">@d.Status</span></td>
+                            <td>@(d.RuleId is null ? "—" : $"{d.RuleId}: {d.Reason}")</td>
+                            <td class="gate-num">@(d.Amount is null ? "—" : $"{d.Amount} {d.Currency}")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
 
-    <p class="gate-section-title">Vendor email</p>
-    @if (_detail.Mail.Count == 0)
-    {
-        <p class="gate-meta">No vendor email on this case.</p>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Vendor email (@_detail.Mail.Count)</p>
+        @if (_detail.Mail.Count == 0)
+        {
+            <p class="gate-meta">No vendor email on this case.</p>
+        }
+    </section>
     @foreach (var mail in _detail.Mail.OrderBy(m => m.SentAt))
     {
         <section class="gate-card">
@@ -166,40 +197,42 @@ else
         </section>
     }
 
-    <p class="gate-section-title">Timeline</p>
-    @if (_detail.Events.Count == 0)
-    {
-        <p class="gate-meta">No events recorded.</p>
-    }
-    else
-    {
-        <table class="gate-table">
-            <thead>
-                <tr><th>At</th><th>Actor</th><th>Event</th><th>Detail</th></tr>
-            </thead>
-            <tbody>
-                @foreach (var e in _detail.Events.OrderBy(e => e.Timestamp))
-                {
-                    <tr>
-                        <td>@e.Timestamp.ToString("u")</td>
-                        <td>@e.Actor</td>
-                        <td>@CaseEventLabels.Label(e.Kind)</td>
-                        <td>
-                            @e.Summary
-                            @if (e.RuleId is not null)
-                            {
-                                <span> (rule @e.RuleId)</span>
-                            }
-                            @if (e.Amount is not null)
-                            {
-                                <span> — @e.Amount @e.Currency</span>
-                            }
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
+    <section class="gate-card">
+        <p class="gate-card-title">Timeline</p>
+        @if (_detail.Events.Count == 0)
+        {
+            <p class="gate-meta">No events recorded.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>At</th><th>Actor</th><th>Event</th><th>Detail</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in _detail.Events.OrderBy(e => e.Timestamp))
+                    {
+                        <tr>
+                            <td>@e.Timestamp.ToString("u")</td>
+                            <td>@e.Actor</td>
+                            <td>@CaseEventLabels.Label(e.Kind)</td>
+                            <td>
+                                @e.Summary
+                                @if (e.RuleId is not null)
+                                {
+                                    <span> (rule @e.RuleId)</span>
+                                }
+                                @if (e.Amount is not null)
+                                {
+                                    <span> — @e.Amount @e.Currency</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
 }
 
 @code {

@@ -1,0 +1,407 @@
+@page "/erp/list/{Slug}"
+@rendermode InteractiveServer
+@using Gate.Contracts
+@using Gate.Web.Components.Erp
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject ErpViewService Views
+
+<PageTitle>ERP — @ErpModules.TitleFor(Slug)</PageTitle>
+
+<div class="gate-erp">
+    <ErpSidebar CurrentSlug="@Slug" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">@ErpModules.TitleFor(Slug)</p>
+            </div>
+            <div>
+                @if (ErpRoutes.CanCreate(Slug))
+                {
+                    <a class="gate-btn gate-btn-primary" href="@ErpRoutes.NewHref(Slug)">New</a>
+                }
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_loading)
+        {
+            <p class="gate-meta">Loading @ErpModules.TitleFor(Slug)…</p>
+        }
+        else
+        {
+            @foreach (var note in _notes)
+            {
+                <div class="gate-notice" role="alert">@note</div>
+            }
+            <section class="gate-card">
+                <p class="gate-card-title">@ErpModules.TitleFor(Slug)</p>
+            @if (!ErpModules.IsKnownList(Slug))
+            {
+                <p class="gate-meta">Unknown list. Pick a module on the left.</p>
+            }
+            else if (Slug == "so" && _rows is IReadOnlyList<SalesOrder> sos)
+            {
+                @if (sos.Count == 0)
+                {
+                    <p class="gate-meta">No sales orders.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>SO</th><th>Status</th><th>Currency</th><th class="gate-num">Lines</th><th class="gate-num">Total qty</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var so in sos)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("so", so.SoNumber)">@so.SoNumber</a></td>
+                                    <td>@so.Status</td>
+                                    <td>@so.Currency</td>
+                                    <td class="gate-num">@ErpFormat.Count(so.Lines.Count)</td>
+                                    <td class="gate-num">@ErpFormat.Qty(so.Lines.Sum(l => l.Quantity))</td>
+                                    <td><OriginChips Number="@so.SoNumber" Source="@null" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "pr" && _rows is IReadOnlyList<PurchaseRequisition> prs)
+            {
+                @if (prs.Count == 0)
+                {
+                    <p class="gate-meta">No purchase requisitions.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>PR</th><th>Status</th><th>Requester</th><th class="gate-num">Est. amount</th><th class="gate-num">Lines</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var pr in prs)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("pr", pr.PrNumber)">@pr.PrNumber</a></td>
+                                    <td>@pr.Status</td>
+                                    <td>@pr.Requester</td>
+                                    <td class="gate-num">@ErpFormat.Money(pr.EstimatedAmount, pr.Currency)</td>
+                                    <td class="gate-num">@ErpFormat.Count(pr.Lines.Count)</td>
+                                    <td><OriginChips Number="@pr.PrNumber" Source="@pr.Source" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "po" && _rows is IReadOnlyList<PurchaseOrder> pos)
+            {
+                @if (pos.Count == 0)
+                {
+                    <p class="gate-meta">No purchase orders.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>PO</th><th>Approval</th><th>Doc status</th><th>Vendor</th><th class="gate-num">Total</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var po in pos)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("po", po.PoNumber)">@po.PoNumber</a></td>
+                                    <td>@po.ApprovalStatus</td>
+                                    <td>@po.DocStatus</td>
+                                    <td><a href="@ErpRoutes.RecordHref("vendor", po.VendorId)">@po.VendorId</a></td>
+                                    <td class="gate-num">@ErpFormat.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)</td>
+                                    <td><OriginChips Number="@po.PoNumber" Source="@po.Source" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "asn" && _rows is IReadOnlyList<AsnDto> asns)
+            {
+                @if (asns.Count == 0)
+                {
+                    <p class="gate-meta">No ASNs.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>ASN</th><th>PO</th><th class="gate-num">Cartons</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var asn in asns)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("asn", asn.AsnNumber)">@asn.AsnNumber</a></td>
+                                    <td><a href="@ErpRoutes.RecordHref("po", asn.PoNumber)">@asn.PoNumber</a></td>
+                                    <td class="gate-num">@ErpFormat.Count(asn.Cartons.Count)</td>
+                                    <td><OriginChips Number="@asn.AsnNumber" Source="@asn.Source" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "receipt" && _rows is IReadOnlyList<ShipmentReceipt> receipts)
+            {
+                @if (receipts.Count == 0)
+                {
+                    <p class="gate-meta">No receipts.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Receipt</th><th>PO</th><th>Slip</th><th>Status</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var receipt in receipts)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("receipt", receipt.ReceiptNumber)">@receipt.ReceiptNumber</a></td>
+                                    <td><a href="@ErpRoutes.RecordHref("po", receipt.PoNumber)">@receipt.PoNumber</a></td>
+                                    <td>@receipt.SupplierPackingSlipNumber</td>
+                                    <td>@receipt.Status</td>
+                                    <td><OriginChips Number="@receipt.ReceiptNumber" Source="@receipt.Source" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "stock" && _rows is IReadOnlyList<ErpStockRow> stock)
+            {
+                @if (stock.Count == 0)
+                {
+                    <p class="gate-meta">No stock rows.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Item</th><th>Description</th><th>Unit</th><th class="gate-num">On hand</th><th class="gate-num">Lots</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in stock)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("stock", row.ItemId)">@row.ItemId</a></td>
+                                    <td>@(row.Description ?? "—")</td>
+                                    <td>@(row.Unit ?? "—")</td>
+                                    <td class="gate-num">@ErpFormat.Qty(row.Stock)</td>
+                                    <td class="gate-num">@ErpFormat.Count(row.Lots.Count)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "invoice" && _rows is IReadOnlyList<VendorInvoice> invoices)
+            {
+                @if (invoices.Count == 0)
+                {
+                    <p class="gate-meta">No invoices.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Invoice</th><th>Vendor</th><th>Status</th><th>PO</th><th class="gate-num">Total</th><th>Voucher</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var inv in invoices)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("invoice", inv.VendorId, inv.SupplierInvoiceNumber)">@inv.SupplierInvoiceNumber</a></td>
+                                    <td><a href="@ErpRoutes.RecordHref("vendor", inv.VendorId)">@inv.VendorId</a></td>
+                                    <td>@inv.Status</td>
+                                    <td>@(inv.PoNumber ?? "—")</td>
+                                    <td class="gate-num">@ErpFormat.Money(inv.Lines.Sum(l => l.Quantity * l.UnitPrice), inv.Currency)</td>
+                                    <td>@(inv.Voucher ?? "—")</td>
+                                    <td><OriginChips Number="@inv.SupplierInvoiceNumber" Source="@inv.Source" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "payment" && _rows is IReadOnlyList<Payment> payments)
+            {
+                @if (payments.Count == 0)
+                {
+                    <p class="gate-meta">No payments.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Payment</th><th>Status</th><th>Due</th><th>Bank</th><th class="gate-num">Total</th><th>Origin</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var pay in payments)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("payment", pay.PaymentNumber)">@pay.PaymentNumber</a></td>
+                                    <td>@pay.Status</td>
+                                    <td>@pay.DueDate</td>
+                                    <td>@pay.PayeeBank.AccountRef (verified: @pay.PayeeBank.Verified)</td>
+                                    <td class="gate-num">@ErpFormat.Money(pay.Lines.Sum(l => l.Amount), pay.Currency)</td>
+                                    <td><OriginChips Number="@pay.PaymentNumber" Source="@pay.Source" Opening="@_opening" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "hold" && _rows is IReadOnlyList<HoldDto> holds)
+            {
+                @if (holds.Count == 0)
+                {
+                    <p class="gate-meta">No open holds.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Hold</th><th>Rule</th><th>Case</th><th>Blocks</th><th>Set by</th><th>Reason</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var hold in holds)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("hold", hold.HoldId)">@hold.HoldId</a> (@hold.ReasonCode)</td>
+                                    <td>@(hold.RuleId ?? "—")</td>
+                                    <td><a href="cases/@hold.CaseId">@hold.CaseId</a></td>
+                                    <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
+                                    <td>@hold.SetBy</td>
+                                    <td>@hold.Note</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "vendor" && _rows is IReadOnlyList<VendorDto> vendors)
+            {
+                @if (vendors.Count == 0)
+                {
+                    <p class="gate-meta">No vendors.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Vendor</th><th>Name</th><th>Country</th><th>Terms</th><th>Email</th><th>Blocked</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var vendor in vendors)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("vendor", vendor.VendorId)">@vendor.VendorId</a></td>
+                                    <td>@vendor.Name</td>
+                                    <td>@vendor.CountryOfOrigin</td>
+                                    <td>@vendor.PaymentTermsId</td>
+                                    <td>@VendorLabels.EmailOrPlaceholder(vendor.Email)</td>
+                                    <td>@(vendor.IsBlocked ? $"yes: {vendor.BlockReason}" : "no")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            else if (Slug == "item" && _rows is IReadOnlyList<ItemDto> items)
+            {
+                @if (items.Count == 0)
+                {
+                    <p class="gate-meta">No items.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Item</th><th>Description</th><th>Unit</th><th>Critical</th><th class="gate-num">Units / carton</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in items)
+                            {
+                                <tr>
+                                    <td><a href="@ErpRoutes.RecordHref("item", item.ItemId)">@item.ItemId</a></td>
+                                    <td>@item.Description</td>
+                                    <td>@item.Unit</td>
+                                    <td>@(item.IsCritical ? "yes" : "no")</td>
+                                    <td class="gate-num">@ErpFormat.Count(item.UnitsPerCarton)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+            </section>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    private object? _rows;
+    private IReadOnlyList<string> _notes = [];
+    private IReadOnlySet<string> _opening = new HashSet<string>(StringComparer.Ordinal);
+    private string? _loadError;
+    private bool _loading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            var (opening, openingNotes) = Views.GetOpeningNumbers();
+            _opening = opening;
+            var notes = new List<string>(openingNotes);
+            _rows = Slug switch
+            {
+                "so" => await LoadAsync(Views.ListSalesOrdersAsync(), notes),
+                "pr" => await LoadAsync(Views.ListPurchaseRequisitionsAsync(), notes),
+                "po" => await LoadAsync(Views.ListPurchaseOrdersAsync(), notes),
+                "asn" => await LoadAsync(Views.ListAsnsAsync(), notes),
+                "receipt" => await LoadAsync(Views.ListReceiptsAsync(), notes),
+                "stock" => await LoadAsync(Views.ListStockAsync(), notes),
+                "invoice" => await LoadAsync(Views.ListInvoicesAsync(), notes),
+                "payment" => await LoadAsync(Views.ListPaymentsAsync(), notes),
+                "hold" => await LoadAsync(Views.ListHoldsAsync(), notes),
+                "vendor" => await LoadAsync(Views.ListVendorsAsync(), notes),
+                "item" => await LoadAsync(Views.ListItemsAsync(), notes),
+                _ => null,
+            };
+            _notes = notes;
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"{ErpModules.TitleFor(Slug)} failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static async Task<IReadOnlyList<T>> LoadAsync<T>(
+        Task<ErpListVm<T>> load, List<string> notes)
+    {
+        var list = await load;
+        notes.AddRange(list.Notes);
+        return list.Rows;
+    }
+}

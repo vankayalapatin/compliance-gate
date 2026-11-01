@@ -205,7 +205,7 @@ public sealed class VisionTranscriptionTests
         var h = Create();
         var caseId = await OpenBatteryCaseAsync(h);
         h.Models.QueueResponse(
-            """{"supplier_invoice_number":"INV-NAME","vendor_id_or_name":"Compliant Cells Inc","po_number":null,"lines":[{"po_line_ref":null,"quantity":5,"unit_price":10}],"bank_account_ref":null}""");
+            """{"supplier_invoice_number":"INV-NAME","vendor_id_or_name":"Meridian Cellworks Inc","po_number":null,"lines":[{"po_line_ref":null,"quantity":5,"unit_price":10}],"bank_account_ref":null}""");
 
         var invoice = await h.Runner.TranscribeInvoicePhotosAsync(
             caseId, [new InvoicePhoto("INV-IMG-1", [3, 3])]);

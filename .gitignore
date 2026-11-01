@@ -16,3 +16,4 @@ scenarios/run-manifest.json
 .agent-checks/.lock
 # Image-tool scratch (see DECISIONS.md 35); deliverables live in assets/.
 generated_images/
+Gate.Web/data/

@@ -1,0 +1,49 @@
+@rendermode InteractiveServer
+@using Gate.Web.ViewModels
+<nav class="gate-erp-side" aria-label="ERP modules">
+    @foreach (var module in ErpModules.All)
+    {
+        <div class="gate-erp-module">
+            <button class="gate-erp-module-btn" @onclick="() => Toggle(module.Name)" aria-expanded="@IsOpen(module.Name)">
+                <span class="gate-erp-caret" aria-hidden="true">@(IsOpen(module.Name) ? "▾" : "▸")</span>
+                @module.Name
+            </button>
+            @if (IsOpen(module.Name))
+            {
+                <ul class="gate-erp-links">
+                    @foreach (var link in module.Lists)
+                    {
+                        <li>
+                            <NavLink href="@ErpModules.ListHref(link.Slug)">@link.Title</NavLink>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+</nav>
+
+@code {
+    [Parameter]
+    public string? CurrentSlug { get; set; }
+
+    private readonly HashSet<string> _open = new(StringComparer.Ordinal);
+
+    protected override void OnParametersSet()
+    {
+        if (CurrentSlug is not null && ErpModules.ModuleFor(CurrentSlug) is { } module)
+        {
+            _open.Add(module);
+        }
+    }
+
+    private bool IsOpen(string module) => _open.Contains(module);
+
+    private void Toggle(string module)
+    {
+        if (!_open.Add(module))
+        {
+            _open.Remove(module);
+        }
+    }
+}

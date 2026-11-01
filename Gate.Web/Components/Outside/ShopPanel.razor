@@ -1,0 +1,222 @@
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Simulate
+
+<div id="shop">
+    <section class="gate-card">
+        <div class="gate-card-head">
+            <p class="gate-card-title">Customer shop — seeded orders</p>
+            <div class="gate-card-badges">
+                <span class="gate-chip">@Options.ScenarioName</span>
+            </div>
+        </div>
+        <p class="gate-meta">You are the customer. Seeded orders start one case per shortfall item.</p>
+        @if (Options.SoNumbers.Count == 0)
+        {
+            <p class="gate-meta">No seeded orders in the run manifest yet.</p>
+        }
+        else
+        {
+            <div class="gate-field">
+                <label class="gate-label" for="order-so">Seeded order</label>
+                <select class="gate-select" id="order-so" @bind="_seededSo">
+                    <option value="">— pick a seeded order —</option>
+                    @foreach (var so in Options.SoNumbers)
+                    {
+                        <option value="@so">@so</option>
+                    }
+                </select>
+            </div>
+        }
+        <div class="gate-field">
+            <label class="gate-label" for="order-requester">Requester (blank uses the ERP default)</label>
+            <select class="gate-select" id="order-requester" @bind="_requester">
+                <option value="">— ERP default requester —</option>
+                @foreach (var user in Options.Users)
+                {
+                    <option value="@user.UserId">@user.UserId (@user.Role)</option>
+                }
+            </select>
+        </div>
+        <p class="gate-row"><span class="gate-label">Candidate vendors (from scenario):</span></p>
+        @if (Options.CandidateVendorsByItem.Count == 0)
+        {
+            <p class="gate-meta">None in the scenario; the run proceeds without a candidate map.</p>
+        }
+        else
+        {
+            <ul class="gate-list">
+                @foreach (var kv in Options.CandidateVendorsByItem.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                {
+                    <li>@kv.Key ← @string.Join(", ", kv.Value)</li>
+                }
+            </ul>
+        }
+        <div class="gate-actions">
+            <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="SubmitSeededAsync">Place order</button>
+            @if (_busy)
+            {
+                <span class="gate-meta">Sending…</span>
+            }
+        </div>
+        <OutcomeBox Outcome="@_seededOutcome" />
+    </section>
+
+    <section class="gate-card">
+        <div class="gate-card-head">
+            <p class="gate-card-title">New shop order</p>
+        </div>
+        <p class="gate-meta">A new shop order carries its own lines plus currency. The shop sends a shop order id and the ERP mints the sales order — the new number shows below.</p>
+        <div class="gate-field">
+            <label class="gate-label" for="shop-new-currency">Currency</label>
+            <input class="gate-input" id="shop-new-currency" @bind="_currency" />
+        </div>
+        <p class="gate-row"><span class="gate-label">Order lines</span></p>
+        @foreach (var line in _lines)
+        {
+            <div class="gate-field">
+                <select class="gate-select" value="@line.ItemId" @onchange="e => line.ItemId = e.Value?.ToString() ?? string.Empty" aria-label="Item">
+                    <option value="">— item —</option>
+                    @foreach (var item in Options.Items)
+                    {
+                        <option value="@item.ItemId">@item.ItemId@(string.IsNullOrEmpty(item.Unit) ? "" : $" ({item.Unit})")</option>
+                    }
+                </select>
+                <input class="gate-input" type="number" min="0" step="any" value="@line.Quantity" @onchange="e => line.Quantity = ParseDecimal(e.Value?.ToString())" placeholder="quantity" aria-label="Quantity" />
+                <div class="gate-actions">
+                    <button class="gate-btn" disabled="@_busy" @onclick="() => _lines.Remove(line)">Remove</button>
+                </div>
+            </div>
+        }
+        <div class="gate-actions">
+            <button class="gate-btn" disabled="@_busy" @onclick="() => _lines.Add(new OrderLineRow())">Add line</button>
+        </div>
+        <div class="gate-actions">
+            <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="SubmitNewAsync">Place new order</button>
+            @if (_busy)
+            {
+                <span class="gate-meta">Sending…</span>
+            }
+        </div>
+        @if (_placed is not null && _placed.MintedSoNumbers.Count > 0)
+        {
+            <div class="gate-notice gate-notice-ok" role="alert">ERP minted @string.Join(", ", _placed.MintedSoNumbers) from shop order @_placed.ShopOrderId.</div>
+        }
+        else if (_placed is not null && _placed.Outcome.Ok)
+        {
+            <div class="gate-notice" role="alert">Shop order @_placed.ShopOrderId accepted; the minted sales order is not in the case cache yet.</div>
+        }
+        <OutcomeBox Outcome="@_newOutcome" />
+    </section>
+</div>
+
+@code {
+    [Parameter]
+    public SimulateOptions Options { get; set; } = null!;
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    private string _scenarioName = string.Empty;
+    private string _seededSo = string.Empty;
+    private string _currency = string.Empty;
+    private string? _requester;
+    private bool _busy;
+    private bool _prefilled;
+    private SimulationOutcome? _seededOutcome;
+    private SimulationOutcome? _newOutcome;
+    private ShopOrderPlaced? _placed;
+    private readonly List<OrderLineRow> _lines = [new()];
+
+    private sealed class OrderLineRow
+    {
+        public string ItemId { get; set; } = string.Empty;
+        public decimal Quantity { get; set; }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrEmpty(_scenarioName))
+        {
+            _scenarioName = Options.ScenarioName;
+        }
+
+        if (string.IsNullOrEmpty(_currency))
+        {
+            _currency = Options.Currency;
+        }
+
+        if (!_prefilled)
+        {
+            _prefilled = true;
+            _seededSo = Options.SoNumbers.FirstOrDefault() ?? string.Empty;
+            if (!string.IsNullOrEmpty(Options.SalesOrderItem)
+                && Options.Items.Any(i => i.ItemId == Options.SalesOrderItem))
+            {
+                _lines[0].ItemId = Options.SalesOrderItem;
+                _lines[0].Quantity = Options.SalesOrderQuantity;
+            }
+        }
+    }
+
+    private static decimal ParseDecimal(string? text) =>
+        decimal.TryParse(text, out var value) ? value : 0m;
+
+    private async Task SubmitSeededAsync()
+    {
+        _busy = true;
+        _seededOutcome = null;
+        try
+        {
+            var submission = new OrderSubmission(
+                _scenarioName,
+                _seededSo,
+                string.IsNullOrWhiteSpace(_requester) ? null : _requester,
+                Options.CandidateVendorsByItem.Count == 0 ? null : Options.CandidateVendorsByItem,
+                null,
+                null);
+            _seededOutcome = await Simulate.SendOrderAsync(submission);
+            if (_seededOutcome.Ok)
+            {
+                await OnChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _seededOutcome = new SimulationOutcome(false, $"Placing the order failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SubmitNewAsync()
+    {
+        _busy = true;
+        _newOutcome = null;
+        _placed = null;
+        try
+        {
+            _placed = await Simulate.SendNewShopOrderAsync(new NewShopOrder(
+                _scenarioName,
+                string.IsNullOrWhiteSpace(_requester) ? null : _requester,
+                Options.CandidateVendorsByItem.Count == 0 ? null : Options.CandidateVendorsByItem,
+                _lines.Select(l => new OrderLineForm(l.ItemId, l.Quantity)).ToList(),
+                _currency));
+            _newOutcome = _placed.Outcome;
+            if (_newOutcome.Ok)
+            {
+                await OnChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _newOutcome = new SimulationOutcome(false, $"Placing the new order failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

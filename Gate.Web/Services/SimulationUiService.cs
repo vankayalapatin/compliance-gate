@@ -22,6 +22,7 @@ public sealed class SimulationUiService
     // UI text never shows these (OutsideWorldLabels.Sanitize); the service
     // keeps them for requests plus test-pinned failure context.
     public const string OrderPath = "/simulation/shopify/order";
+    public const string AckPath = "/simulation/supplier/ack";
     public const string AsnPath = "/simulation/supplier/asn";
     public const string DockPhotosPath = "/simulation/dock/photos";
     public const string ReshotPath = "/simulation/dock/reshot";
@@ -159,6 +160,82 @@ public sealed class SimulationUiService
             Lines: lines,
             Currency: BlankToNull(submission.Currency));
         return await PostAsync(OrderPath, input, ParseOrder, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>New shop order without an SO number: the shop mints a shop
+    /// order id, the ERP mints the SO, and the minted numbers resolve from
+    /// the new case files. The shop id travels back so the page can show
+    /// what the shop sent alongside what the ERP minted.</summary>
+    public async Task<ShopOrderPlaced> SendNewShopOrderAsync(
+        NewShopOrder? submission, CancellationToken ct = default)
+    {
+        if (submission is null)
+        {
+            return new ShopOrderPlaced(
+                Refusal("No order submission was provided."), string.Empty, []);
+        }
+
+        if (submission.Lines.Count == 0)
+        {
+            return new ShopOrderPlaced(
+                Refusal("Add at least one order line; the ERP cannot mint an empty order."),
+                string.Empty, []);
+        }
+
+        var shopId = $"SHOP-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
+        var outcome = await SendOrderAsync(new OrderSubmission(
+            submission.ScenarioName, shopId, submission.Requester,
+            submission.CandidateVendorsByItem,
+            submission.Lines, submission.Currency), ct).ConfigureAwait(false);
+        if (!outcome.Ok)
+        {
+            return new ShopOrderPlaced(outcome, shopId, []);
+        }
+
+        return new ShopOrderPlaced(outcome, shopId, await ResolveSoNumbersAsync(outcome.CaseIds, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>SO numbers behind posted case ids, read back from the case
+    /// cache. Empty when the cache has none yet; the page renders the
+    /// case links it already has.</summary>
+    public async Task<IReadOnlyList<string>> ResolveSoNumbersAsync(
+        IReadOnlyList<string> caseIds, CancellationToken ct = default)
+    {
+        var numbers = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var caseId in caseIds)
+        {
+            try
+            {
+                var file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
+                if (file is not null && !string.IsNullOrWhiteSpace(file.Case.SoNumber))
+                {
+                    numbers.Add(file.Case.SoNumber);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Minted-SO lookup failed for case {CaseId}.", caseId);
+            }
+        }
+
+        return numbers.ToList();
+    }
+
+    /// <summary>Supplier acknowledgement for the case PO. Lines default to
+    /// the full ordered qty on the runner; a blank case is refused before
+    /// any POST. ERP refusals (for example an unapproved PO) surface from
+    /// the endpoint with status plus body excerpt.</summary>
+    public async Task<SimulationOutcome> SendAckAsync(
+        string? caseId, DateOnly? confirmDate = null,
+        IReadOnlyList<VendorConfirmLine>? lines = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(caseId))
+        {
+            return Refusal("Case is required for an acknowledgement; pick the PO's case first.");
+        }
+
+        var input = new SupplierAckInput(caseId.Trim(), confirmDate, lines, FreshKey());
+        return await PostAsync(AckPath, input, ParseAck, ct).ConfigureAwait(false);
     }
 
     public async Task<SimulationOutcome> SendAsnAsync(
@@ -421,84 +498,248 @@ public sealed class SimulationUiService
         }
     }
 
-    /// <summary>Supplier-inbox prefill for one case: our PO from the ERP,
-    /// the agent mail thread, ASN plus invoice defaults derived from the
-    /// runtime PO plus scenario cartons, and the reply suggestion. Null when
-    /// the case has no case file; every source failure lands in Notes.</summary>
+    /// <summary>Supplier portal list: that supplier's POs from the ERP,
+    /// mapped for display. Failures land in Notes; the page renders the
+    /// honest empty state.</summary>
+    public async Task<SupplierPoList> ListSupplierPosAsync(
+        string vendorId, CancellationToken ct = default)
+    {
+        var notes = new List<string>();
+        IReadOnlyList<PurchaseOrder> orders;
+        try
+        {
+            orders = (await _erp.GetPurchaseOrdersByVendorAsync(vendorId, ct).ConfigureAwait(false))
+                .OrderBy(p => p.PoNumber, StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (NotSupportedException ex)
+        {
+            _log.LogWarning(ex, "PO-by-vendor list is not implemented by the ERP layer yet.");
+            notes.Add("Purchase-order list is not implemented by the ERP layer yet.");
+            return new SupplierPoList([], notes);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "PO-by-vendor list failed for {Vendor}.", vendorId);
+            notes.Add($"Purchase-order list for {vendorId} failed: {ex.Message}.");
+            return new SupplierPoList([], notes);
+        }
+
+        return new SupplierPoList(
+            orders.Select(ToInboxPo).ToList(), notes);
+    }
+
+    /// <summary>Case id behind a PO, read back from the case cache. Null when
+    /// no case links the PO yet; the portal waits for the case.</summary>
+    public async Task<string?> FindCaseIdForPoAsync(
+        string poNumber, CancellationToken ct = default)
+    {
+        try
+        {
+            var files = await _cases.ListAsync(ct).ConfigureAwait(false);
+            return files
+                .OrderBy(f => f.Case.CaseId, StringComparer.Ordinal)
+                .FirstOrDefault(f => string.Equals(f.Case.PoNumber, poNumber, StringComparison.Ordinal))
+                ?.Case.CaseId;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Case lookup failed for PO {Po}.", poNumber);
+            return null;
+        }
+    }
+
+    /// <summary>Supplier-inbox prefill for one PO: our PO from the ERP, the
+    /// linked case's mail thread, ship plus invoice defaults derived from
+    /// the runtime PO lines and item pack sizes, and the reply suggestion.
+    /// Null when the PO is not in the ERP; every source failure lands in
+    /// Notes. A missing case still prefills the documents; the sends wait
+    /// for the case and refuse honestly until it links.</summary>
+    public async Task<SupplierInboxVm?> GetSupplierInboxForPoAsync(
+        string poNumber, CancellationToken ct = default)
+    {
+        var notes = new List<string>();
+        InboxPoVm? po;
+        try
+        {
+            var order = await _erp.GetPurchaseOrderAsync(poNumber, ct).ConfigureAwait(false);
+            if (order is null)
+            {
+                return null;
+            }
+
+            po = ToInboxPo(order);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Inbox PO lookup failed for {Po}.", poNumber);
+            notes.Add($"PO {poNumber} read failed: {ex.Message}.");
+            return new SupplierInboxVm(
+                string.Empty, null, [], null, null,
+                new ReplySuggestion(null, null, null), notes);
+        }
+
+        var caseId = await FindCaseIdForPoAsync(poNumber, ct).ConfigureAwait(false);
+        if (caseId is null)
+        {
+            notes.Add($"No case links PO {poNumber} yet; acknowledgement, shipping, and invoicing wait for the case.");
+        }
+
+        var resolved = caseId ?? string.Empty;
+        var mail = resolved.Length == 0
+            ? (IReadOnlyList<VendorEmail>)[]
+            : await ReadMailAsync(resolved, ct).ConfigureAwait(false);
+        var reply = resolved.Length == 0
+            ? await SuggestReplyForVendorAsync(po.VendorId, ct).ConfigureAwait(false)
+            : await SuggestReplyAsync(resolved, ct).ConfigureAwait(false);
+
+        var asn = await BuildShipPrefillAsync(resolved, po, notes, ct).ConfigureAwait(false);
+        var invoice = new InvoicePrefill(
+            $"INV-{po.PoNumber}",
+            po.VendorId,
+            po.PoNumber,
+            po.Lines.Select(l => new InvoiceLineForm(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList());
+
+        return new SupplierInboxVm(resolved, po, mail, asn, invoice, reply, notes);
+    }
+
+    /// <summary>Supplier-inbox prefill for one case: resolves the case PO and
+    /// delegates to the PO-driven inbox. Null when the case has no case
+    /// file; every source failure lands in Notes.</summary>
     public async Task<SupplierInboxVm?> GetSupplierInboxAsync(
         string caseId, CancellationToken ct = default)
     {
-        var notes = new List<string>();
         var file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
         if (file is null)
         {
             return null;
         }
 
-        var kase = file.Case;
-        InboxPoVm? po = null;
-        if (kase.PoNumber is null)
+        if (file.Case.PoNumber is null)
         {
-            notes.Add("No PO on this case yet; the supplier waits for our order.");
+            var mail = await ReadMailAsync(caseId, ct).ConfigureAwait(false);
+            var reply = await SuggestReplyAsync(caseId, ct).ConfigureAwait(false);
+            return new SupplierInboxVm(
+                caseId, null, mail, null, null, reply,
+                ["No PO on this case yet; the supplier waits for our order."]);
         }
-        else
+
+        return await GetSupplierInboxForPoAsync(file.Case.PoNumber, ct).ConfigureAwait(false);
+    }
+
+    private static InboxPoVm ToInboxPo(PurchaseOrder order) =>
+        new(
+            order.PoNumber, order.VendorId, order.PaymentTermsId,
+            order.ApprovalStatus.ToString(), order.DocStatus.ToString(),
+            order.Currency,
+            order.Lines.Select(l => new InboxPoLineVm(
+                l.PoLineRef, l.ItemId, l.QtyOrdered, l.UnitPrice, l.LineAmount)).ToList(),
+            order.Lines.Sum(l => l.LineAmount));
+
+    private async Task<ReplySuggestion> SuggestReplyForVendorAsync(
+        string vendorId, CancellationToken ct)
+    {
+        try
+        {
+            var vendor = (await _erp.GetVendorsAsync(ct).ConfigureAwait(false))
+                .FirstOrDefault(v => string.Equals(v.VendorId, vendorId, StringComparison.Ordinal));
+            return new ReplySuggestion(vendor?.Email, null, null);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Reply suggestion lookup failed for vendor {Vendor}.", vendorId);
+            return new ReplySuggestion(null, null, null);
+        }
+    }
+
+    private async Task<AsnSubmission> BuildShipPrefillAsync(
+        string caseId, InboxPoVm po, List<string> notes, CancellationToken ct)
+    {
+        var packs = new Dictionary<string, int?>(StringComparer.Ordinal);
+        foreach (var itemId in po.Lines.Select(l => l.ItemId).Distinct(StringComparer.Ordinal))
         {
             try
             {
-                var order = await _erp.GetPurchaseOrderAsync(kase.PoNumber, ct).ConfigureAwait(false);
-                po = order is null
-                    ? null
-                    : new InboxPoVm(
-                        order.PoNumber, order.VendorId, order.PaymentTermsId,
-                        order.ApprovalStatus.ToString(), order.DocStatus.ToString(),
-                        order.Currency,
-                        order.Lines.Select(l => new InboxPoLineVm(
-                            l.PoLineRef, l.ItemId, l.QtyOrdered, l.UnitPrice, l.LineAmount)).ToList(),
-                        order.Lines.Sum(l => l.LineAmount));
-                if (po is null)
-                {
-                    notes.Add($"PO {kase.PoNumber} is on the case but not found in the ERP.");
-                }
+                packs[itemId] = (await _erp.GetItemAsync(itemId, ct).ConfigureAwait(false))?.UnitsPerCarton;
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "Inbox PO lookup failed for case {CaseId}.", caseId);
-                notes.Add($"PO {kase.PoNumber} read failed: {ex.Message}.");
+                _log.LogWarning(ex, "Pack-size lookup failed for {Item}.", itemId);
+                notes.Add($"Pack size for {itemId} failed: {ex.Message}.");
+                packs[itemId] = null;
             }
         }
 
-        var scenario = ReadScenario(notes);
-        var mail = await ReadMailAsync(caseId, ct).ConfigureAwait(false);
-        var reply = await SuggestReplyAsync(caseId, ct).ConfigureAwait(false);
+        var cartons = OutsideShipPlan.Build(
+            po.PoNumber, po.Lines,
+            itemId => packs.TryGetValue(itemId, out var units) ? units : null,
+            notes);
+        return new AsnSubmission(caseId, $"ASN-{po.PoNumber}", $"PACK-{po.PoNumber}", cartons);
+    }
 
-        AsnSubmission? asn = null;
-        if (scenario.CartonDetails.Count > 0)
+    /// <summary>Expected trucks at the dock: unreceived ASNs from the ERP
+    /// plus each ASN's PO vendor and linked case. Failures land in Notes;
+    /// the page renders the honest empty state.</summary>
+    public async Task<ExpectedTrucks> ListExpectedTrucksAsync(CancellationToken ct = default)
+    {
+        var notes = new List<string>();
+        IReadOnlyList<AsnDto> asns;
+        try
         {
-            asn = new AsnSubmission(
-                kase.CaseId,
-                kase.PoNumber is null ? string.Empty : $"ASN-{kase.PoNumber}",
-                kase.PoNumber is null ? string.Empty : $"PACK-{kase.PoNumber}",
-                scenario.CartonDetails.Select(c => new AsnCartonForm(
-                    c.CartonId,
-                    string.IsNullOrWhiteSpace(c.ItemId) ? kase.ItemId : c.ItemId,
-                    c.UnitsPerCarton,
-                    kase.PoNumber is null ? $"LOT-{c.CartonId}" : $"{kase.PoNumber}-{c.CartonId}"))
-                    .ToList());
+            asns = (await _erp.GetUnreceivedAsnsAsync(ct).ConfigureAwait(false))
+                .OrderBy(a => a.AsnNumber, StringComparer.Ordinal)
+                .ToList();
         }
-        else
+        catch (NotSupportedException ex)
         {
-            notes.Add("No scenario cartons; the shipment notice starts empty.");
+            _log.LogWarning(ex, "Unreceived-ASN list is not implemented by the ERP layer yet.");
+            notes.Add("Expected-truck list is not implemented by the ERP layer yet.");
+            return new ExpectedTrucks([], notes);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Unreceived-ASN list failed.");
+            notes.Add($"Expected-truck list failed: {ex.Message}.");
+            return new ExpectedTrucks([], notes);
         }
 
-        InvoicePrefill? invoice = po is null
-            ? null
-            : new InvoicePrefill(
-                $"INV-{po.PoNumber}",
-                po.VendorId,
-                po.PoNumber,
-                po.Lines.Select(l => new InvoiceLineForm(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList());
+        IReadOnlyList<CaseFile> files = [];
+        try
+        {
+            files = await _cases.ListAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Case-cache list failed for the dock.");
+            notes.Add($"Case links unavailable: {ex.Message}.");
+        }
 
-        return new SupplierInboxVm(kase.CaseId, po, mail, asn, invoice, reply, notes);
+        var trucks = new List<ExpectedTruckVm>();
+        foreach (var asn in asns)
+        {
+            string? vendor = null;
+            try
+            {
+                var po = await _erp.GetPurchaseOrderAsync(asn.PoNumber, ct).ConfigureAwait(false);
+                vendor = po?.VendorId;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "PO lookup failed for ASN {Asn}.", asn.AsnNumber);
+                notes.Add($"PO {asn.PoNumber} for truck {asn.AsnNumber} failed: {ex.Message}.");
+            }
+
+            var linked = files.FirstOrDefault(f =>
+                    string.Equals(f.Case.AsnNumber, asn.AsnNumber, StringComparison.Ordinal))
+                ?? files.FirstOrDefault(f =>
+                    string.Equals(f.Case.PoNumber, asn.PoNumber, StringComparison.Ordinal));
+            trucks.Add(new ExpectedTruckVm(
+                asn.AsnNumber, asn.PoNumber, vendor, linked?.Case.CaseId,
+                asn.Cartons.Select(c => new ExpectedTruckCarton(
+                    c.CartonId, c.ItemId, c.UnitsPerCarton, c.LotRef)).ToList()));
+        }
+
+        return new ExpectedTrucks(trucks, notes);
     }
 
     public async Task<IReadOnlyList<PoLineOption>> GetPoLinesAsync(
@@ -676,6 +917,15 @@ public sealed class SimulationUiService
 
         return new SimulationOutcome(
             true, $"Order accepted: {caseIds.Count} case(s).", details, caseIds);
+    }
+
+    private static SimulationOutcome ParseAck(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var po = Text(root, "poNumber") ?? "unknown PO";
+        return new SimulationOutcome(
+            true, $"PO {po} acknowledged.", AdvanceDetails(root).ToList(), []);
     }
 
     private static SimulationOutcome ParseAsn(string body)

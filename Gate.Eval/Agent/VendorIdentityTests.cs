@@ -97,7 +97,7 @@ public sealed class VendorIdentityTests
         var caseId = await OpenBatteryCaseAsync(h);
 
         var card = await h.Runner.ProposeVendorIdentityAsync(
-            caseId, "Compliant Cells Inc", ["image:INV-1"]);
+            caseId, "Meridian Cellworks Inc", ["image:INV-1"]);
 
         Assert.Null(card);
         Assert.Equal(0, h.Models.CallCount);
@@ -122,7 +122,7 @@ public sealed class VendorIdentityTests
         h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
 
         var card = await h.Runner.ProposeVendorIdentityAsync(
-            caseId, "Compliant Cells (V-B)", ["image:INV-IMG-1"]);
+            caseId, "Meridian Cellworks (V-B)", ["image:INV-IMG-1"]);
 
         Assert.NotNull(card);
         Assert.Equal(DecisionKind.VendorIdentity, card.Kind);
@@ -130,7 +130,7 @@ public sealed class VendorIdentityTests
         Assert.Equal("clerk", card.RequestedTo);
         Assert.Equal("Vendor", card.DocumentType);
         Assert.Equal("V-B", card.DocumentNumber);
-        Assert.Equal("Compliant Cells (V-B)", card.Reason);
+        Assert.Equal("Meridian Cellworks (V-B)", card.Reason);
         Assert.Equal(["image:INV-IMG-1"], card.EvidenceRefs);
         Assert.Equal(1, h.Models.CallCount);
         Assert.Null(await h.Erp.GetInvoiceAsync("V-B", "INV-1"));
@@ -206,9 +206,9 @@ public sealed class VendorIdentityTests
         h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
 
         var first = await h.Runner.ProposeVendorIdentityAsync(
-            caseId, "Compliant Cells (V-B)", ["image:INV-1"]);
+            caseId, "Meridian Cellworks (V-B)", ["image:INV-1"]);
         var second = await h.Runner.ProposeVendorIdentityAsync(
-            caseId, "Compliant Cells (V-B)", ["image:INV-1"]);
+            caseId, "Meridian Cellworks (V-B)", ["image:INV-1"]);
 
         Assert.Equal(first!.DecisionId, second!.DecisionId);
         Assert.Equal(1, h.Models.CallCount);
@@ -223,8 +223,8 @@ public sealed class VendorIdentityTests
         h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
         h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
 
-        await h.Runner.ProposeVendorIdentityAsync(caseId, "Compliant Cells (V-B)", ["image:INV-1"]);
-        await h.Runner.ProposeVendorIdentityAsync(caseId, "Compliant Cells (V-B)", ["image:INV-2"]);
+        await h.Runner.ProposeVendorIdentityAsync(caseId, "Meridian Cellworks (V-B)", ["image:INV-1"]);
+        await h.Runner.ProposeVendorIdentityAsync(caseId, "Meridian Cellworks (V-B)", ["image:INV-2"]);
 
         Assert.Equal(2, Load(h, caseId).Decisions.Count(d => d.Kind == DecisionKind.VendorIdentity));
         Assert.Equal(2, h.Models.CallCount);
@@ -249,7 +249,7 @@ public sealed class VendorIdentityTests
         var qty = line.QtyOrdered.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var price = line.UnitPrice.ToString(System.Globalization.CultureInfo.InvariantCulture);
         h.Models.QueueResponse(
-            $$"""{"supplier_invoice_number":"INV-VID","vendor_id_or_name":"Compliant Cells (V-B)","po_number":"{{small.PoNumber}}","lines":[{"po_line_ref":"{{line.PoLineRef}}","quantity":{{qty}},"unit_price":{{price}}}],"bank_account_ref":null}""");
+            $$"""{"supplier_invoice_number":"INV-VID","vendor_id_or_name":"Meridian Cellworks (V-B)","po_number":"{{small.PoNumber}}","lines":[{"po_line_ref":"{{line.PoLineRef}}","quantity":{{qty}},"unit_price":{{price}}}],"bank_account_ref":null}""");
         h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
 
         var transcribed = await h.Runner.TranscribeInvoicePhotosAsync(
@@ -330,7 +330,7 @@ public sealed class VendorIdentityTests
         var qty = line.QtyOrdered.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var price = line.UnitPrice.ToString(System.Globalization.CultureInfo.InvariantCulture);
         h.Models.QueueResponse(
-            $$"""{"supplier_invoice_number":"INV-VIDM","vendor_id_or_name":"Compliant Cells (V-B)","po_number":"{{small.PoNumber}}","lines":[{"po_line_ref":"{{line.PoLineRef}}","quantity":{{qty}},"unit_price":{{price}}}],"bank_account_ref":null,"summary":"Corrected details."}""");
+            $$"""{"supplier_invoice_number":"INV-VIDM","vendor_id_or_name":"Meridian Cellworks (V-B)","po_number":"{{small.PoNumber}}","lines":[{"po_line_ref":"{{line.PoLineRef}}","quantity":{{qty}},"unit_price":{{price}}}],"bank_account_ref":null,"summary":"Corrected details."}""");
         h.Models.QueueResponse("""{"vendor_id":"V-B"}""");
 
         var reply = await h.Runner.OnVendorReplyAsync(new VendorReplyInput(
@@ -339,7 +339,7 @@ public sealed class VendorIdentityTests
 
         var card = Load(h, caseId).Decisions.Single(d => d.Kind == DecisionKind.VendorIdentity);
         Assert.Equal("V-B", card.DocumentNumber);
-        Assert.Equal("Compliant Cells (V-B)", card.Reason);
+        Assert.Equal("Meridian Cellworks (V-B)", card.Reason);
         Assert.Equal([$"mail:{reply.EmailId}"], card.EvidenceRefs);
         Assert.Null(await h.Erp.GetInvoiceAsync("V-B", "INV-VIDM"));
         Assert.Contains(Load(h, caseId).Events, e =>
@@ -361,7 +361,7 @@ public sealed class VendorIdentityTests
         h.Models.QueueResponse("""{"vendor_id":"V-C"}""");
 
         var card = await h.Runner.ProposeVendorIdentityAsync(
-            caseId, "Screws Co (V-C)", ["image:INV-1"]);
+            caseId, "Formosa Fasteners Co (V-C)", ["image:INV-1"]);
 
         var approved = await h.Runner.ResolveDecisionAsync(
             caseId, card!.DecisionId, true, "clerk", "ok");

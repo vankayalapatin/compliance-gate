@@ -47,13 +47,13 @@ public sealed class VendorIdentityLiveTests
         var caseId = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
 
         var card = await runner.ProposeVendorIdentityAsync(
-            caseId, "Compliant Cells (V-B)", ["image:INV-LIVE-1"]);
+            caseId, "Meridian Cellworks (V-B)", ["image:INV-LIVE-1"]);
 
         Assert.NotNull(card);
         Assert.Equal(DecisionKind.VendorIdentity, card.Kind);
         Assert.Equal("Vendor", card.DocumentType);
         Assert.Equal("V-B", card.DocumentNumber);
-        Assert.Equal("Compliant Cells (V-B)", card.Reason);
+        Assert.Equal("Meridian Cellworks (V-B)", card.Reason);
         var approved = await runner.ResolveDecisionAsync(
             caseId, card.DecisionId, true, card.RequestedTo, "confirmed live");
         Assert.Equal(DecisionStatus.Approved, approved.Status);
