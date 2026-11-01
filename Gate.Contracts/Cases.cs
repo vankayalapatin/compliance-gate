@@ -44,7 +44,11 @@ public sealed record Case(
     IReadOnlyList<string> PaymentNumbers,
     string? BlockedByRuleId,
     string? BlockedReason,
-    string? AwardedVendorId = null);
+    string? AwardedVendorId = null,
+    /// <summary>Seeded opening shell: no agent-authored timeline entries,
+    /// decisions project 1:1 from ERP pending approvals. Only real runs
+    /// show what the agent did.</summary>
+    bool IsOpeningData = false);
 
 public enum CaseEventKind
 {
