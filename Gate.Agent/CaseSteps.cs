@@ -116,7 +116,7 @@ public static class CasePicker
             return (CaseNextStep.Done, $"Case is {current.Stage}.");
         }
 
-        if (!view.SoExists)
+        if (!view.SoExists && !IsErpHandedWork(file))
         {
             return (CaseNextStep.Done, "Sales order is gone; case cannot advance.");
         }
@@ -154,6 +154,11 @@ public static class CasePicker
 
             if (current.AwardedVendorId is null)
             {
+                if (pendingKinds.Contains(DecisionKind.ExceptionApproval))
+                {
+                    return (CaseNextStep.AwaitDecision, "CORP-02 exception decision is pending.");
+                }
+
                 return (CaseNextStep.AwardSupplier, "Vendors screened; no supplier awarded yet.");
             }
 
@@ -248,6 +253,22 @@ public static class CasePicker
         }
 
         return (CaseNextStep.FinishCase, "Paid in full with no open holds, held lines, or pending case reviews.");
+    }
+
+    /// <summary>True when a live case carries ERP-handed work without a sales
+    /// order: an adopted PR, PO, or invoice the ERP handed the agent outside
+    /// any shop order (see CaseRunner.Pickup.cs). Opening shells are never
+    /// handed work: they stay parked for their human card even when they
+    /// link a document. A live case whose non-blank SO vanished is gone,
+    /// not handed, and still parks at Done.</summary>
+    public static bool IsErpHandedWork(CaseFile file)
+    {
+        var current = file.Case;
+        return !current.IsOpeningData
+            && string.IsNullOrWhiteSpace(current.SoNumber)
+            && (current.PrNumber is not null
+                || current.PoNumber is not null
+                || current.Invoices.Count > 0);
     }
 
     /// <summary>True when the latest mail event is an outbound query with no

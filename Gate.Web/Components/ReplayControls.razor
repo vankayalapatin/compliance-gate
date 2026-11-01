@@ -2,6 +2,7 @@
 @using Gate.Web.ViewModels
 @inject ReplayService Replay
 @inject ReplayState State
+@inject ModelSpendTracker Spend
 @inject ILogger<ReplayControls> Log
 
 <div class="gate-replay">
@@ -13,15 +14,24 @@
     {
         <span class="gate-badge">Live</span>
     }
+    <span class="gate-badge" title="Model spend this run (live calls only; cached answers are free)">@Spend.Summary</span>
     @if (!_confirming)
     {
-        <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = true">Reset + replay offline</button>
+        <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = true">Reset</button>
     }
     else
     {
         <span class="gate-meta">Reset to scenario start?</span>
         <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="ResetAsync">Confirm reset</button>
         <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = false">Cancel</button>
+    }
+    @if (State.IsReplay)
+    {
+        <button class="gate-btn" disabled="@_busy" @onclick="ExitReplay">Exit replay</button>
+    }
+    else
+    {
+        <button class="gate-btn" disabled="@_busy" @onclick="EnterReplay">Enter replay</button>
     }
     @if (_busy)
     {
@@ -38,6 +48,20 @@
     private bool _busy;
     private string? _summary;
     private string? _full;
+
+    private void EnterReplay()
+    {
+        Replay.EnterReplay();
+        _summary = "Replay on: Ask-why answers from the model cache only.";
+        _full = _summary;
+    }
+
+    private void ExitReplay()
+    {
+        Replay.ExitReplay();
+        _summary = "Live: model calls allowed.";
+        _full = _summary;
+    }
 
     private async Task ResetAsync()
     {
@@ -56,7 +80,7 @@
                     StateHasChanged();
                 });
             });
-            var report = await Replay.ResetAndReplayAsync(progress);
+            var report = await Replay.ResetAsync(progress);
             _confirming = false;
             _full = report.Error ?? string.Join(" | ", report.Steps.Concat(report.Warnings));
             _summary = report.Error is not null
@@ -65,7 +89,7 @@
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "Reset + replay failed.");
+            Log.LogWarning(ex, "Reset failed.");
             _summary = "Reset failed.";
             _full = ex.Message;
             _confirming = false;

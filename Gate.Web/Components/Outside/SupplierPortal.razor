@@ -20,7 +20,7 @@
         }
         <section class="gate-card">
             <div class="gate-card-head">
-                <p class="gate-card-title">Purchase orders for @VendorId (@_pos.Pos.Count)</p>
+                <p class="gate-card-title">Purchase orders for @VendorNameFor(VendorId) (@_pos.Pos.Count)</p>
             </div>
             @if (_pos.Pos.Count == 0)
             {
@@ -68,7 +68,7 @@
                 var po = _inbox.Po;
                 <p class="gate-row">
                     <span class="gate-label">@po.PoNumber</span>
-                    · vendor @po.VendorId · terms @po.PaymentTermsId
+                    · vendor @VendorNameFor(po.VendorId) · terms @po.PaymentTermsId
                     · @po.ApprovalStatus / @po.DocStatus · @po.Currency
                 </p>
                 <table class="gate-table">
@@ -388,6 +388,13 @@
 
     private string? CaseOrNull() =>
         string.IsNullOrWhiteSpace(_inbox?.CaseId) ? null : _inbox.CaseId;
+
+    // Company name from the runtime vendor master; the code shows only
+    // when the master has no name for the id (never blank, never guessed).
+    private string VendorNameFor(string vendorId) =>
+        Options.Vendors.FirstOrDefault(v =>
+            string.Equals(v.VendorId, vendorId, StringComparison.Ordinal))?.Name
+        ?? vendorId;
 
     private async Task LoadPosAsync()
     {

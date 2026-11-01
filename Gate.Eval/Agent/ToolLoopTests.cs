@@ -410,6 +410,15 @@ public sealed class ToolLoopTests
         h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
         h.Models.QueueToolCalls("award V-A", ("c4", AgentTools.AwardSupplier, AwardArgs(caseId, "V-A")));
 
+        // CORP-02 block parks for the exception card first; denying it keeps
+        // the rejection, and the retried award then fails loud.
+        var parked = await h.Runner.AdvanceAsync(caseId);
+        Assert.Equal(CaseNextStep.AwaitDecision, parked.Step);
+        var file = CaseStore.Load(h.CaseDir, caseId)!;
+        var card = file.Decisions.Single(d => d.Kind == DecisionKind.ExceptionApproval);
+        Assert.Equal("CORP-02", card.RuleId);
+        await h.Runner.ResolveDecisionAsync(caseId, card.DecisionId, false, card.RequestedTo, "no");
+
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.AdvanceAsync(caseId));
 
         Assert.Contains("No compliant vendor", ex.Message, StringComparison.Ordinal);

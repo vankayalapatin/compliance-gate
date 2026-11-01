@@ -140,10 +140,12 @@ public sealed class MemoRunner
         var proposalId = $"{memoId}-p{round}";
 
         var snapshot = await _compliance.LoadKbSnapshotAsync(ct).ConfigureAwait(false);
+        var sparkSnapshot = MemoSparkSelector.SelectRelevant(file.FullText, snapshot);
         var prompt = MemoPrompts.BuildProposalPrompt(
-            file.Memo, file.FullText, snapshot, PriorAnswers(file));
-        // Propose calls need headroom: the prompt carries the whole KB
-        // snapshot, and reasoning models can burn an 8000-token budget
+            file.Memo, file.FullText, sparkSnapshot, PriorAnswers(file));
+        // Propose calls need headroom: the prompt carries the filtered KB
+        // snapshot (structured full plus top wiki), and reasoning models
+        // can burn an 8000-token budget
         // thinking (observed live: truncated JSON, full starvation on
         // long reasoning) before answering. 16000 tokens with an
         // explicit 5-minute per-attempt timeout matches the proven demo

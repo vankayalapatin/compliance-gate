@@ -1,7 +1,8 @@
-// Memo-to-rule seam on the compliance engine: the nine IComplianceEngine
-// memo methods, each a thin deterministic delegation to the Memo core.
-// No policy logic lives here; the core decides, this seam resolves inputs
-// (KB snapshot file, current pack JSON) and returns the core's verdicts.
+// Memo-to-rule seam on the compliance engine: the thirteen
+// IComplianceEngine memo methods, each a thin deterministic delegation to
+// the Memo core. No policy logic lives here; the core decides, this seam
+// resolves inputs (KB versioned files, current pack JSON) and returns the
+// core's verdicts.
 //
 // Paths: content-root-relative defaults, overridable two ways:
 //   1. Host configuration keys Compliance:CompanyKb and
@@ -11,6 +12,9 @@
 //   2. ComplianceMemoOptions directly (tests, tools).
 // Relative paths resolve upward from the app base directory like the
 // scenario loader, so repo-relative defaults work in dev and test layouts.
+// The company-KB path locates the versioned set's directory (the frozen
+// base file plus company-kb.kbvN.json files); the seam always loads the
+// highest version, and publish mints the next one beside it.
 using System.Text.Json;
 using Gate.Contracts;
 
@@ -69,13 +73,128 @@ public sealed partial class ComplianceEngine
         return new ComplianceMemoOptions(getValue(CompanyKbConfigKey), getValue(PackDirectoryConfigKey));
     }
 
-    /// <summary>Loads company-kb.json and returns the pinned snapshot
-    /// proposals resolve against. A hash mismatch refuses loudly (drift
-    /// fails, never passes silently).</summary>
+    /// <summary>Loads the highest versioned KB file and returns the pinned
+    /// snapshot proposals resolve against. A hash mismatch refuses loudly
+    /// (drift fails, never passes silently).</summary>
     public Task<KbSnapshot> LoadKbSnapshotAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(CompanyKbLoader.LoadFromFile(_companyKbPath).ToSnapshot());
+        var dir = ResolveKbDirectory();
+        return Task.FromResult(CompanyKbLoader.LoadVersioned(KbInputs(dir)).ToSnapshot());
+    }
+
+    /// <summary>Loads one exact KB version for pinned display (citations
+    /// carry their version). An unknown version refuses loudly.</summary>
+    public Task<KbSnapshot> LoadKbSnapshotAtAsync(string kbVersion, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ArgumentException.ThrowIfNullOrWhiteSpace(kbVersion);
+        var dir = ResolveKbDirectory();
+        return Task.FromResult(CompanyKbLoader.LoadVersionedAt(KbInputs(dir), kbVersion).ToSnapshot());
+    }
+
+    /// <summary>Publishes one KB version from a base version plus changes:
+    /// single-space edits only, approved by the space owner, editors never
+    /// approving their own change. The base must be the current highest
+    /// version (stale bases refuse); the writer mints the next version and
+    /// the new file lands beside its priors. The acting approver flows in
+    /// approvedBy; a delegate approving for the space owner additionally
+    /// names them in approvedFor (the caller verifies the delegation
+    /// window first).</summary>
+    public Task<KbPublication> PublishKbUpdateAsync(
+        string baseVersion,
+        IReadOnlyList<KbEntryChange> changes,
+        string approvedBy,
+        string reason,
+        string activationId,
+        DateTimeOffset publishedAt,
+        string? approvedFor = null,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseVersion);
+        var dir = ResolveKbDirectory();
+        var inputs = KbInputs(dir);
+        var baseFile = CompanyKbLoader.LoadVersionedAt(inputs, baseVersion);
+        var highest = CompanyKbLoader.LoadVersioned(inputs);
+        if (!string.Equals(baseFile.Version, highest.Version, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Stale KB base: the caller pins '{baseVersion}' but the current KB is '{highest.Version}'. " +
+                "Re-base on the current version before publishing.");
+        }
+
+        // LoadVersionedAt proved exactly one input declares the base
+        // version (duplicates refuse), so this lookup cannot miss.
+        var baseJson = inputs
+            .Single(i => string.Equals(CompanyKbLoader.ReadVersion(i.Name, i.Json), baseVersion, StringComparison.Ordinal))
+            .Json;
+        var publication = CompanyKbWriter.BuildNextVersion(
+            baseJson, baseVersion, changes, approvedBy, reason, activationId, publishedAt, approvedFor);
+        CompanyKbWriter.WriteToDirectory(publication, dir);
+        return Task.FromResult(publication);
+    }
+
+    /// <summary>Knowledge spaces with owners from the approval matrix,
+    /// sections per space, and member names for display. Members are the
+    /// distinct matrix owners, sorted. A space without its owner row
+    /// refuses loudly.</summary>
+    public Task<IReadOnlyList<KbSpace>> ListKbSpacesAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var dir = ResolveKbDirectory();
+        var snapshot = CompanyKbLoader.LoadVersioned(KbInputs(dir)).ToSnapshot();
+        var members = snapshot.ApprovalMatrix
+            .Select(a => a.Owner)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(o => o, StringComparer.Ordinal)
+            .ToList();
+        var spaces = new List<KbSpace>();
+        foreach (var space in CompanyKbSpaces.All)
+        {
+            var action = CompanyKbSpaces.OwnerActionFor(space);
+            var rows = snapshot.ApprovalMatrix
+                .Where(a => string.Equals(a.Action, action, StringComparison.Ordinal))
+                .ToList();
+            if (rows.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"KB '{snapshot.KbVersion}' carries no approval-matrix row for '{action}'; " +
+                    $"space '{space}' has no owner to list.");
+            }
+
+            if (rows.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"KB '{snapshot.KbVersion}' carries {rows.Count} approval-matrix rows for '{action}'; " +
+                    $"space '{space}' has no single owner to list.");
+            }
+
+            spaces.Add(new KbSpace(
+                space, rows[0].Owner, rows[0].OwnerRole,
+                CompanyKbSpaces.SectionsFor(space), members));
+        }
+
+        return Task.FromResult<IReadOnlyList<KbSpace>>(spaces);
+    }
+
+    /// <summary>Live pack rules with pack versions for the Rules views.
+    /// The UI reads packs through here, never from the pack directory.</summary>
+    public Task<IReadOnlyList<LivePackRule>> ListLivePackRulesAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var dir = ResolvePackDirectory();
+        var inputs = Directory.GetFiles(dir, "*.json", SearchOption.TopDirectoryOnly)
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
+            .ToList();
+        var set = RulePackLoader.LoadPacks(inputs);
+        IReadOnlyList<LivePackRule> rules = set.Rules
+            .Select(r => new LivePackRule(
+                r.Pack, r.PackVersion, r.RuleId, r.RuleType, r.Tier,
+                ToMemoGate(r.Gate), r.Title, r.Enforced, r.Owner, r.AdoptedDate, r.Source))
+            .ToList();
+        return Task.FromResult(rules);
     }
 
     /// <summary>Canonical proposal hash via the Memo core.</summary>
@@ -222,6 +341,53 @@ public sealed partial class ComplianceEngine
         PackPublisher.PublishToDirectory(publication, dir);
         return Task.FromResult(publication);
     }
+
+    /// <summary>Resolves the versioned KB set's directory from the
+    /// configured KB path (which names the base file, or the directory
+    /// itself). A missing directory refuses loudly with the config key.</summary>
+    private string ResolveKbDirectory()
+    {
+        if (Directory.Exists(_companyKbPath))
+        {
+            return Path.GetFullPath(_companyKbPath);
+        }
+
+        var file = CompanyKbLoader.ResolvePath(_companyKbPath);
+        var dir = Path.GetDirectoryName(file);
+        if (dir is null || !Directory.Exists(dir))
+        {
+            throw new InvalidOperationException(
+                $"KB directory not found: '{_companyKbPath}' (resolved to '{file}'). " +
+                $"Override via config key '{CompanyKbConfigKey}'.");
+        }
+
+        return dir;
+    }
+
+    /// <summary>Reads every KB file in a directory as loader inputs, in
+    /// filename order. An empty directory refuses loudly.</summary>
+    private static List<(string Name, string Json)> KbInputs(string dir)
+    {
+        var inputs = Directory.GetFiles(dir, "company-kb*.json", SearchOption.TopDirectoryOnly)
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
+            .ToList();
+        if (inputs.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"KB directory '{dir}' carries no KB files ('company-kb.json' plus 'company-kb.<version>.json').");
+        }
+
+        return inputs;
+    }
+
+    private static MemoRuleGate ToMemoGate(ComplianceGate gate) => gate switch
+    {
+        ComplianceGate.Vendor => MemoRuleGate.Vendor,
+        ComplianceGate.Dock => MemoRuleGate.Dock,
+        ComplianceGate.PrePay => MemoRuleGate.PrePay,
+        _ => throw new InvalidOperationException($"Unknown compliance gate '{gate}'."),
+    };
 
     private string ResolvePackDirectory()
     {

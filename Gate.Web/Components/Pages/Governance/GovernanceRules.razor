@@ -1,0 +1,147 @@
+@page "/governance/rules"
+@rendermode InteractiveServer
+@using Gate.Contracts
+@using Gate.Web.Components.Governance
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject GovernanceViewService Views
+@inject KbViewService Kb
+@inject ILogger<GovernanceRules> Log
+
+<PageTitle>Governance — Rules</PageTitle>
+
+<div class="gate-erp">
+    <GovernanceSidebar CurrentKey="@GovernanceModules.RulesSlug" Spaces="@_spaces" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">Rules</p>
+                <p class="gate-page-sub">@Subtitle()</p>
+            </div>
+            <div>
+                <button class="gate-btn" disabled="@_loading" @onclick="ReloadAsync">Refresh</button>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_loading || _rows is null)
+        {
+            <p class="gate-meta">Loading rules…</p>
+        }
+        else
+        {
+            @foreach (var note in _notes)
+            {
+                <div class="gate-notice" role="alert">@note</div>
+            }
+            <p class="gate-meta">@GovernanceLabels.BlocksThisRun — @ScanLabel(). @DockNote()</p>
+            @if (_rows.Count == 0)
+            {
+                <p class="gate-meta">No live rules and no published company rules.</p>
+            }
+            else
+            {
+                <table class="gate-table">
+                    <thead>
+                        <tr><th>Rule</th><th>Pack</th><th>Owner</th><th>Date</th><th>Source</th><th class="gate-num">Blocks</th><th>Grounded entries</th><th>Review</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _rows)
+                        {
+                            <tr>
+                                <td>
+                                    @row.RuleId
+                                    @if (row.IsCompanyRule)
+                                    {
+                                        <span class="gate-badge">company</span>
+                                    }
+                                </td>
+                                <td>@row.PackId @row.PackVersion</td>
+                                <td>@row.Owner</td>
+                                <td>@row.EffectiveOrAdopted</td>
+                                <td>@row.Source</td>
+                                <td class="gate-num">@row.BlockCount</td>
+                                <td>
+                                    @if (row.GroundedEntries.Count == 0)
+                                    {
+                                        @(row.IsCompanyRule ? GovernanceLabels.NoGroundedEntries : GovernanceLabels.ShippedRuleGrounding)
+                                    }
+                                    else
+                                    {
+                                        @foreach (var citation in row.GroundedEntries)
+                                        {
+                                            <a href="/@GovernanceRoutes.CitationHref(citation)"><code>@PolicyLabels.Citation(citation)</code></a><span> </span>
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    @if (row.NeedsReview)
+                                    {
+                                        <span class="gate-badge gate-badge-dark">needs review</span>
+                                        <span class="gate-meta">@row.NeedsReviewReason</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="gate-meta">current</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<GovernanceRuleRow>? _rows;
+    private IReadOnlyList<KbSpace> _spaces = [];
+    private IReadOnlyList<string> _notes = [];
+    private string _currentKb = string.Empty;
+    private string _scanLabel = string.Empty;
+    private string _dockNote = string.Empty;
+    private string? _loadError;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private string Subtitle() =>
+        _rows is null
+            ? "Loading…"
+            : $"{_rows.Count} rule(s) · KB {_currentKb} · counts are {GovernanceLabels.BlocksThisRun.ToLowerInvariant()}.";
+
+    private string ScanLabel() => _scanLabel;
+
+    private string DockNote() => _dockNote;
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _spaces = await Kb.ListSpacesAsync();
+            var vm = await Views.ListRuleRowsAsync();
+            _rows = vm.Rows;
+            _currentKb = vm.CurrentKbVersion;
+            _scanLabel = vm.ScanLabel;
+            _dockNote = vm.DockNote;
+            _notes = vm.Notes;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Governance rules failed to load.");
+            _loadError = $"Governance rules failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -1,23 +1,28 @@
-@page "/policies"
+@page "/governance/memos"
 @rendermode InteractiveServer
 @using Gate.Agent
 @using Gate.Compliance
 @using Gate.Contracts
+@using Gate.Web.Components.Governance
 @using Gate.Web.Services
 @using Gate.Web.ViewModels
 @inject PolicyViewService Views
 @inject PolicyOutcomeService Outcomes
 @inject MemoSubmitService MemoSubmit
 @inject CaseViewService UsersSvc
+@inject KbViewService Kb
 @inject ActingUserState Acting
-@inject ILogger<Policies> Log
+@inject ILogger<GovernanceMemos> Log
 @implements IDisposable
 
-<PageTitle>Policies</PageTitle>
+<PageTitle>Governance — Memos</PageTitle>
 
+<div class="gate-erp">
+    <GovernanceSidebar CurrentKey="@GovernanceModules.MemosSlug" Spaces="@_spaces" />
+    <div class="gate-erp-body">
 <div class="gate-page-head">
     <div>
-        <p class="gate-page-title">Policies</p>
+        <p class="gate-page-title">Memos</p>
         <p class="gate-page-sub">@Subtitle()</p>
     </div>
     <div>
@@ -106,7 +111,7 @@
 }
 else if (_questions is null || _approvals is null || _activations is null || _users is null || _delegations is null)
 {
-    <p class="gate-meta">Loading policies…</p>
+    <p class="gate-meta">Loading memos…</p>
 }
 else if (_selected is null)
 {
@@ -283,7 +288,7 @@ else
                     <ul class="gate-list">
                         @foreach (var r in proposal.Resolutions)
                         {
-                            <li>“@r.Phrase” → @r.EntityId (<code>@PolicyLabels.Citation(r.Citation)</code>)</li>
+                            <li>“@r.Phrase” → @r.EntityId (<a href="/@GovernanceRoutes.CitationHref(r.Citation)"><code>@PolicyLabels.Citation(r.Citation)</code></a>)</li>
                         }
                     </ul>
                 }
@@ -293,7 +298,7 @@ else
                         <span class="gate-label">Citations:</span>
                         @foreach (var c in proposal.Citations)
                         {
-                            <code>@PolicyLabels.Citation(c)</code><span> </span>
+                            <a href="/@GovernanceRoutes.CitationHref(c)"><code>@PolicyLabels.Citation(c)</code></a><span> </span>
                         }
                     </p>
                 }
@@ -631,12 +636,15 @@ else
         </section>
     }
 }
+    </div>
+</div>
 
 @code {
     private IReadOnlyList<PolicyQuestionCardVm>? _questions;
     private IReadOnlyList<PolicyApprovalCardVm>? _approvals;
     private IReadOnlyList<PolicyActivationVm>? _activations;
     private IReadOnlyList<UserDto>? _users;
+    private IReadOnlyList<KbSpace> _spaces = [];
     private IReadOnlyList<DelegationDto>? _delegations;
     private IReadOnlyList<PolicyQuestionCardVm> _pendingQuestions = [];
     private IReadOnlyList<PolicyApprovalCardVm> _pendingApprovals = [];
@@ -910,13 +918,14 @@ else
         {
             _users = await UsersSvc.ListUsersAsync();
             _delegations = await UsersSvc.ListDelegationsAsync();
+            _spaces = await Kb.ListSpacesAsync();
             await RefreshAsync();
             _loadError = null;
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "Policies failed to load.");
-            _loadError = $"Policies failed to load: {ex.Message}";
+            Log.LogWarning(ex, "Memos failed to load.");
+            _loadError = $"Memos failed to load: {ex.Message}";
             return;
         }
 

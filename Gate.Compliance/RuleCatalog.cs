@@ -24,6 +24,8 @@ public sealed record RuleDefinition(
     string Title,
     string Source,
     bool Enforced,
+    string Owner,
+    DateOnly AdoptedDate,
     string? DocumentKind = null,
     string? DocumentLabel = null,
     // Memo-to-rule registry type for published rules (null for the shipped

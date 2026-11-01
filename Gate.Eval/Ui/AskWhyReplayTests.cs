@@ -5,6 +5,7 @@ using Gate.Agent;
 using Gate.Contracts;
 using Gate.Erp;
 using Gate.Web.Services;
+using Microsoft.Extensions.Configuration;
 
 namespace Gate.Eval.Ui;
 
@@ -32,13 +33,14 @@ public sealed class AskWhyReplayTests
     }
 
     private static AskWhyService Service(
-        IModelClient models, CaseCacheStore store, ReplayState replay, string photoDir, string modelCacheDir)
+        IModelClient models, CaseCacheStore store, ReplayState replay, string photoDir, string modelCacheDir,
+        ModelSpendTracker? spend = null)
     {
         var agent = new P2pAgent(new InMemoryErpAdapter(), models, new StubCompliance());
         return new AskWhyService(
             agent, models, store,
             new DockPhotoService(photoDir, UiTestSupport.NewDir("gate-ui-vision")),
-            replay, UiTestLogger<AskWhyService>.Instance, modelCacheDir);
+            replay, UiTestLogger<AskWhyService>.Instance, modelCacheDir, spend);
     }
 
     [Fact]
@@ -61,7 +63,8 @@ public sealed class AskWhyReplayTests
         var second = await service.AskAsync("CASE-1", "D-1", "Why is this blocked?");
 
         Assert.True(second.Ok, second.Text);
-        Assert.Equal("because the evidence says so", second.Text);
+        Assert.StartsWith("because the evidence says so", second.Text);
+        Assert.Contains("Spend so far", second.Text);
         Assert.Equal(1, inner.CallCount);
     }
 
@@ -94,5 +97,38 @@ public sealed class AskWhyReplayTests
 
         Assert.False(answer.Ok);
         Assert.Equal(0, inner.CallCount);
+    }
+
+    [Fact]
+    public async Task AnswersAndErrorsCarryMeteredSpend()
+    {
+        var inner = new FakeModelClient();
+        var cacheDir = UiTestSupport.NewDir("gate-ui-model");
+        IModelClient models = new CachedModelClient(inner, cacheDir);
+        var store = await StoreWithDecisionAsync();
+        var spend = new ModelSpendTracker(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ModelSpend:CostPerCallUsd"] = "0.40",
+                ["ModelSpend:CapUsd"] = "7",
+            })
+            .Build());
+        spend.RecordLiveCall("spark");
+        spend.RecordLiveCall("spark");
+        var service = Service(
+            models, store, new ReplayState(), UiTestSupport.NewDir("gate-ui-dock"), cacheDir, spend);
+
+        inner.QueueResponse("metered answer");
+        var answer = await service.AskAsync("CASE-1", "D-1", "Why is this blocked?");
+        var replayMiss = await Service(
+                models, store, new ReplayState { IsReplay = true },
+                UiTestSupport.NewDir("gate-ui-dock"), cacheDir, spend)
+            .AskAsync("CASE-1", "D-1", "A question nobody cached?");
+
+        Assert.True(answer.Ok, answer.Text);
+        Assert.Contains("$0.80 of $7.00", answer.Text);
+        Assert.False(replayMiss.Ok);
+        Assert.Contains("zero live calls", replayMiss.Text);
+        Assert.Contains("$0.80 of $7.00", replayMiss.Text);
     }
 }

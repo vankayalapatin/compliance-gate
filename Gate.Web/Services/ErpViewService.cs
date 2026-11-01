@@ -431,10 +431,10 @@ public sealed class ErpViewService
             return Shell("po", key, $"Purchase order {key} not found in ERP.", opening, notes);
         }
 
+        // The vendor stays out of related documents: the header links it.
         var related = new List<ErpRelatedDoc>
         {
             new($"Purchase requisition {po.PrNumber}", "pr", po.PrNumber, null, "source"),
-            new($"Vendor {po.VendorId}", "vendor", po.VendorId, null, "supplier"),
         };
         var asns = await ListAsnsAsync(ct).ConfigureAwait(false);
         notes.AddRange(asns.Notes);
@@ -716,10 +716,8 @@ public sealed class ErpViewService
 
         var docNumber = ErpDocTypes.InvoiceDocNumber(inv.VendorId, inv.SupplierInvoiceNumber);
         var total = inv.Lines.Sum(l => l.Quantity * l.UnitPrice);
-        var related = new List<ErpRelatedDoc>
-        {
-            new($"Vendor {inv.VendorId}", "vendor", inv.VendorId, null, "supplier"),
-        };
+        // The vendor stays out of related documents: the header links it.
+        var related = new List<ErpRelatedDoc>();
         if (inv.PoNumber is not null)
         {
             related.Add(new ErpRelatedDoc($"Purchase order {inv.PoNumber}", "po", inv.PoNumber, null,

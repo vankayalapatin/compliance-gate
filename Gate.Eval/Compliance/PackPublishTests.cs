@@ -42,6 +42,7 @@ public sealed class PackPublishTests
         Assert.Equal("v0.3", publication.Activation.NewPackVersion);
         Assert.Equal("v0.2", publication.Activation.PriorPackVersion);
         Assert.Equal("MEMO-1", publication.Activation.MemoId);
+        Assert.Equal("kbv9", publication.Activation.KbVersion);
         Assert.Contains("MEMO-1", publication.Json);
         Assert.Contains("Terry Owner", publication.Json);
         Assert.Contains(approval.EffectiveAt.ToString("yyyy-MM-dd"), publication.Json);
@@ -95,6 +96,7 @@ public sealed class PackPublishTests
             "ACT-2", MemoFixtures.FixedAt);
 
         Assert.Equal("corp.v0.3.json", publication.FileName);
+        Assert.Equal("kbv9", publication.Activation.KbVersion);
         Assert.DoesNotContain("CORP-03", prior);
         Assert.Contains("CORP-03", publication.Json);
         Assert.Contains("COO-Declaration", publication.Json);
@@ -159,6 +161,7 @@ public sealed class PackPublishTests
         Assert.Equal("corp.v0.4.json", rollback.FileName);
         Assert.Equal("v0.4", rollback.Activation.NewPackVersion);
         Assert.Equal("v0.3", rollback.Activation.PriorPackVersion);
+        Assert.Null(rollback.Activation.KbVersion);
         Assert.Contains("0.60", rollback.Json);
         Assert.Contains("MEMO-2", rollback.Json);
         Assert.Contains("Terry Owner", rollback.Json);
@@ -198,6 +201,43 @@ public sealed class PackPublishTests
                 Directory.Delete(dir, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void PublicationsCarryOwnerAndAdoptedForward()
+    {
+        var (proposal, validation, approval) = CapTrio();
+        var update = PackPublisher.BuildUpdate(
+            MemoFixtures.CorpPackJson(), proposal, validation, approval,
+            ["t"], "CORP-02", "ACT-1", MemoFixtures.FixedAt);
+        Assert.Contains($"\"owner\":\"{MemoFixtures.FixtureProcurementOwner}\"", update.Json);
+        Assert.Contains($"\"adopted\":\"{MemoFixtures.FixtureAdoptedDate}\"", update.Json);
+
+        var inputs = MemoFixtures.FourPacks();
+        inputs.Add((update.FileName, update.Json));
+        var set = RulePackLoader.LoadPacks(inputs);
+        var rule = set.Rules.Single(r => r.RuleId == "CORP-02");
+        Assert.Equal(MemoFixtures.FixtureProcurementOwner, rule.Owner);
+        Assert.Equal(DateOnly.Parse(MemoFixtures.FixtureAdoptedDate), rule.AdoptedDate);
+
+        var rollback = PackPublisher.BuildRollback(
+            update.Json, MemoFixtures.CorpPackJson(),
+            "MEMO-2", "Terry Owner", MemoFixtures.FixedAt,
+            RuleApplicability.ProspectiveOnly, "rollback-hash-9", "restore",
+            "CORP-02", "ACT-9", MemoFixtures.FixedAt);
+        Assert.Contains($"\"owner\":\"{MemoFixtures.FixtureProcurementOwner}\"", rollback.Json);
+        Assert.Contains($"\"adopted\":\"{MemoFixtures.FixtureAdoptedDate}\"", rollback.Json);
+    }
+
+    [Fact]
+    public void PackWithoutAdoptionRefusesToPublish()
+    {
+        var (proposal, validation, approval) = CapTrio();
+        var ownerless = MemoFixtures.CorpPackJson().Replace(
+            $"\"owner\":\"{MemoFixtures.FixtureProcurementOwner}\",", "");
+        var ex = Assert.Throws<InvalidOperationException>(() => PackPublisher.BuildUpdate(
+            ownerless, proposal, validation, approval, ["t"], "CORP-02", "ACT-1", MemoFixtures.FixedAt));
+        Assert.Contains("no owner", ex.Message);
     }
 
     [Fact]

@@ -18,7 +18,8 @@ namespace Gate.Web.Services;
 
 public sealed class SimulationUiService
 {
-    // Paths pinned to SimulationEndpoints.cs; SimulationUiTests pins them too.
+    // Paths pinned to SimulationEndpoints.cs (PickupPath to AgentEndpoints.cs);
+    // SimulationUiTests pins them too.
     // UI text never shows these (OutsideWorldLabels.Sanitize); the service
     // keeps them for requests plus test-pinned failure context.
     public const string OrderPath = "/simulation/shopify/order";
@@ -29,6 +30,7 @@ public sealed class SimulationUiService
     public const string InvoicePath = "/simulation/supplier/invoice";
     public const string InvoicePhotoPath = "/simulation/supplier/invoice-photo";
     public const string EmailReplyPath = "/simulation/supplier/email-reply";
+    public const string PickupPath = "/agent/pickup";
 
     private const int BodyExcerptChars = 2000;
 
@@ -160,6 +162,22 @@ public sealed class SimulationUiService
             Lines: lines,
             Currency: BlankToNull(submission.Currency));
         return await PostAsync(OrderPath, input, ParseOrder, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Asks the agent to pick up ERP work: approved PRs without a
+    /// PO, supplier-leg POs, and received invoices each get a live case.
+    /// Adoption only, zero live model calls; the touched case ids link on
+    /// to Cases. A blank scenario is refused before any POST.</summary>
+    public async Task<SimulationOutcome> PickUpErpWorkAsync(
+        string? scenarioName, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(scenarioName))
+        {
+            return Refusal("Scenario name is required; reload the options when the scenario file is present.");
+        }
+
+        return await PostAsync(PickupPath, new { scenario = scenarioName.Trim() }, ParsePickup, ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>New shop order without an SO number: the shop mints a shop
@@ -582,7 +600,7 @@ public sealed class SimulationUiService
         var caseId = await FindCaseIdForPoAsync(poNumber, ct).ConfigureAwait(false);
         if (caseId is null)
         {
-            notes.Add($"No case links PO {poNumber} yet; acknowledgement, shipping, and invoicing wait for the case.");
+            notes.Add($"No case links PO {poNumber} yet; acknowledgement, shipping, and invoicing wait for the case. Run 'Pick up ERP work' above once its approvals land.");
         }
 
         var resolved = caseId ?? string.Empty;
@@ -917,6 +935,20 @@ public sealed class SimulationUiService
 
         return new SimulationOutcome(
             true, $"Order accepted: {caseIds.Count} case(s).", details, caseIds);
+    }
+
+    private static SimulationOutcome ParsePickup(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var touched = StringArray(root, "touched");
+        return new SimulationOutcome(
+            true,
+            touched.Count == 0
+                ? "ERP work is already picked up: no new cases."
+                : $"Picked up {touched.Count} ERP-work case(s).",
+            touched.Select(id => $"Case {id} adopted from ERP.").ToList(),
+            touched);
     }
 
     private static SimulationOutcome ParseAck(string body)

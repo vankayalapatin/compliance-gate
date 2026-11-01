@@ -39,3 +39,11 @@ Seven stages. Spark proposes, C# validates, human approves, C# enforces.
 Ingest + propose + validate + what-if run in minutes. Human approval
 takes hours to days. Publish runs in minutes. The slow step is the human,
 never the machinery.
+
+## KB edits (separate path)
+
+KB facts do not travel the seven stages above: adds and edits publish
+directly through the engine (`PublishKbUpdateAsync`), one space per
+version, space-owner approved. See [KB-SCHEMA.md](KB-SCHEMA.md). Pinned
+proposals keep their KB version; a KB change after proposal still
+requires re-grounding.

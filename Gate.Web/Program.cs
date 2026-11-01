@@ -27,12 +27,22 @@ if (!string.IsNullOrEmpty(erpDir))
 builder.Services.AddDbContext<ErpDbContext>(options => options.UseSqlite($"Data Source={erpSqlite}"));
 builder.Services.AddScoped<IErpAdapter, EfCoreErpAdapter>();
 builder.Services.AddSingleton<IComplianceEngine, ComplianceEngine>();
+// Spend ledger: process-wide, config-driven (ModelSpend section). The
+// meter wraps the live client only, between the cache and Spark, so
+// cached answers and fake echo calls never accrue spend.
+builder.Services.AddSingleton(sp => new ModelSpendTracker(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<IModelClient>(sp =>
 {
-    IModelClient inner = string.IsNullOrWhiteSpace(spark.ApiKey)
-        ? new FakeModelClient()
-        : new SparkModelClient(new HttpClient(), spark);
-    return new CachedModelClient(inner, ModelCachePaths.ResolveDir());
+    if (string.IsNullOrWhiteSpace(spark.ApiKey))
+    {
+        return new CachedModelClient(new FakeModelClient(), ModelCachePaths.ResolveDir());
+    }
+
+    var metered = new MeteredModelClient(
+        new SparkModelClient(new HttpClient(), spark),
+        sp.GetRequiredService<ModelSpendTracker>(),
+        sp.GetRequiredService<ILogger<MeteredModelClient>>());
+    return new CachedModelClient(metered, ModelCachePaths.ResolveDir());
 });
 builder.Services.AddScoped<P2pAgent>();
 builder.Services.AddSingleton<IDockEvaluator, DockEvaluatorService>();
@@ -63,6 +73,9 @@ builder.Services.AddScoped<ActingUserState>();
 builder.Services.AddScoped<DecisionOutcomeService>();
 builder.Services.AddScoped<PolicyViewService>();
 builder.Services.AddScoped<PolicyOutcomeService>();
+builder.Services.AddScoped<GovernanceViewService>();
+builder.Services.AddScoped<KbViewService>();
+builder.Services.AddScoped<KbEditService>();
 builder.Services.AddScoped(sp => new MemoSubmitService(
     sp.GetRequiredService<MemoRunner>(),
     sp.GetRequiredService<MemoFileStore>(),
@@ -75,8 +88,17 @@ builder.Services.AddScoped(sp => new AskWhyService(
     sp.GetRequiredService<DockPhotoService>(),
     sp.GetRequiredService<ReplayState>(),
     sp.GetRequiredService<ILogger<AskWhyService>>(),
-    ModelCachePaths.ResolveDir()));
-builder.Services.AddScoped<ReplayService>();
+    ModelCachePaths.ResolveDir(),
+    sp.GetRequiredService<ModelSpendTracker>()));
+builder.Services.AddScoped(sp => new ReplayService(
+    sp.GetRequiredService<IErpAdapter>(),
+    sp.GetRequiredService<CaseCacheStore>(),
+    sp.GetRequiredService<DockPhotoService>(),
+    sp.GetRequiredService<ReplayState>(),
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<ILogger<ReplayService>>(),
+    sp.GetService<CaseRunner>(),
+    sp.GetRequiredService<ModelSpendTracker>()));
 // Outside-world surface: posts the human's external inputs back to this
 // app's own simulation endpoints. The generous timeout covers photo
 // transcription (live model calls can take minutes). The service retries
@@ -121,6 +143,7 @@ using (var startup = app.Services.CreateScope())
     await ScenarioEndpoints.EnsureLoadedAsync(startup.ServiceProvider, builder.Configuration);
 }
 app.MapScenarioReset();
+app.MapAgentPickup();
 app.MapDockImages();
 app.MapSimulation();
 

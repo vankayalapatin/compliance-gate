@@ -2,7 +2,8 @@
 // evidence through the injected model client (via P2pAgent.ExplainAsync).
 // In replay mode the cached answer must already exist on disk; a miss
 // surfaces as an error instead of placing a live call, so replay makes
-// zero live calls by construction.
+// zero live calls by construction. Every answer and error carries the
+// current spend readout.
 using System.Text;
 using Gate.Agent;
 using Gate.Contracts;
@@ -20,6 +21,7 @@ public sealed class AskWhyService
     private readonly ReplayState _replay;
     private readonly ILogger<AskWhyService> _log;
     private readonly string _modelCacheDir;
+    private readonly ModelSpendTracker _spend;
 
     public AskWhyService(
         P2pAgent agent,
@@ -28,7 +30,8 @@ public sealed class AskWhyService
         DockPhotoService photos,
         ReplayState replay,
         ILogger<AskWhyService> log,
-        string modelCacheDir)
+        string modelCacheDir,
+        ModelSpendTracker? spend = null)
     {
         _agent = agent;
         _models = models;
@@ -37,6 +40,7 @@ public sealed class AskWhyService
         _replay = replay;
         _log = log;
         _modelCacheDir = modelCacheDir;
+        _spend = spend ?? new ModelSpendTracker();
     }
 
     public async Task<WhyAnswer> AskAsync(
@@ -64,22 +68,24 @@ public sealed class AskWhyService
         var trimmed = question.Trim();
         if (_replay.IsReplay && !HasCachedAnswer(trimmed, evidence))
         {
-            return new WhyAnswer(false,
+            return new WhyAnswer(false, WithSpend(
                 "Replay makes zero live calls and no cached answer exists for this exact question. " +
-                "Rephrase to a previously answered question or leave replay mode.");
+                "Rephrase to a previously answered question or leave replay mode."));
         }
 
         try
         {
             var text = await _agent.ExplainAsync(trimmed, evidence, ct).ConfigureAwait(false);
-            return new WhyAnswer(true, text);
+            return new WhyAnswer(true, WithSpend(text));
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Ask-why failed for decision {DecisionId}.", decisionId);
-            return new WhyAnswer(false, $"The agent call failed: {ex.Message}");
+            return new WhyAnswer(false, WithSpend($"The agent call failed: {ex.Message}"));
         }
     }
+
+    private string WithSpend(string text) => $"{text}\n\nSpend so far: {_spend.Summary}.";
 
     private string BuildEvidence(Case kase, Decision decision)
     {

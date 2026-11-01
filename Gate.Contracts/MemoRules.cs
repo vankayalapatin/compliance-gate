@@ -215,7 +215,16 @@ public sealed record KbLegalEntity(
     string Id,
     string Name,
     string Country,
-    string Currency);
+    string Currency,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>One KB site or warehouse: id, legal entity ref, region ref
 /// (resolves via regionRules), capabilities.</summary>
@@ -223,41 +232,93 @@ public sealed record KbSite(
     string Id,
     string EntityId,
     string Region,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>KB fiscal calendar. Null until seeded; while null, history
 /// reports use the labeled trailing-twelve-month approximation.</summary>
 public sealed record KbFiscalCalendar(
     string YearEnd,
     string CurrentFy,
-    IReadOnlyList<string> Periods);
+    IReadOnlyList<string> Periods,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>One KB approval-matrix row: policy or action, owner role,
 /// named person. The matrix names who; the ERP enforces how much.</summary>
 public sealed record KbApprovalEntry(
     string Action,
     string OwnerRole,
-    string Owner);
+    string Owner,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>One KB item row: item id plus critical flag. Mirrors the
 /// scenario items; equality is proven by test, never asserted.</summary>
 public sealed record KbItem(
     string Id,
-    bool Critical);
+    bool Critical,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>One KB sourcing policy: id plus string params (caps,
 /// thresholds, windows, part scope). Mirrors pack config values;
 /// equality is proven by test.</summary>
 public sealed record KbSourcingPolicy(
     string Id,
-    IReadOnlyDictionary<string, string> Params);
+    IReadOnlyDictionary<string, string> Params,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>One KB region rule: named region plus explicit versioned
 /// country list. Region boundaries are data.</summary>
 public sealed record KbRegionRule(
     string Id,
     IReadOnlyList<string> Countries,
-    string Version);
+    string Version,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>One KB document row. P2pRelevant false (HR policies and
 /// similar) means searchable agent context, excluded from rule mapping
@@ -267,7 +328,16 @@ public sealed record KbDocument(
     string Kind,
     bool P2pRelevant,
     string? ContentHash = null,
-    string? StorageRef = null);
+    string? StorageRef = null,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);
 
 /// <summary>Pinned KB snapshot every proposal resolves against. The
 /// proposal pins KbVersion plus KbHash; any KB change after a proposal
@@ -282,7 +352,13 @@ public sealed record KbSnapshot(
     IReadOnlyList<KbItem> Items,
     IReadOnlyList<KbSourcingPolicy> SourcingPolicies,
     IReadOnlyList<KbRegionRule> RegionRules,
-    IReadOnlyList<KbDocument> Documents);
+    IReadOnlyList<KbDocument> Documents,
+    IReadOnlyList<KbWikiEntry> Leadership,
+    IReadOnlyList<KbWikiEntry> Finance,
+    IReadOnlyList<KbWikiEntry> Procurement,
+    IReadOnlyList<KbWikiEntry> Hr,
+    IReadOnlyList<KbWikiEntry> Regulatory,
+    IReadOnlyList<KbWikiEntry> Operations);
 
 /// <summary>Old or new side of a what-if comparison: a registry rule type
 /// plus its string params. A null old side means the rule is absent live
@@ -392,7 +468,9 @@ public sealed record PackPublication(
 /// <summary>Publish record: a validated plus approved plus tested proposal
 /// shipped as a version-bumped pack. Source is memo id plus approver plus
 /// effective date. PriorPackVersion is the rollback point: rollback
-/// publishes a new version restoring prior parameters, history untouched.</summary>
+/// publishes a new version restoring prior parameters, history untouched.
+/// KbVersion pins the proposal's KB for update and new-rule publishes;
+/// rollback restores pack parameters only and carries no KB pin.</summary>
 public sealed record RuleActivation(
     string ActivationId,
     string RuleId,
@@ -404,4 +482,102 @@ public sealed record RuleActivation(
     DateTimeOffset EffectiveAt,
     RuleApplicability Applicability,
     string ProposalHash,
-    DateTimeOffset PublishedAt);
+    DateTimeOffset PublishedAt,
+    string? KbVersion = null);
+
+/// <summary>KB entry lifecycle status. Retired entries stay readable
+/// for pinned citations; no version ever deletes an entry.</summary>
+public enum KbEntryStatus
+{
+    Active,
+    Retired
+}
+
+/// <summary>KB entry change kind. No delete in v1: entries retire by
+/// superseding versions, never by removal.</summary>
+public enum KbChangeKind
+{
+    Add,
+    Edit
+}
+
+/// <summary>One KB entry change: section, entry id, kind, the full entry
+/// JSON as authored, plus who made it and when. Edit replaces wholesale;
+/// the writer stamps audit fields itself.</summary>
+public sealed record KbEntryChange(
+    string Section,
+    string EntryId,
+    KbChangeKind Kind,
+    string EntryJson,
+    string ChangedBy,
+    DateTimeOffset ChangedAt);
+
+/// <summary>One KB version activation: the minted version, its prior, the
+/// single space it touched, acting approver, timestamp, reason, and
+/// changed entries as section#id strings. ApprovedFor names the space
+/// owner when a delegate approves for them (null on direct approval);
+/// the owner match runs against ApprovedFor ?? Approver, while the
+/// no-self-approval check always runs against the acting Approver.</summary>
+public sealed record KbVersionActivation(
+    string ActivationId,
+    string KbVersion,
+    string PriorKbVersion,
+    string Space,
+    string Approver,
+    DateTimeOffset PublishedAt,
+    string Reason,
+    IReadOnlyList<string> ChangedEntries,
+    string? ApprovedFor = null);
+
+/// <summary>One KB publication: the new file name, its JSON content, and
+/// the activation record. Deterministic: same inputs serialize byte-identical.</summary>
+public sealed record KbPublication(
+    string FileName,
+    string Json,
+    KbVersionActivation Activation);
+
+/// <summary>One knowledge space: sections grouped under one owner from the
+/// approval matrix, with member names for display. Owners approve edits in
+/// their space; editors never approve their own change.</summary>
+public sealed record KbSpace(
+    string Space,
+    string Owner,
+    string OwnerRole,
+    IReadOnlyList<string> Sections,
+    IReadOnlyList<string> Members);
+
+/// <summary>One live pack rule for the Rules views: pack, pack version,
+/// rule id, registry type, tier, gate, title, enforcement, pack owner,
+/// required company adoption date, and the rule's public source. The
+/// loader refuses any pack without an adopted date, the same way it
+/// refuses version problems, so AdoptedDate is always present.</summary>
+public sealed record LivePackRule(
+    string PackId,
+    string PackVersion,
+    string RuleId,
+    string? RuleType,
+    RuleTier Tier,
+    MemoRuleGate Gate,
+    string Title,
+    bool Enforced,
+    string Owner,
+    DateOnly AdoptedDate,
+    string? Source = null);
+
+/// <summary>One company-wiki entry: id, title, markdown body, tags, plus
+/// the standard per-entry version and audit stamps, entry owner,
+/// lifecycle status, and effective date.</summary>
+public sealed record KbWikiEntry(
+    string Id,
+    string Title,
+    string Body,
+    IReadOnlyList<string>? Tags = null,
+    string? Version = null,
+    string? CreatedBy = null,
+    DateTimeOffset? CreatedAt = null,
+    string? ModifiedBy = null,
+    DateTimeOffset? ModifiedAt = null,
+    string? ApprovedBy = null,
+    string? Owner = null,
+    KbEntryStatus? Status = null,
+    DateOnly? EffectiveDate = null);

@@ -50,10 +50,44 @@ public interface IComplianceEngine
     // decide); every method below is deterministic C# over the Memo core.
     // Defaults throw so existing fakes compile; the engine overrides all.
 
-    /// <summary>Loads company-kb.json and returns the pinned snapshot
-    /// proposals resolve against.</summary>
+    /// <summary>Loads the highest versioned KB file and returns the pinned
+    /// snapshot proposals resolve against. Version files are never
+    /// overwritten; priors stay on disk for pinned proposals.</summary>
     Task<KbSnapshot> LoadKbSnapshotAsync(CancellationToken ct = default) =>
         throw new NotSupportedException("LoadKbSnapshotAsync is implemented by the compliance engine.");
+
+    /// <summary>Loads one exact KB version for pinned display (citations
+    /// carry their version). An unknown version refuses loudly.</summary>
+    Task<KbSnapshot> LoadKbSnapshotAtAsync(string kbVersion, CancellationToken ct = default) =>
+        throw new NotSupportedException("LoadKbSnapshotAtAsync is implemented by the compliance engine.");
+
+    /// <summary>Publishes one KB version from a base version plus changes:
+    /// single-space edits only, approved by the space owner, editors never
+    /// approving their own change. Mints kbv(n+1), writes the new file,
+    /// and returns the publication. The acting approver flows in
+    /// approvedBy; a delegate approving for the space owner additionally
+    /// names them in approvedFor (the caller verifies the delegation
+    /// window first).</summary>
+    Task<KbPublication> PublishKbUpdateAsync(
+        string baseVersion,
+        IReadOnlyList<KbEntryChange> changes,
+        string approvedBy,
+        string reason,
+        string activationId,
+        DateTimeOffset publishedAt,
+        string? approvedFor = null,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("PublishKbUpdateAsync is implemented by the compliance engine.");
+
+    /// <summary>Knowledge spaces with owners from the approval matrix,
+    /// sections per space, and member names for display.</summary>
+    Task<IReadOnlyList<KbSpace>> ListKbSpacesAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("ListKbSpacesAsync is implemented by the compliance engine.");
+
+    /// <summary>Live pack rules with pack versions for the Rules views.
+    /// The UI reads packs through here, never from the pack directory.</summary>
+    Task<IReadOnlyList<LivePackRule>> ListLivePackRulesAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("ListLivePackRulesAsync is implemented by the compliance engine.");
 
     /// <summary>Canonical proposal hash. The agent stamps it at propose
     /// time; approval and publish re-verify it.</summary>

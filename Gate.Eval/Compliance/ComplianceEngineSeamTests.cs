@@ -55,7 +55,12 @@ public sealed class ComplianceEngineSeamTests
     {
         var engine = new ComplianceEngine();
         var snapshot = await engine.LoadKbSnapshotAsync();
-        var expected = CompanyKbLoader.LoadFromFile("company/company-kb.json").ToSnapshot();
+        var companyDir = Path.GetDirectoryName(CompanyKbLoader.ResolvePath("company/company-kb.json"))!;
+        var expected = CompanyKbLoader.LoadVersioned(
+            Directory.GetFiles(companyDir, "company-kb*.json", SearchOption.TopDirectoryOnly)
+                .OrderBy(f => f, StringComparer.Ordinal)
+                .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
+                .ToList()).ToSnapshot();
         Assert.Equal(expected.KbVersion, snapshot.KbVersion);
         Assert.Equal(expected.KbHash, snapshot.KbHash);
         Assert.Equal(expected.Items.Count, snapshot.Items.Count);
@@ -70,7 +75,7 @@ public sealed class ComplianceEngineSeamTests
         try
         {
             var source = File.ReadAllText(CompanyKbLoader.ResolvePath("company/company-kb.json"));
-            var copy = Path.Combine(dir, "kb-copy.json");
+            var copy = Path.Combine(dir, "company-kb.json");
             File.WriteAllText(copy, source);
             var engine = new ComplianceEngine(new ComplianceMemoOptions(CompanyKbPath: copy));
             var snapshot = await engine.LoadKbSnapshotAsync();
@@ -93,7 +98,7 @@ public sealed class ComplianceEngineSeamTests
             var source = File.ReadAllText(CompanyKbLoader.ResolvePath("company/company-kb.json"));
             var tampered = source.Replace("Fictional Smart-Glasses Co", "Xictional Smart-Glasses Co");
             Assert.NotEqual(source, tampered);
-            var copy = Path.Combine(dir, "kb-tampered.json");
+            var copy = Path.Combine(dir, "company-kb.json");
             File.WriteAllText(copy, tampered);
             var engine = new ComplianceEngine(new ComplianceMemoOptions(CompanyKbPath: copy));
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.LoadKbSnapshotAsync());

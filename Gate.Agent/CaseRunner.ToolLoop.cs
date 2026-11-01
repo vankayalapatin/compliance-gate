@@ -261,9 +261,9 @@ public partial class CaseRunner
                 return (ToolCallVerdict.Blocked, "award_supplier needs vendor_id of a passing vendor.", false);
             }
 
-            var screenings = await _core.ScreenCandidatesAsync(
+            var raw = await _core.ScreenCandidatesAsync(
                 file.Case.PrNumber!, ReadCandidates(file, file.Case.ItemId), ct).ConfigureAwait(false);
-            var passing = screenings.Where(s => s.Passed).Select(s => s.VendorId).ToList();
+            var (screenings, passing, _) = CorpExceptionFlow.ApplyApprovedExceptions(file, raw);
             if (passing.Count > 0 && !passing.Contains(vendorId, StringComparer.Ordinal))
             {
                 return (ToolCallVerdict.Blocked,

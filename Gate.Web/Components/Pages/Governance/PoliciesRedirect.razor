@@ -1,0 +1,12 @@
+@page "/policies"
+@using Gate.Web.ViewModels
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        // Kept redirect: the Policies tab is now Governance; memos carry the
+        // former Policies flow.
+        Nav.NavigateTo(GovernanceRoutes.MemosHref, replace: true);
+    }
+}

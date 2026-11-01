@@ -1,0 +1,101 @@
+@page "/governance/versions"
+@rendermode InteractiveServer
+@using Gate.Contracts
+@using Gate.Web.Components.Governance
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject KbViewService Kb
+@inject ILogger<GovernanceVersions> Log
+
+<PageTitle>Governance — KB versions</PageTitle>
+
+<div class="gate-erp">
+    <GovernanceSidebar CurrentKey="@GovernanceModules.VersionsSlug" Spaces="@_spaces" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">KB versions</p>
+                <p class="gate-page-sub">@Subtitle()</p>
+            </div>
+            <div>
+                <button class="gate-btn" disabled="@_loading" @onclick="ReloadAsync">Refresh</button>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_loading || _versions is null)
+        {
+            <p class="gate-meta">Loading versions…</p>
+        }
+        else if (_versions.Count == 0)
+        {
+            <p class="gate-meta">No KB versions found.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Version</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var version in _versions)
+                    {
+                        <tr>
+                            <td><code>@version</code></td>
+                            <td>
+                                @if (string.Equals(version, _current, StringComparison.Ordinal))
+                                {
+                                    <span class="gate-badge gate-badge-dark">current</span>
+                                }
+                                else
+                                {
+                                    <span class="gate-meta">pinned (citations may still cite it)</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p class="gate-meta">Files are never overwritten; priors stay readable for pinned proposals and audit.</p>
+        }
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<string>? _versions;
+    private IReadOnlyList<KbSpace> _spaces = [];
+    private string _current = string.Empty;
+    private string? _loadError;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private string Subtitle() =>
+        _versions is null ? "Loading…" : $"{_versions.Count} version(s) · current {_current}.";
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _spaces = await Kb.ListSpacesAsync();
+            _versions = await Kb.ListVersionsAsync();
+            _current = (await Kb.LoadCurrentAsync()).KbVersion;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Governance KB versions failed to load.");
+            _loadError = $"Governance KB versions failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

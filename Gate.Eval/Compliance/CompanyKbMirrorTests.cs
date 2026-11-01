@@ -39,15 +39,42 @@ public sealed class CompanyKbMirrorTests
         return (kb, erp);
     }
 
+    private static async Task<(CompanyKbFile Kb, InMemoryErpAdapter Erp)> LoadHighestKbAndSeededErpAsync()
+    {
+        var kbPath = CompanyKbLoader.ResolvePath("company/company-kb.json");
+        Assert.True(File.Exists(kbPath), $"KB file not found: {kbPath}");
+        var dir = Path.GetDirectoryName(kbPath)!;
+        var kb = CompanyKbLoader.LoadVersioned(
+            Directory.GetFiles(dir, "company-kb*.json", SearchOption.TopDirectoryOnly)
+                .OrderBy(f => f, StringComparer.Ordinal)
+                .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
+                .ToList());
+
+        var (_, erp) = await LoadKbAndSeededErpAsync();
+        return (kb, erp);
+    }
+
     [Fact]
     public async Task KbMirrorsScenarioSeededErpOnEveryOverlapField()
     {
         var (kb, erp) = await LoadKbAndSeededErpAsync();
+        await AssertOverlapAsync(kb, erp, "kbv1");
+    }
+
+    [Fact]
+    public async Task HighestKbStillMirrorsScenarioSeededErp()
+    {
+        var (kb, erp) = await LoadHighestKbAndSeededErpAsync();
+        await AssertOverlapAsync(kb, erp, "kbv2");
+    }
+
+    private static async Task AssertOverlapAsync(CompanyKbFile kb, InMemoryErpAdapter erp, string expectedVersion)
+    {
         var mismatches = new List<string>();
         void Mismatch(string field, string kbValue, string erpValue) =>
             mismatches.Add($"{field}: KB '{kbValue}' vs ERP '{erpValue}'");
 
-        Assert.Equal("kbv1", kb.Version);
+        Assert.Equal(expectedVersion, kb.Version);
 
         var erpUsers = await erp.GetUsersAsync();
         if (erpUsers.Count != kb.MirrorUsers.Count)

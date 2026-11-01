@@ -112,6 +112,15 @@ public sealed class CaseRunnerTests
         var file = Load(h, battery);
         await h.Runner.ResolveDecisionAsync(
             battery, PendingDecision(file, DecisionKind.PrApproval).DecisionId, true, "delegate", "ok");
+
+        // CORP-02 block parks for the exception card; denying it keeps the
+        // rejection, and the retried award then refuses with a note.
+        var parked = await h.Runner.AdvanceAsync(battery);
+        Assert.Equal(CaseNextStep.AwaitDecision, parked.Step);
+        var screened = Load(h, battery);
+        var card = PendingDecision(screened, DecisionKind.ExceptionApproval);
+        Assert.Equal(ComplianceEngine.CorpOriginCapId, card.RuleId);
+        await h.Runner.ResolveDecisionAsync(battery, card.DecisionId, false, card.RequestedTo, "no");
         await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.AdvanceAsync(battery));
 
         var failed = Load(h, battery);

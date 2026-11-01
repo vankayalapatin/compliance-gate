@@ -1,0 +1,11 @@
+@page "/governance"
+@using Gate.Web.ViewModels
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        // No landing cards: straight to the first view (Rules).
+        Nav.NavigateTo(GovernanceRoutes.RulesHref, replace: true);
+    }
+}

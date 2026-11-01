@@ -213,7 +213,8 @@ public sealed class MemoConflictTests
         var live = new List<RuleDefinition>
         {
             new("ELEC-01", "ELEC", "v0.2", RuleTier.Tier2, ComplianceGate.Vendor,
-                "RoHS", "Fixture", true, "RoHS", "RoHS declaration"),
+                "RoHS", "Fixture", true, MemoFixtures.FixtureProcurementOwner,
+                DateOnly.Parse(MemoFixtures.FixtureAdoptedDate), "RoHS", "RoHS declaration"),
         };
         var corp = new CorpPackConfig(0.60m, 0.50m, "Fixture");
         Assert.Empty(RuleConflictDetector.Compute(OriginCap("0.40"), live, corp));

@@ -23,6 +23,12 @@ public static class KbCitations
     public const string SourcingPolicies = "sourcingPolicies";
     public const string RegionRules = "regionRules";
     public const string Documents = "documents";
+    public const string WikiLeadership = "leadership";
+    public const string WikiFinance = "finance";
+    public const string WikiProcurement = "procurement";
+    public const string WikiHr = "hr";
+    public const string WikiRegulatory = "regulatory";
+    public const string WikiOperations = "operations";
 
     /// <summary>Schema-level pseudo-entry (EXAMPLES.md memo 2): the critical
     /// flag across items, not one item row.</summary>
@@ -34,7 +40,16 @@ public static class KbCitations
     public static readonly IReadOnlyList<string> KnownSections =
     [
         LegalEntities, SitesWarehouses, FiscalCalendar, ApprovalMatrix,
-        Items, SourcingPolicies, RegionRules, Documents
+        Items, SourcingPolicies, RegionRules, Documents,
+        WikiLeadership, WikiFinance, WikiProcurement, WikiHr, WikiRegulatory, WikiOperations
+    ];
+
+    /// <summary>The six company-wiki sections. Wiki entries are citable
+    /// context; the migration seeds them once and the writer edits them
+    /// like any other section.</summary>
+    public static readonly IReadOnlyList<string> WikiSections =
+    [
+        WikiLeadership, WikiFinance, WikiProcurement, WikiHr, WikiRegulatory, WikiOperations
     ];
 
     /// <summary>Wire form kb:&lt;section&gt;#&lt;id&gt;@&lt;version&gt;.</summary>
@@ -73,6 +88,12 @@ public static class KbCitations
             RegionRules => snapshot.RegionRules.Any(r => r.Id == citation.EntryId)
                 ? null : $"Citation {wire} is unresolvable: no region rule '{citation.EntryId}' in KB '{snapshot.KbVersion}'.",
             Documents => ResolveDocument(citation, snapshot, wire),
+            WikiLeadership => ResolveWiki(citation, snapshot.Leadership, wire),
+            WikiFinance => ResolveWiki(citation, snapshot.Finance, wire),
+            WikiProcurement => ResolveWiki(citation, snapshot.Procurement, wire),
+            WikiHr => ResolveWiki(citation, snapshot.Hr, wire),
+            WikiRegulatory => ResolveWiki(citation, snapshot.Regulatory, wire),
+            WikiOperations => ResolveWiki(citation, snapshot.Operations, wire),
             _ => $"Citation {wire} is unresolvable: unknown KB section '{citation.Section}'. " +
                 $"Known sections: {string.Join(", ", KnownSections)}.",
         };
@@ -104,4 +125,9 @@ public static class KbCitations
             : $"Citation {wire} is rejected: document '{citation.EntryId}' carries p2pRelevant=false " +
                 "(searchable agent context, excluded from rule mapping by the C# allowlist).";
     }
+
+    private static string? ResolveWiki(KbCitation citation, IReadOnlyList<KbWikiEntry> entries, string wire) =>
+        entries.Any(e => string.Equals(e.Id, citation.EntryId, StringComparison.Ordinal))
+            ? null
+            : $"Citation {wire} is unresolvable: no wiki entry '{citation.EntryId}' in KB section '{citation.Section}'.";
 }

@@ -323,16 +323,74 @@ public partial class CaseRunner
             }
         }
 
+        if (screenings.All(s => !s.Passed))
+        {
+            await RaiseCorpExceptionCardsAsync(work, current, screenings, ct).ConfigureAwait(false);
+        }
+
         work.Save(_cacheDir);
     }
 
+    /// <summary>Raises CORP-02 exception cards when the award is blocked (no
+    /// passing vendor) and CORP-02 blocks at least one candidate. Each card
+    /// routes to the sourcing-policy matrix owner (data-driven) and timelines
+    /// with rule, vendor, and owner. A missing matrix row refuses loudly.</summary>
+    private async Task RaiseCorpExceptionCardsAsync(
+        CaseWork work, Case current, IReadOnlyList<VendorScreening> screenings,
+        CancellationToken ct)
+    {
+        var corpBlocked = screenings
+            .Where(s => !s.Passed
+                && s.Verdicts.Any(v => v.Kind == VerdictKind.Block
+                    && v.RuleId == CorpExceptionFlow.CorpOriginCapRuleId))
+            .ToList();
+        if (corpBlocked.Count == 0)
+        {
+            return;
+        }
+
+        var snapshot = await _compliance.LoadKbSnapshotAsync(ct).ConfigureAwait(false);
+        var owner = snapshot.ApprovalMatrix
+            .FirstOrDefault(a => a.Action == CorpExceptionFlow.SourcingPolicyAction)?.Owner;
+        if (string.IsNullOrWhiteSpace(owner))
+        {
+            throw new InvalidOperationException(
+                $"Case {current.CaseId}: KB '{snapshot.KbVersion}' carries no approval-matrix row " +
+                $"for '{CorpExceptionFlow.SourcingPolicyAction}'; " +
+                $"{CorpExceptionFlow.CorpOriginCapRuleId} exception cannot route.");
+        }
+
+        foreach (var screening in corpBlocked)
+        {
+            var block = screening.Verdicts.First(v =>
+                v.Kind == VerdictKind.Block && v.RuleId == CorpExceptionFlow.CorpOriginCapRuleId);
+            var card = work.FindOrCreateDecision(
+                DecisionKind.ExceptionApproval,
+                $"{CorpExceptionFlow.CorpOriginCapRuleId} exception for vendor {screening.VendorId}",
+                owner,
+                CorpExceptionFlow.VendorDocumentType,
+                screening.VendorId,
+                reason: $"Vendor {screening.VendorId} blocked by {block.RuleId} for {current.ItemId} " +
+                    $"on {current.PrNumber}: {block.Reason} Exception requires {owner} approval with reason.",
+                ruleId: block.RuleId,
+                evidenceRefs: current.PrNumber is null ? [] : [$"pr:{current.PrNumber}"]);
+            work.AddEvent(CaseEventKind.Note,
+                $"{CorpExceptionFlow.CorpOriginCapRuleId} exception approval card {card.DecisionId} " +
+                $"raised to {owner} for vendor {screening.VendorId}.",
+                ruleId: block.RuleId,
+                documentType: CorpExceptionFlow.VendorDocumentType,
+                documentNumber: screening.VendorId);
+        }
+    }
+
     /// <summary>Records the supplier award: the winner must come from the
-    /// screened-passing set (re-derived, never trusted), and the reason must
-    /// name every other candidate plus each blocking rule id from its
-    /// screening. Spark writes that one-line prose on the tool path (C#
-    /// validates the loser tokens, never the style); a null vendor (C#
-    /// fallback only) awards the first passing vendor and records the same
-    /// loser detail deterministically.</summary>
+    /// screened-passing set (re-derived, never trusted, plus CORP-02 vendors
+    /// excused by approved exception grants), and the reason must name every
+    /// other candidate plus each blocking rule id from its screening. Spark
+    /// writes that one-line prose on the tool path (C# validates the loser
+    /// tokens, never the style); a null vendor (C# fallback only) awards the
+    /// first passing vendor and records the same loser detail
+    /// deterministically. Exception awards timeline the grant approver.</summary>
     private async Task AwardSupplierStepAsync(
         CaseFile file, string? vendorId, string? reason, CancellationToken ct)
     {
@@ -343,8 +401,8 @@ public partial class CaseRunner
         }
 
         var candidates = ReadCandidates(file, current.ItemId);
-        var screenings = await _core.ScreenCandidatesAsync(current.PrNumber, candidates, ct).ConfigureAwait(false);
-        var passing = screenings.Where(s => s.Passed).Select(s => s.VendorId).ToList();
+        var raw = await _core.ScreenCandidatesAsync(current.PrNumber, candidates, ct).ConfigureAwait(false);
+        var (screenings, passing, grants) = CorpExceptionFlow.ApplyApprovedExceptions(file, raw);
         if (passing.Count == 0)
         {
             throw new InvalidOperationException("No compliant vendor: PO refused.");
@@ -366,6 +424,11 @@ public partial class CaseRunner
             }
 
             RequireLosersInReason(why, screenings, winner, current.CaseId);
+        }
+
+        if (grants.TryGetValue(winner, out var grant))
+        {
+            why += $" {CorpExceptionFlow.CorpOriginCapRuleId} exception for {winner} granted by {grant.Approver}.";
         }
 
         var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false);

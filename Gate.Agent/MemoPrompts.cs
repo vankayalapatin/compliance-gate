@@ -54,10 +54,10 @@ public static class MemoPrompts
         "(a single fenced ```json block is acceptable).";
 
     /// <summary>Builds the propose prompt: verbatim memo text plus the pinned
-    /// snapshot sections plus the registry table plus the JSON schema plus,
-    /// on re-drive, the answered questions. No timestamps: identical inputs
-    /// reproduce the prompt byte for byte so cached replays make zero live
-    /// calls.</summary>
+    /// snapshot sections (structured plus the selector-filtered wiki) plus
+    /// the registry table plus the JSON schema plus, on re-drive, the
+    /// answered questions. No timestamps: identical inputs reproduce the
+    /// prompt byte for byte so cached replays make zero live calls.</summary>
     public static string BuildProposalPrompt(
         PolicyMemo memo,
         string fullText,
@@ -79,6 +79,12 @@ public static class MemoPrompts
             snapshot.SourcingPolicies,
             snapshot.RegionRules,
             snapshot.Documents,
+            snapshot.Leadership,
+            snapshot.Finance,
+            snapshot.Procurement,
+            snapshot.Hr,
+            snapshot.Regulatory,
+            snapshot.Operations,
         }, CompactOpts)).Append("\n\n");
         sb.Append("Closed rule-type registry (name exactly one type or NotMappable):\n");
         foreach (var row in RegistryRows)

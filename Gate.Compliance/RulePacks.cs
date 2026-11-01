@@ -95,11 +95,12 @@ public static class RulePackLoader
                     $"Pack file for '{packId}' declares pack '{winner.Pack}'; refusing to mix packs.");
             }
 
+            var (packOwner, packAdopted) = RequireAdoption(winner);
             foreach (var rule in winner.Rules)
             {
                 rules.Add(new RuleDefinition(
                     rule.Id, winner.Pack, winner.Version, rule.Tier, rule.Gate,
-                    rule.Title, rule.Source, rule.Enforced,
+                    rule.Title, rule.Source, rule.Enforced, packOwner, packAdopted,
                     rule.DocumentKind, rule.DocumentLabel, rule.RuleType, rule.Params));
             }
 
@@ -163,6 +164,20 @@ public static class RulePackLoader
             catch (InvalidOperationException ex)
             {
                 throw new InvalidOperationException($"Pack file '{name}' carries an invalid version: {ex.Message}", ex);
+            }
+
+            if (string.IsNullOrWhiteSpace(pack.Adopted))
+            {
+                throw new InvalidOperationException(
+                    $"Pack file '{name}' for pack '{packId}' carries no adopted date; " +
+                    "every pack records the company adoption date as yyyy-MM-dd.");
+            }
+
+            if (!DateOnly.TryParse(pack.Adopted, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+            {
+                throw new InvalidOperationException(
+                    $"Pack file '{name}' for pack '{packId}' carries no parseable adopted date (got '{pack.Adopted}'); " +
+                    "every pack records the company adoption date as yyyy-MM-dd.");
             }
 
             scored.Add((name, pack, major, minor));
@@ -234,12 +249,35 @@ public static class RulePackLoader
         return pack;
     }
 
+    /// <summary>Pack-level company adoption: the named owner plus the date
+    /// the company adopted the pack. Both are required; a pack without an
+    /// owner or with an unparseable date refuses loudly.</summary>
+    private static (string Owner, DateOnly Adopted) RequireAdoption(PackJson winner)
+    {
+        if (string.IsNullOrWhiteSpace(winner.Owner))
+        {
+            throw new InvalidOperationException(
+                $"Rule pack '{winner.Pack}' {winner.Version} carries no owner; every pack names the company owner who adopted it.");
+        }
+
+        if (!DateOnly.TryParse(winner.Adopted, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var adopted))
+        {
+            throw new InvalidOperationException(
+                $"Rule pack '{winner.Pack}' {winner.Version} carries no parseable adopted date (got '{winner.Adopted ?? "<missing>"}'); " +
+                "every pack records the company adoption date as yyyy-MM-dd.");
+        }
+
+        return (winner.Owner, adopted);
+    }
+
     private sealed record PackJson(
         string Pack,
         string Version,
         List<PackRuleJson> Rules,
         PackConfigJson? Config,
-        PackProvenanceJson? Provenance);
+        PackProvenanceJson? Provenance,
+        string? Owner = null,
+        string? Adopted = null);
 
     private sealed record PackRuleJson(
         string Id, RuleTier Tier, ComplianceGate Gate, string Title, string Source, bool Enforced,

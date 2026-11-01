@@ -6,11 +6,15 @@
 // implements those on the real adapter concurrently); every write runs
 // through the fake's real controls. Test data is local; nothing depends
 // on the demo numbers. No live calls.
+using Bunit;
 using Gate.Contracts;
 using Gate.Erp;
+using Gate.Web.Components.Pages.Erp;
 using Gate.Web.Services;
 using Gate.Web.ViewModels;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Gate.Eval.Ui;
 
@@ -907,12 +911,14 @@ public sealed class ErpAreaTests
     [Fact]
     public async Task ResetSeedsOpeningDecisionsIntoClearedCache()
     {
-        // Reset wiring for the agent lane's projector: the stale live file
-        // is cleared away, then the lifecycle's four submitted-stage rows
-        // (PR, PO, invoice, payment) seed one opening shell each with a
-        // single pending card and zero agent-authored events. Document
-        // numbers come from the run manifest, never from literals. The UI
-        // lane only asserts the cache state; the projector stays agent-side.
+        // Reset wiring for the agent lane: the stale live file is cleared
+        // away, then the lifecycle's four submitted-stage rows (PR, PO,
+        // invoice, payment) seed one opening shell each with a single
+        // pending card and zero agent-authored events, and the ERP-work
+        // pickup adopts the four actionable documents into live cases
+        // with pickup events. Document numbers come from the run manifest,
+        // never from literals. The UI lane only asserts the cache state;
+        // the projector and adopter stay agent-side.
         var erp = new InMemoryErpAdapter();
         var dir = UiTestSupport.NewDir("gate-ui-erp-seed");
         Directory.CreateDirectory(dir);
@@ -939,27 +945,39 @@ public sealed class ErpAreaTests
             new DockPhotoService(Path.Combine(dir, "dock"), Path.Combine(dir, "vision")),
             new ReplayState(), config, UiTestLogger<ReplayService>.Instance, runner);
 
-        var report = await service.ResetAndReplayAsync();
+        var report = await service.ResetAsync();
 
         Assert.Null(report.Error);
         Assert.Contains(report.Steps, s => s.Contains("4 opening decision(s) seeded"));
         var manifest = ManifestNumbers(manifestPath);
         var files = await store.ListAsync();
-        Assert.Equal(4, files.Count);
         Assert.DoesNotContain(files, f => f.Case.CaseId == "CASE-STALE");
-        foreach (var file in files)
+        var shells = files.Where(f => f.Case.IsOpeningData).ToList();
+        var live = files.Where(f => !f.Case.IsOpeningData).ToList();
+        Assert.Equal(4, shells.Count);
+        Assert.Equal(4, live.Count);
+        Assert.Contains(report.Steps, s => s.Contains("4 ERP-work case(s) picked up"));
+        foreach (var file in shells)
         {
-            Assert.True(file.Case.IsOpeningData);
             Assert.Empty(file.Events);
             var card = Assert.Single(file.Decisions);
             Assert.Equal(DecisionStatus.Pending, card.Status);
         }
 
-        Assert.Contains(files, f => f.Case.PrNumber == manifest["lc.prSubmitted.pr"]);
-        Assert.Contains(files, f => f.Case.PoNumber == manifest["lc.poSubmitted.po"]);
-        Assert.Contains(files, f => f.Case.Invoices.Any(k =>
+        foreach (var file in live)
+        {
+            Assert.NotEmpty(file.Events);
+            Assert.True(
+                file.Case.PrNumber is not null
+                    || file.Case.PoNumber is not null
+                    || file.Case.Invoices.Count > 0);
+        }
+
+        Assert.Contains(shells, f => f.Case.PrNumber == manifest["lc.prSubmitted.pr"]);
+        Assert.Contains(shells, f => f.Case.PoNumber == manifest["lc.poSubmitted.po"]);
+        Assert.Contains(shells, f => f.Case.Invoices.Any(k =>
             k.VendorId == "V-L" && k.SupplierInvoiceNumber == manifest["lc.inv.submitted.inv"]));
-        Assert.Contains(files, f => f.Case.PaymentNumbers.Contains(manifest["lc.paySubmitted.pay"]));
+        Assert.Contains(shells, f => f.Case.PaymentNumbers.Contains(manifest["lc.paySubmitted.pay"]));
     }
 
     private static Dictionary<string, string> ManifestNumbers(string manifestPath)
@@ -995,12 +1013,115 @@ public sealed class ErpAreaTests
             new DockPhotoService(Path.Combine(dir, "dock"), Path.Combine(dir, "vision")),
             new ReplayState(), config, UiTestLogger<ReplayService>.Instance);
 
-        var report = await service.ResetAndReplayAsync();
+        var report = await service.ResetAsync();
 
         Assert.Null(report.Error);
         Assert.Contains(report.Steps, s => s.Contains("0 opening decision(s) seeded"));
         Assert.DoesNotContain(report.Warnings, w => w.Contains("seed failed"));
         Assert.Empty(await store.ListAsync());
+    }
+
+    private static async Task<(string PrNumber, PurchaseOrder Po, VendorInvoice Inv)> SeedPoWithInvoiceAsync(
+        ListErpAdapter erp)
+    {
+        var prNumber = await SeedApprovedPrAsync(erp);
+        var po = await erp.CreatePoAsync(
+            prNumber, "V-E", RecordSource.Human, "requester", Guid.NewGuid().ToString("N"));
+        var inv = await erp.CreateInvoiceAsync(
+            "INV-E1", "V-E", po.PoNumber, RecordSource.Human, "ap-clerk",
+            [new InvoiceLineInput(po.Lines.Single().PoLineRef, 5m, 10m)],
+            Guid.NewGuid().ToString("N"));
+        return (prNumber, po, inv);
+    }
+
+    [Fact]
+    public async Task PoAndInvoiceRecords_LinkVendorFromHeaderOnly()
+    {
+        // Vendors are header links, never related documents: the record
+        // header carries the vendor with its record link, and the related
+        // table carries documents only.
+        var erp = new ListErpAdapter();
+        SeedUsers(erp);
+        var (prNumber, po, inv) = await SeedPoWithInvoiceAsync(erp);
+        var views = Views(erp, WriteConfig());
+
+        var poRecord = await views.GetRecordAsync("po", po.PoNumber);
+        var invRecord = await views.GetRecordAsync("invoice", "V-E", inv.SupplierInvoiceNumber);
+
+        Assert.NotNull(poRecord);
+        Assert.NotNull(invRecord);
+        Assert.DoesNotContain(poRecord.Related, r => r.Kind == "vendor");
+        Assert.DoesNotContain(invRecord.Related, r => r.Kind == "vendor");
+        Assert.Contains(poRecord.Header, f =>
+            f.Label == "Vendor" && f.Href == ErpRoutes.RecordHref("vendor", "V-E"));
+        Assert.Contains(invRecord.Header, f =>
+            f.Label == "Vendor" && f.Href == ErpRoutes.RecordHref("vendor", "V-E"));
+        Assert.Contains(poRecord.Related, r => r.Kind == "pr" && r.Key == prNumber);
+        Assert.Contains(invRecord.Related, r => r.Kind == "po" && r.Key == po.PoNumber);
+    }
+
+    [Fact]
+    public async Task InvoiceRecordRoute_OpensFromVendorPlusNumber()
+    {
+        // The invoices list links erp/record/invoice/{vendor}/{number},
+        // where the page's Kind stays empty: the page must still load the
+        // invoice (regression: it failed as "Unknown ERP record kind ''").
+        var erp = new ListErpAdapter();
+        SeedUsers(erp);
+        var (_, _, inv) = await SeedPoWithInvoiceAsync(erp);
+        var views = Views(erp, WriteConfig());
+        using var ctx = new TestContext();
+        ctx.Services.AddSingleton(views);
+        ctx.Services.AddSingleton(Actions(erp));
+        ctx.Services.AddSingleton(new ActingUserState());
+        ctx.Services.AddSingleton<ILogger<ErpRecord>>(UiTestLogger<ErpRecord>.Instance);
+
+        using var page = ctx.RenderComponent<ErpRecord>(parameters => parameters
+            .Add(p => p.Vendor, "V-E")
+            .Add(p => p.Number, inv.SupplierInvoiceNumber));
+
+        page.WaitForAssertion(
+            () => Assert.Contains($"Invoice {inv.SupplierInvoiceNumber}", page.Markup),
+            TimeSpan.FromSeconds(10));
+        Assert.DoesNotContain("Unknown ERP record kind", page.Markup);
+        Assert.Contains("erp/record/vendor/V-E", page.Markup);
+    }
+
+    [Fact]
+    public async Task InvoiceRecord_WithoutVendorKeyAsksForVendorPlusNumber()
+    {
+        var erp = new ListErpAdapter();
+        SeedUsers(erp);
+        await SeedPoWithInvoiceAsync(erp);
+        var views = Views(erp, WriteConfig());
+
+        var record = await views.GetRecordAsync("invoice", "V-E");
+
+        Assert.NotNull(record);
+        Assert.Contains(record.Notes, n => n.Contains("needs its vendor"));
+    }
+
+    [Fact]
+    public void EverySidebarListLinkLoadsItsListPage()
+    {
+        // Every ERP sidebar slug renders its real list branch: no
+        // "Unknown list", no load error. The empty adapter renders honest
+        // empty states on every page.
+        var views = Views(new ListErpAdapter(), WriteConfig());
+        using var ctx = new TestContext();
+        ctx.Services.AddSingleton(views);
+
+        foreach (var link in ErpModules.All.SelectMany(m => m.Lists))
+        {
+            using var page = ctx.RenderComponent<ErpList>(parameters => parameters
+                .Add(p => p.Slug, link.Slug));
+            page.WaitForAssertion(
+                () => Assert.DoesNotContain("Loading ", page.Markup),
+                TimeSpan.FromSeconds(10));
+            Assert.DoesNotContain("Unknown list", page.Markup);
+            Assert.DoesNotContain("failed to load", page.Markup);
+            Assert.Contains(ErpModules.TitleFor(link.Slug), page.Markup);
+        }
     }
 
     private const string DemoScenarioJson = """

@@ -133,6 +133,19 @@ public sealed class P2pAgent
         return screenings;
     }
 
+    /// <summary>Re-screens one vendor with a CORP-02 logged exception: fresh
+    /// compliance verdicts plus agent-side excusing of CORP-02 when the
+    /// grant names this vendor with approver and reason. Passed ignores the
+    /// VENDOR-BLOCK marker (the earlier block consequence). An invalid grant
+    /// returns the screening unchanged, still blocked.</summary>
+    public async Task<VendorScreening> RescreenVendorWithExceptionAsync(
+        string prNumber, string vendorId, CorpExceptionGrant grant, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(grant);
+        var screenings = await ScreenCandidatesAsync(prNumber, [vendorId], ct).ConfigureAwait(false);
+        return CorpExceptionFlow.ExcuseCorpBlock(screenings[0], grant);
+    }
+
     public async Task<(PurchaseOrder Po, IReadOnlyList<VendorScreening> Screenings)> ScreenAndOrderAsync(
         string prNumber, IReadOnlyList<string> candidateVendorIds, string source, string caseId, CancellationToken ct = default,
         string? idempotencyScope = null)
@@ -207,6 +220,20 @@ public sealed class P2pAgent
             return await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
         }
+        matched.AddRange(ComputeLineMatches(po, lines));
+        await _erp.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, matched, Key("match"), ct).ConfigureAwait(false);
+        return await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
+    }
+
+    /// <summary>Line-level 3-way match of invoice lines against PO lines: each
+    /// line needs its PO line, a unit price within tolerance, and a quantity
+    /// within the received quantity. Pure: no ERP calls, shared by fresh
+    /// intake and already-persisted invoices.</summary>
+    public static IReadOnlyList<LineMatchResult> ComputeLineMatches(
+        PurchaseOrder po, IReadOnlyList<InvoiceLineInput> lines)
+    {
+        var matched = new List<LineMatchResult>();
         foreach (var line in lines)
         {
             var poLine = po.Lines.FirstOrDefault(l => l.PoLineRef == line.PoLineRef);
@@ -215,13 +242,57 @@ public sealed class P2pAgent
                 matched.Add(new LineMatchResult(line.PoLineRef, false, "No PO line match."));
                 continue;
             }
-            var priceOk = poLine.UnitPrice == 0 || Math.Abs(line.UnitPrice - poLine.UnitPrice) / poLine.UnitPrice <= PriceTolerance;
+
+            var priceOk = poLine.UnitPrice == 0
+                || Math.Abs(line.UnitPrice - poLine.UnitPrice) / poLine.UnitPrice <= PriceTolerance;
             var qtyOk = line.Quantity <= poLine.QtyReceived;
-            if (priceOk && qtyOk) matched.Add(new LineMatchResult(line.PoLineRef, true, "Matched."));
-            else matched.Add(new LineMatchResult(line.PoLineRef, false,
-                !priceOk ? $"AP-C2: price {line.UnitPrice} vs PO {poLine.UnitPrice}." : $"Qty {line.Quantity} exceeds received {poLine.QtyReceived}."));
+            if (priceOk && qtyOk)
+            {
+                matched.Add(new LineMatchResult(line.PoLineRef, true, "Matched."));
+            }
+            else
+            {
+                matched.Add(new LineMatchResult(line.PoLineRef, false,
+                    !priceOk
+                        ? $"AP-C2: price {line.UnitPrice} vs PO {poLine.UnitPrice}."
+                        : $"Qty {line.Quantity} exceeds received {poLine.QtyReceived}."));
+            }
         }
-        await _erp.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, matched, Key("match"), ct).ConfigureAwait(false);
+
+        return matched;
+    }
+
+    /// <summary>Matches an invoice that already exists in the ERP (seeded or
+    /// supplier-sent outside intake): reads the stored lines plus the PO,
+    /// computes the same line-level match, and records it through the
+    /// adapter. Invoices that already carry match results return untouched.
+    /// Refuses unknown invoices and invoices with no resolvable PO.</summary>
+    public async Task<VendorInvoice> MatchExistingInvoiceAsync(
+        string vendorId, string supplierInvoiceNumber, CancellationToken ct = default,
+        string? idempotencyScope = null)
+    {
+        var invoice = await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Unknown invoice {vendorId}/{supplierInvoiceNumber}.");
+        if (invoice.MatchResults.Count > 0)
+        {
+            return invoice;
+        }
+
+        var po = invoice.PoNumber is null
+            ? null
+            : await _erp.GetPurchaseOrderAsync(invoice.PoNumber, ct).ConfigureAwait(false);
+        if (po is null)
+        {
+            throw new InvalidOperationException(
+                $"Invoice {vendorId}/{supplierInvoiceNumber} names unresolvable PO {invoice.PoNumber}; match refused.");
+        }
+
+        var inputs = invoice.Lines
+            .Select(l => new InvoiceLineInput(l.PoLineRef, l.Quantity, l.UnitPrice))
+            .ToList();
+        await _erp.RecordMatchResultAsync(
+            vendorId, supplierInvoiceNumber, ComputeLineMatches(po, inputs),
+            idempotencyScope ?? Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         return await _erp.GetInvoiceAsync(vendorId, supplierInvoiceNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} vanished after match.");
     }

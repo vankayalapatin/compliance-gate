@@ -34,14 +34,31 @@ adapter interface, and this file change in the lead session only.
   include `VendorIdentity` (confirm a proposed vendor-master match),
   `PolicyApproval` (approve a memo-to-rule proposal), and `PolicyQuestion`
   (answer one blocking proposal question). The `IComplianceEngine` memo
-  seam (snapshot load, hash, validate, conflicts, what-if, approval check,
-  three publish paths) is the agent's only route to the Memo core.
+  seam (snapshot load, exact-version load, hash, validate, conflicts,
+  what-if, approval check, three pack publish paths, KB publish, space
+  list, live-pack-rule list) is the agent's only route to the Memo core.
+  KB edits go UI-to-engine direct (not through memo stages): one space
+  per version, space-owner approval, no self-approval.
 - `Gate.Contracts/MemoRules.cs` — memo-to-rule shapes mirroring
   `docs/company-kb/`: `RuleProposal` with `KbCitation` plus `OpenQuestion`,
   `WhatIfReport` impact, `RuleApproval` pin, `RuleActivation` publish
   record, plus the promoted what-if rows, validation outcomes, tier, new-
   rule spec, and publication shapes the engine seam passes. Spark proposes,
-  C# validates, human approves, C# publishes.
+  C# validates, human approves, C# publishes. KB entries carry per-entry
+  version plus audit (`CreatedBy/At`, `ModifiedBy/At`, `ApprovedBy`; null
+  on kbv1 loads, which predate audit). KB writer shapes: `KbChangeKind`,
+  `KbEntryChange`, `KbVersionActivation`, `KbPublication`, `KbSpace`,
+  `LivePackRule`. Add/edit mints a new `company-kb.kbvN.json` file; priors
+  are never overwritten and pinned proposals keep their version. Wiki
+  entries (`KbWikiEntry`, six department sections) carry owner, status
+  (`KbEntryStatus` Active/Retired), and effective date alongside audit;
+  delegated approval records `ApprovedFor` with the acting approver
+  (the publish seam carries it as an optional argument).
+  `LivePackRule` carries pack owner, required adoption date, and the
+  rule's public source. The pack loader refuses any pack file without
+  an adopted date, exactly like a version problem, so pack load (first
+  rules access) fails fast; published rules show the approval's
+  effective date as Adopted, and only unapproved drafts lack a date.
 - `Gate.Contracts/ModelTools.cs` — tool-calling wire format: flat tool
   schemas, tool calls, conversation messages. Requests add tools plus
   history; results add tool calls; the cache key extends only when present.

@@ -1,0 +1,160 @@
+@page "/governance/kb/{Version}/{Section}/{EntryId}"
+@rendermode InteractiveServer
+@using Gate.Agent
+@using Gate.Contracts
+@using Gate.Web.Components.Governance
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject KbViewService Kb
+@inject MemoFileStore Memos
+@inject ILogger<GovernanceKbEntry> Log
+
+<PageTitle>Governance — KB @Section#@EntryId</PageTitle>
+
+<div class="gate-erp">
+    <GovernanceSidebar CurrentKey="@GovernanceModules.VersionsSlug" Spaces="@_spaces" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title"><code>kb:@Section#@EntryId&#64;@Version</code></p>
+                <p class="gate-page-sub">@Subtitle()</p>
+            </div>
+            <div>
+                <button class="gate-btn" disabled="@_loading" @onclick="ReloadAsync">Refresh</button>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_loading || _detail is null)
+        {
+            <p class="gate-meta">Loading KB entry…</p>
+        }
+        else
+        {
+            @foreach (var note in _detail.Notes)
+            {
+                <div class="gate-notice" role="alert">@note</div>
+            }
+            <section class="gate-card">
+                <p class="gate-card-title">@_detail.Entry.Title</p>
+                <p class="gate-row"><span class="gate-label">Summary:</span> @_detail.Entry.Summary</p>
+                @if (_detail.Entry.Detail is not null)
+                {
+                    <div class="gate-notice" role="note">@_detail.Entry.Detail</div>
+                }
+                <p class="gate-row">
+                    <span class="gate-label">Stamps:</span>
+                    owner @(_detail.Entry.Owner ?? "—") ·
+                    status @(_detail.Entry.Status ?? "—") ·
+                    version @(_detail.Entry.Version ?? "—") ·
+                    effective @(_detail.Entry.Effective ?? "—")
+                </p>
+                <p class="gate-row">
+                    <span class="gate-label">Audit:</span>
+                    created @(_detail.Entry.CreatedBy ?? "—") @(_detail.Entry.CreatedAt ?? string.Empty) ·
+                    modified @(_detail.Entry.ModifiedBy ?? "—") @(_detail.Entry.ModifiedAt ?? string.Empty) ·
+                    approved @(_detail.Entry.ApprovedBy ?? "—")
+                </p>
+                @if (!string.Equals(_detail.SnapshotVersion, _detail.CurrentVersion, StringComparison.Ordinal))
+                {
+                    <p class="gate-row">
+                        <span class="gate-label">Current:</span>
+                        <a href="/@GovernanceRoutes.KbEntryHref(_detail.CurrentVersion, Section, EntryId)">view at @_detail.CurrentVersion</a>
+                    </p>
+                }
+            </section>
+            <section class="gate-card">
+                <p class="gate-card-title">Used by (@_detail.UsedBy.Proposals.Count proposal(s), @_detail.UsedBy.Activations.Count activation(s))</p>
+                @if (_detail.UsedBy.Proposals.Count == 0 && _detail.UsedBy.Activations.Count == 0)
+                {
+                    <p class="gate-meta">No proposal or activation cites this entry.</p>
+                }
+                else
+                {
+                    @if (_detail.UsedBy.Proposals.Count > 0)
+                    {
+                        <p class="gate-row"><span class="gate-label">Proposals:</span></p>
+                        <ul class="gate-list">
+                            @foreach (var use in _detail.UsedBy.Proposals)
+                            {
+                                <li>memo @use.MemoId · @use.ProposalId · KB @use.KbVersion</li>
+                            }
+                        </ul>
+                    }
+                    @if (_detail.UsedBy.Activations.Count > 0)
+                    {
+                        <p class="gate-row"><span class="gate-label">Activations:</span></p>
+                        <ul class="gate-list">
+                            @foreach (var use in _detail.UsedBy.Activations)
+                            {
+                                <li>@use.RuleId in @use.PackId @use.NewPackVersion (memo @use.MemoId · @use.ActivationId)</li>
+                            }
+                        </ul>
+                    }
+                    @if (_detail.UsedBy.Rules.Count > 0)
+                    {
+                        <p class="gate-row"><span class="gate-label">Rules:</span> @string.Join(", ", _detail.UsedBy.Rules)</p>
+                    }
+                }
+            </section>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string Version { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Section { get; set; } = string.Empty;
+
+    [Parameter]
+    public string EntryId { get; set; } = string.Empty;
+
+    private KbEntryDetailVm? _detail;
+    private string? _loadedKey;
+    private IReadOnlyList<KbSpace> _spaces = [];
+    private string? _loadError;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_loading && !string.Equals(_loadedKey, $"{Version}/{Section}/{EntryId}", StringComparison.Ordinal))
+        {
+            await ReloadAsync();
+        }
+    }
+
+    private string Subtitle() =>
+        _detail is null ? "Loading…" : $"Pinned at {_detail.SnapshotVersion} · current {_detail.CurrentVersion}.";
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _spaces = await Kb.ListSpacesAsync();
+            var memoFiles = await Memos.ListAsync();
+            _detail = await Kb.FindEntryAsync(Version, Section, EntryId, memoFiles);
+            _loadedKey = $"{Version}/{Section}/{EntryId}";
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Governance KB entry {Section}#{Entry}@{Version} failed to load.", Section, EntryId, Version);
+            _loadError = $"Governance KB entry failed to load: {ex.Message}";
+            _detail = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

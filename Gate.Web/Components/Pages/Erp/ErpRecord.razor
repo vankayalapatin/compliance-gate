@@ -10,15 +10,15 @@
 @inject ILogger<ErpRecord> Log
 @implements IDisposable
 
-<PageTitle>ERP — @(_record?.Title ?? $"{Kind} {Key}")</PageTitle>
+<PageTitle>ERP — @(_record?.Title ?? $"{EffectiveKind()} {EffectiveKey()}")</PageTitle>
 
 <div class="gate-erp">
-    <ErpSidebar CurrentSlug="@Kind" />
+    <ErpSidebar CurrentSlug="@EffectiveKind()" />
     <div class="gate-erp-body">
         <div class="gate-page-head">
             <div>
-                <p class="gate-page-title">@(_record?.Title ?? $"{ErpModules.TitleFor(Kind)} {Key}")</p>
-                <p class="gate-page-sub"><a href="@ErpModules.ListHref(Kind)">&#8592; @ErpModules.TitleFor(Kind)</a></p>
+                <p class="gate-page-title">@(_record?.Title ?? $"{ErpModules.TitleFor(EffectiveKind())} {EffectiveKey()}")</p>
+                <p class="gate-page-sub"><a href="@ErpModules.ListHref(EffectiveKind())">&#8592; @ErpModules.TitleFor(EffectiveKind())</a></p>
             </div>
         </div>
         @if (_loadError is not null)
@@ -280,27 +280,34 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
+    // The invoice route carries vendor plus number as its own segments,
+    // so Kind stays empty there: the effective kind recovers "invoice"
+    // from the route that matched. Without this every invoice opened from
+    // the invoices list failed as an unknown record kind.
+    private string EffectiveKind() =>
+        Kind.Length > 0 ? Kind : (Vendor is not null && Number is not null ? "invoice" : Kind);
+
     private string EffectiveKey() =>
-        Kind == "invoice" && Vendor is not null && Number is not null ? Vendor : Key;
+        EffectiveKind() == "invoice" && Vendor is not null && Number is not null ? Vendor : Key;
 
     private string? EffectiveKey2() =>
-        Kind == "invoice" && Vendor is not null && Number is not null ? Number : null;
+        EffectiveKind() == "invoice" && Vendor is not null && Number is not null ? Number : null;
 
     private async Task ReloadAsync()
     {
         _loadError = null;
         try
         {
-            _record = await Views.GetRecordAsync(Kind, EffectiveKey(), EffectiveKey2());
+            _record = await Views.GetRecordAsync(EffectiveKind(), EffectiveKey(), EffectiveKey2());
             if (_record is null)
             {
-                _loadError = $"Unknown ERP record kind '{Kind}'.";
+                _loadError = $"Unknown ERP record kind '{EffectiveKind()}'.";
             }
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "Record {Kind} {Key} failed to load.", Kind, Key);
-            _loadError = $"Record {Kind} {Key} failed to load: {ex.Message}";
+            Log.LogWarning(ex, "Record {Kind} {Key} failed to load.", EffectiveKind(), EffectiveKey());
+            _loadError = $"Record {EffectiveKind()} {EffectiveKey()} failed to load: {ex.Message}";
         }
     }
 
@@ -313,7 +320,7 @@
             // control refusal comes back as the outcome message.
             _inputs.TryGetValue(actionId, out var values);
             var outcome = await Actions.AttemptAsync(
-                Kind, EffectiveKey(), EffectiveKey2(), actionId,
+                EffectiveKind(), EffectiveKey(), EffectiveKey2(), actionId,
                 values ?? new Dictionary<string, string>(StringComparer.Ordinal),
                 Acting.CurrentUserId);
             _outcomes[actionId] = outcome;
@@ -322,7 +329,7 @@
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "Action {Action} failed for {Kind} {Key}.", actionId, Kind, Key);
+            Log.LogWarning(ex, "Action {Action} failed for {Kind} {Key}.", actionId, EffectiveKind(), EffectiveKey());
             _outcomes[actionId] = new ErpOutcome(false, $"Action failed: {ex.Message}");
         }
         finally

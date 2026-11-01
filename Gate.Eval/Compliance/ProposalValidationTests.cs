@@ -288,6 +288,32 @@ public sealed class ProposalValidationTests
     }
 
     [Fact]
+    public void WikiCitationResolvesAgainstItsSection()
+    {
+        var wiki = MemoFixtures.Cite("finance", "limits-9");
+        var proposal = CapProposal(
+            statements: [new ProposalStatement("cap the share", "cap the share at 40%", 0.9m)],
+            resolutions: [new EntityResolution("cap the share", "limits-9", wiki)],
+            citations: [wiki]);
+        var kb = MemoFixtures.TestKb(finance: [MemoFixtures.TestWikiEntry("limits-9")]);
+        var result = ProposalValidator.ValidateAgainstKb(proposal, kb);
+        Assert.True(result.Ok, string.Join("; ", result.Errors));
+    }
+
+    [Fact]
+    public void UnknownWikiEntryRejectsQuotingIt()
+    {
+        var wiki = MemoFixtures.Cite("finance", "nope-9");
+        var proposal = CapProposal(
+            statements: [new ProposalStatement("cap the share", "cap the share at 40%", 0.9m)],
+            resolutions: [new EntityResolution("cap the share", "nope-9", wiki)],
+            citations: [wiki]);
+        var result = ProposalValidator.ValidateAgainstKb(proposal, MemoFixtures.TestKb());
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, e => e.Contains("kb:finance#nope-9@kbv9"));
+    }
+
+    [Fact]
     public void UnknownSectionRejectsQuotingIt()
     {
         var bad = MemoFixtures.Cite("weather", "today");

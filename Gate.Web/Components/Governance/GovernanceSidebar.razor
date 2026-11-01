@@ -1,0 +1,72 @@
+@rendermode InteractiveServer
+@using Gate.Contracts
+@using Gate.Web.ViewModels
+<nav class="gate-erp-side" aria-label="Governance modules">
+    <div class="gate-erp-module">
+        <button class="gate-erp-module-btn" @onclick="() => Toggle(GovernanceModules.Compliance)" aria-expanded="@IsOpen(GovernanceModules.Compliance)">
+            <span class="gate-erp-caret" aria-hidden="true">@(IsOpen(GovernanceModules.Compliance) ? "▾" : "▸")</span>
+            @GovernanceModules.Compliance
+        </button>
+        @if (IsOpen(GovernanceModules.Compliance))
+        {
+            <ul class="gate-erp-links">
+                @foreach (var link in GovernanceModules.ComplianceLinks)
+                {
+                    <li>
+                        <NavLink href="@ComplianceHref(link.Slug)">@link.Title</NavLink>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+    <div class="gate-erp-module">
+        <button class="gate-erp-module-btn" @onclick="() => Toggle(GovernanceModules.Knowledge)" aria-expanded="@IsOpen(GovernanceModules.Knowledge)">
+            <span class="gate-erp-caret" aria-hidden="true">@(IsOpen(GovernanceModules.Knowledge) ? "▾" : "▸")</span>
+            @GovernanceModules.Knowledge
+        </button>
+        @if (IsOpen(GovernanceModules.Knowledge))
+        {
+            <ul class="gate-erp-links">
+                @foreach (var space in Spaces)
+                {
+                    <li>
+                        <NavLink href="@GovernanceRoutes.KbSpaceHref(space.Space)">@space.Space</NavLink>
+                    </li>
+                }
+                <li>
+                    <NavLink href="@GovernanceRoutes.VersionsHref">KB versions</NavLink>
+                </li>
+            </ul>
+        }
+    </div>
+</nav>
+
+@code {
+    [Parameter]
+    public string? CurrentKey { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<KbSpace> Spaces { get; set; } = [];
+
+    private readonly HashSet<string> _open = new(StringComparer.Ordinal);
+
+    protected override void OnParametersSet()
+    {
+        if (CurrentKey is not null && GovernanceModules.ModuleFor(CurrentKey) is { } module)
+        {
+            _open.Add(module);
+        }
+    }
+
+    private bool IsOpen(string module) => _open.Contains(module);
+
+    private void Toggle(string module)
+    {
+        if (!_open.Add(module))
+        {
+            _open.Remove(module);
+        }
+    }
+
+    private static string ComplianceHref(string slug) => $"{GovernanceRoutes.Root}/{slug}";
+}

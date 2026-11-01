@@ -810,8 +810,10 @@ public partial class CaseRunner
     /// rejections cancel the case; review rejections quarantine plus hold the
     /// carton; bank verification re-verifies the master and releases the
     /// bank-held lines; vendor identity completes the stored intake with the
-    /// confirmed vendor on approve or the missing-fields path on reject.
-    /// Resolving a decided decision returns it unchanged.</summary>
+    /// confirmed vendor on approve or the missing-fields path on reject;
+    /// CORP-02 exception grants re-screen with the exception and unblock on
+    /// pass, denies keep the rejection. Resolving a decided decision returns
+    /// it unchanged.</summary>
     public async Task<Decision> ResolveDecisionAsync(
         string caseId, string decisionId, bool approved, string decidedBy,
         string? comment = null, CancellationToken ct = default)
@@ -860,6 +862,8 @@ public partial class CaseRunner
             DecisionKind.BankVerification => await ResolveBankVerificationAsync(work, decision, approved, decidedBy, comment, ct)
                 .ConfigureAwait(false),
             DecisionKind.VendorIdentity => ResolveVendorIdentity(work, decision, approved, decidedBy, comment),
+            DecisionKind.ExceptionApproval => await ResolveCorpExceptionAsync(work, decision, approved, decidedBy, comment, ct)
+                .ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Decision kind {decision.Kind} is not resolvable by the runner."),
         };
         work.Save(_cacheDir);
@@ -1077,6 +1081,86 @@ public partial class CaseRunner
             $"Bank change for {vendorId} verified out of band by {decidedBy}; held lines released.",
             documentType: "VendorBank", documentNumber: vendorId);
         return updated;
+    }
+
+    /// <summary>Resolves a CORP-02 exception card. A deny keeps the rejection
+    /// (vendor stays blocked, no award). A grant presence-checks the named
+    /// approver plus reason, re-screens the vendor with the exception, and on
+    /// pass unblocks the vendor so the award can continue; a re-screen still
+    /// blocked on other rules refuses loudly and leaves the card pending.
+    /// Every outcome timelines with rule, vendor, and approver.</summary>
+    private async Task<Decision> ResolveCorpExceptionAsync(
+        CaseWork work, Decision decision, bool approved, string decidedBy, string? comment,
+        CancellationToken ct)
+    {
+        var ruleId = decision.RuleId ?? string.Empty;
+        if (!string.Equals(ruleId, CorpExceptionFlow.CorpOriginCapRuleId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Decision {decision.DecisionId} is an ExceptionApproval for rule '{ruleId}'; " +
+                $"only {CorpExceptionFlow.CorpOriginCapRuleId} exceptions are supported.");
+        }
+
+        var vendorId = RequireDoc(decision);
+        if (!approved)
+        {
+            var denied = work.Decide(decision, false, decidedBy, comment);
+            work.AddEvent(CaseEventKind.Note,
+                $"{ruleId} exception for vendor {vendorId} denied by {decidedBy}: " +
+                $"{comment ?? "no reason given"}. Rejection stands.",
+                ruleId: ruleId,
+                documentType: CorpExceptionFlow.VendorDocumentType,
+                documentNumber: vendorId);
+            return denied;
+        }
+
+        if (string.IsNullOrWhiteSpace(decidedBy))
+        {
+            throw new InvalidOperationException(
+                $"Decision {decision.DecisionId} grants {ruleId} exception for vendor {vendorId} " +
+                "with no approver; a named approver is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(comment))
+        {
+            throw new InvalidOperationException(
+                $"Decision {decision.DecisionId} grants {ruleId} exception for vendor {vendorId} " +
+                "with no reason; a reason is required.");
+        }
+
+        var prNumber = work.Current.PrNumber
+            ?? throw new InvalidOperationException(
+                $"Case {work.Current.CaseId} has no PR to re-screen vendor {vendorId} for.");
+        var grant = new CorpExceptionGrant(
+            ruleId, vendorId, decidedBy, DateTimeOffset.UtcNow, comment);
+        var excused = await _core.RescreenVendorWithExceptionAsync(
+            prNumber, vendorId, grant, ct).ConfigureAwait(false);
+        if (!excused.Passed)
+        {
+            var blocks = excused.Verdicts
+                .Where(v => v.Kind == VerdictKind.Block)
+                .Select(v => v.RuleId)
+                .Where(id => !string.Equals(id, ComplianceVerdictIds.VendorBlock, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(id => id, StringComparer.Ordinal)
+                .ToList();
+            throw new InvalidOperationException(
+                $"Decision {decision.DecisionId} cannot grant {ruleId} exception for vendor {vendorId}: " +
+                $"re-screen still blocks on {string.Join(", ", blocks)} " +
+                $"(the exception excuses only {ruleId}).");
+        }
+
+        await _erp.UnblockVendorAsync(
+            vendorId, decidedBy, $"{work.Current.CaseId}:{decision.DecisionId}:unblock", ct)
+            .ConfigureAwait(false);
+        var granted = work.Decide(decision, true, decidedBy, comment);
+        work.AddEvent(CaseEventKind.Note,
+            $"{ruleId} exception for vendor {vendorId} granted by {decidedBy}: {comment}. " +
+            "Re-screen passed with exception; vendor unblocked.",
+            ruleId: ruleId,
+            documentType: CorpExceptionFlow.VendorDocumentType,
+            documentNumber: vendorId);
+        return granted;
     }
 
     private static string RequireDoc(Decision decision) =>

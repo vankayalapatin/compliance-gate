@@ -169,7 +169,8 @@ public static class PackPublisher
 
         var pack = new MutablePack(
             current.Pack, newVersion, rules, restore.Config,
-            new MutableProvenance(memoId, approver, effectiveAt.ToString("O")));
+            new MutableProvenance(memoId, approver, effectiveAt.ToString("O")),
+            restore.Owner, restore.Adopted);
         return new PackPublication(
             FileNameFor(current.Pack, newVersion),
             JsonSerializer.Serialize(pack, JsonOpts),
@@ -274,14 +275,16 @@ public static class PackPublisher
         var newVersion = PackVersions.Next(prior.Version);
         var pack = new MutablePack(
             prior.Pack, newVersion, rules, config,
-            new MutableProvenance(proposal.MemoId, approval.Approver, approval.EffectiveAt.ToString("O")));
+            new MutableProvenance(proposal.MemoId, approval.Approver, approval.EffectiveAt.ToString("O")),
+            prior.Owner, prior.Adopted);
         return new PackPublication(
             FileNameFor(prior.Pack, newVersion),
             JsonSerializer.Serialize(pack, JsonOpts),
             new RuleActivation(
                 activationId, ruleId, prior.Pack, newVersion, prior.Version,
                 proposal.MemoId, approval.Approver, approval.EffectiveAt,
-                approval.Applicability, proposal.ProposalHash, publishedAt));
+                approval.Applicability, proposal.ProposalHash, publishedAt,
+                proposal.KbVersion));
     }
 
     private static string UpdateSource(string priorSource, string memoId, RuleApproval approval) =>
@@ -411,6 +414,19 @@ public static class PackPublisher
             throw new InvalidOperationException($"The {role} pack carries an invalid version: {ex.Message}", ex);
         }
 
+        if (string.IsNullOrWhiteSpace(pack.Owner))
+        {
+            throw new InvalidOperationException(
+                $"The {role} pack '{pack.Pack}' {pack.Version} carries no owner; publications carry the pack adoption forward.");
+        }
+
+        if (!DateOnly.TryParse(pack.Adopted, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+        {
+            throw new InvalidOperationException(
+                $"The {role} pack '{pack.Pack}' {pack.Version} carries no parseable adopted date (got '{pack.Adopted ?? "<missing>"}'); " +
+                "publications carry the pack adoption forward.");
+        }
+
         return pack;
     }
 
@@ -419,7 +435,9 @@ public static class PackPublisher
         string Version,
         List<MutableRule> Rules,
         MutableConfig? Config,
-        MutableProvenance? Provenance);
+        MutableProvenance? Provenance,
+        string Owner,
+        string Adopted);
 
     private sealed record MutableRule(
         string Id,

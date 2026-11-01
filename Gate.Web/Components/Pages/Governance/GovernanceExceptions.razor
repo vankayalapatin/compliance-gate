@@ -1,0 +1,97 @@
+@page "/governance/exceptions"
+@rendermode InteractiveServer
+@using Gate.Contracts
+@using Gate.Web.Components.Governance
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject GovernanceViewService Views
+@inject KbViewService Kb
+@inject ILogger<GovernanceExceptions> Log
+
+<PageTitle>Governance — Exceptions</PageTitle>
+
+<div class="gate-erp">
+    <GovernanceSidebar CurrentKey="@GovernanceModules.ExceptionsSlug" Spaces="@_spaces" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">Exceptions</p>
+                <p class="gate-page-sub">@Subtitle()</p>
+            </div>
+            <div>
+                <button class="gate-btn" disabled="@_loading" @onclick="ReloadAsync">Refresh</button>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_loading || _rows is null)
+        {
+            <p class="gate-meta">Loading exceptions…</p>
+        }
+        else if (_rows.Count == 0)
+        {
+            <p class="gate-meta">No exception approvals across cases.</p>
+        }
+        else
+        {
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Case</th><th>Vendor</th><th>Rule</th><th>Requested to</th><th>Decided by</th><th>Decided at</th><th>Outcome</th><th>Reason</th><th>Grant comment</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _rows)
+                    {
+                        <tr>
+                            <td><a href="cases/@row.CaseId">@row.CaseId</a></td>
+                            <td>@(row.Vendor ?? "—")</td>
+                            <td>@(row.RuleId ?? "—")</td>
+                            <td>@row.RequestedTo</td>
+                            <td>@(row.DecidedBy ?? "—")</td>
+                            <td>@(row.DecidedAt ?? "—")</td>
+                            <td><span class="gate-badge @(row.Outcome == "Approved" ? "gate-badge-dark" : "")">@row.Outcome</span></td>
+                            <td>@(row.Reason ?? "—")</td>
+                            <td>@(row.Comment ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<ExceptionRowVm>? _rows;
+    private IReadOnlyList<KbSpace> _spaces = [];
+    private string? _loadError;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private string Subtitle() =>
+        _rows is null ? "Loading…" : $"{_rows.Count} exception decision(s) across cases.";
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _spaces = await Kb.ListSpacesAsync();
+            _rows = await Views.ListExceptionsAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Governance exceptions failed to load.");
+            _loadError = $"Governance exceptions failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

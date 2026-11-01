@@ -9,9 +9,10 @@ public static class ModelCachePaths
         ?? Path.Combine(Path.GetTempPath(), "gate-model-cache");
 }
 
-/// <summary>Process-wide replay flag. Once a reset-plus-replay runs, the
-/// session stays in replay mode: Ask-why answers from the model cache only
-/// and refuses to place a live call.</summary>
+/// <summary>Process-wide replay flag. Live by default; the top bar
+/// switches to replay explicitly (Reset never touches this flag). In
+/// replay mode Ask-why answers from the model cache only and refuses to
+/// place a live call.</summary>
 public sealed class ReplayState
 {
     public bool IsReplay { get; set; }

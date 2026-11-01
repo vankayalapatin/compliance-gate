@@ -1,0 +1,369 @@
+@page "/governance/kb/{Space}"
+@rendermode InteractiveServer
+@using Gate.Agent
+@using Gate.Compliance
+@using Gate.Contracts
+@using Gate.Web.Components.Governance
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject KbViewService Kb
+@inject KbEditService KbEdit
+@inject MemoFileStore Memos
+@inject CaseViewService UsersSvc
+@inject ActingUserState Acting
+@inject ILogger<GovernanceKbSpace> Log
+@implements IDisposable
+
+<PageTitle>Governance — KB @Space</PageTitle>
+
+<div class="gate-erp">
+    <GovernanceSidebar CurrentKey="@($"kb:{Space}")" Spaces="@_spaces" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">KB space @Space</p>
+                <p class="gate-page-sub">@Subtitle()</p>
+            </div>
+            <div>
+                <button class="gate-btn" disabled="@_loading" @onclick="ReloadAsync">Refresh</button>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_loading || _view is null)
+        {
+            <p class="gate-meta">Loading KB space @Space…</p>
+        }
+        else
+        {
+            @foreach (var note in _view.Notes)
+            {
+                <div class="gate-notice" role="alert">@note</div>
+            }
+            <p class="gate-meta">
+                Owner <strong>@_view.Space.Owner</strong> (@_view.Space.OwnerRole) ·
+                version <code>@_view.CurrentVersion</code> ·
+                acting as <strong>@(_selected ?? "—")</strong>.
+            </p>
+            @foreach (var sec in _view.Sections)
+            {
+                <section class="gate-card">
+                    <p class="gate-card-title">@sec (@_view.EntriesBySection[sec].Count)</p>
+                    @if (_view.EntriesBySection[sec].Count == 0)
+                    {
+                        <p class="gate-meta">No entries.</p>
+                    }
+                    else
+                    {
+                        <table class="gate-table">
+                            <thead>
+                                <tr><th>Entry</th><th>Summary</th><th>Owner</th><th>Status</th><th>Version</th><th>Effective</th><th>Created</th><th>Modified</th><th>Approved</th><th>Used by</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in _view.EntriesBySection[sec])
+                                {
+                                    var usedBy = UsedByFor(entry);
+                                    <tr>
+                                        <td><a href="/@GovernanceRoutes.KbEntryHref(_view.CurrentVersion, sec, entry.EntryId)"><code>@entry.EntryId</code></a></td>
+                                        <td>@entry.Summary</td>
+                                        <td>@(entry.Owner ?? "—")</td>
+                                        <td>@(entry.Status ?? "—")</td>
+                                        <td>@(entry.Version ?? "—")</td>
+                                        <td>@(entry.Effective ?? "—")</td>
+                                        <td>@(entry.CreatedBy is null ? "—" : $"{entry.CreatedBy} · {entry.CreatedAt}")</td>
+                                        <td>@(entry.ModifiedBy is null ? "—" : $"{entry.ModifiedBy} · {entry.ModifiedAt}")</td>
+                                        <td>@(entry.ApprovedBy ?? "—")</td>
+                                        <td>
+                                            @if (usedBy.Proposals.Count == 0 && usedBy.Activations.Count == 0)
+                                            {
+                                                <span class="gate-meta">unused</span>
+                                            }
+                                            else
+                                            {
+                                                <span>@usedBy.Proposals.Count proposal(s), @usedBy.Activations.Count activation(s)</span>
+                                                @if (usedBy.Rules.Count > 0)
+                                                {
+                                                    <span> · rules @(string.Join(", ", usedBy.Rules))</span>
+                                                }
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </section>
+            }
+            <section class="gate-card">
+                <p class="gate-card-title">Add or edit an entry</p>
+                <p class="gate-meta">
+                    @_selected approves as the @_view.Space.Space owner (@_view.Space.Owner).
+                    Delegates resolve from the ERP delegation window; every refusal shows below.
+                </p>
+                <div class="gate-field">
+                    <label class="gate-label" for="kb-section">Section</label>
+                    <select class="gate-select" id="kb-section" @bind="_formSection">
+                        @foreach (var sec in _view.Sections)
+                        {
+                            <option value="@sec">@sec</option>
+                        }
+                    </select>
+                </div>
+                <div class="gate-field">
+                    <label class="gate-label" for="kb-kind">Change</label>
+                    <select class="gate-select" id="kb-kind" @bind="_formKind">
+                        <option value="@KbChangeKind.Add">Add</option>
+                        <option value="@KbChangeKind.Edit">Edit</option>
+                    </select>
+                </div>
+                <div class="gate-field">
+                    <label class="gate-label" for="kb-entry">Entry id</label>
+                    <input class="gate-input" id="kb-entry" @bind="_formEntryId" />
+                </div>
+                @if (IsWikiSection(_formSection))
+                {
+                    <div class="gate-field">
+                        <label class="gate-label" for="kb-title">Title</label>
+                        <input class="gate-input" id="kb-title" @bind="_formTitle" />
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="kb-body">Body (markdown)</label>
+                        <textarea class="gate-textarea" id="kb-body" rows="6" @bind="_formBody"></textarea>
+                    </div>
+                    <div class="gate-field">
+                        <label class="gate-label" for="kb-tags">Tags (comma-separated, optional)</label>
+                        <input class="gate-input" id="kb-tags" @bind="_formTags" />
+                    </div>
+                }
+                else
+                {
+                    <div class="gate-field">
+                        <label class="gate-label" for="kb-json">Entry JSON (full entry as authored)</label>
+                        <textarea class="gate-textarea" id="kb-json" rows="6" @bind="_formJson"></textarea>
+                    </div>
+                    <div class="gate-actions">
+                        <button class="gate-btn" disabled="@_busy" @onclick="LoadCurrentJsonAsync">Load current entry JSON</button>
+                    </div>
+                }
+                <div class="gate-field">
+                    <label class="gate-label" for="kb-reason">Reason (required, recorded on the version)</label>
+                    <input class="gate-input" id="kb-reason" @bind="_formReason" />
+                </div>
+                <div class="gate-actions">
+                    <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="PublishAsync">Publish as @_selected</button>
+                </div>
+                @if (_formError is not null)
+                {
+                    <ErrorBox Message="@_formError" />
+                }
+                @if (_outcome is not null)
+                {
+                    @if (_outcome.Ok)
+                    {
+                        <div class="gate-notice gate-notice-ok" role="alert">@_outcome.Message</div>
+                    }
+                    else
+                    {
+                        <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @_outcome.Message</div>
+                    }
+                }
+            </section>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string Space { get; set; } = string.Empty;
+
+    private KbSpaceVm? _view;
+    private string? _loadedSpace;
+    private KbSnapshot? _snapshot;
+    private IReadOnlyList<MemoFile> _memoFiles = [];
+    private IReadOnlyList<KbSpace> _spaces = [];
+    private IReadOnlyList<UserDto>? _users;
+    private string? _selected;
+    private string? _loadError;
+    private bool _loading = true;
+    private bool _busy;
+    private string _formSection = string.Empty;
+    private KbChangeKind _formKind = KbChangeKind.Add;
+    private string _formEntryId = string.Empty;
+    private string _formTitle = string.Empty;
+    private string _formBody = string.Empty;
+    private string _formTags = string.Empty;
+    private string _formJson = string.Empty;
+    private string _formReason = string.Empty;
+    private string? _formError;
+    private KbEditOutcome? _outcome;
+
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Acting.OnChange += OnActingChanged;
+        await ReloadAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_loading && !string.Equals(_loadedSpace, Space, StringComparison.Ordinal))
+        {
+            await ReloadAsync();
+        }
+    }
+
+    public void Dispose()
+    {
+        Acting.OnChange -= OnActingChanged;
+    }
+
+    private void OnActingChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            _outcome = null;
+            ResolveSelection();
+            StateHasChanged();
+        });
+    }
+
+    private string Subtitle() =>
+        _view is null ? "Loading…" : $"Owner {_view.Space.Owner} · {_view.Sections.Count} section(s) · version {_view.CurrentVersion}.";
+
+    private static bool IsWikiSection(string section) =>
+        KbCitations.WikiSections.Contains(section, StringComparer.Ordinal);
+
+    private KbUsedByVm UsedByFor(KbEntryVm entry) =>
+        UsedByIndex.FindUsedBy(entry.Section, entry.EntryId, _memoFiles);
+
+    private void ResolveSelection()
+    {
+        if (_users is null)
+        {
+            _selected = null;
+            return;
+        }
+
+        var current = Acting.CurrentUserId;
+        _selected = current is not null
+            && _users.Any(u => string.Equals(u.UserId, current, StringComparison.Ordinal))
+            ? current
+            : DecisionBoard.PickDefaultUserId(_users);
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        _outcome = null;
+        try
+        {
+            _spaces = await Kb.ListSpacesAsync();
+            _users = await UsersSvc.ListUsersAsync();
+            _memoFiles = await Memos.ListAsync();
+            _view = await Kb.BuildSpaceAsync(Space);
+            _snapshot = await Kb.LoadCurrentAsync();
+            _loadedSpace = Space;
+            if (string.IsNullOrEmpty(_formSection) || !_view.Sections.Contains(_formSection, StringComparer.Ordinal))
+            {
+                _formSection = _view.Sections.FirstOrDefault() ?? string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Governance KB space {Space} failed to load.", Space);
+            _loadError = $"Governance KB space failed to load: {ex.Message}";
+            _view = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        ResolveSelection();
+    }
+
+    private Task LoadCurrentJsonAsync()
+    {
+        _formError = null;
+        if (_snapshot is null)
+        {
+            _formError = "No snapshot loaded; refresh and try again.";
+            return Task.CompletedTask;
+        }
+
+        var json = KbEntries.EntryJson(_snapshot, _formSection, _formEntryId.Trim());
+        if (json is null)
+        {
+            _formError = $"No entry '{_formEntryId.Trim()}' in section '{_formSection}' at the current version.";
+            return Task.CompletedTask;
+        }
+
+        _formJson = json;
+        return Task.CompletedTask;
+    }
+
+    private async Task PublishAsync()
+    {
+        _formError = null;
+        _outcome = null;
+        if (_selected is null)
+        {
+            _formError = "No acting user is selected.";
+            return;
+        }
+
+        var entryId = _formEntryId.Trim();
+        if (entryId.Length == 0)
+        {
+            _formError = "Entry id is required.";
+            return;
+        }
+
+        string entryJson;
+        if (IsWikiSection(_formSection))
+        {
+            var tags = _formTags.Split(',')
+                .Select(t => t.Trim())
+                .Where(t => t.Length > 0)
+                .ToList();
+            entryJson = System.Text.Json.JsonSerializer.Serialize(
+                new KbWikiEntry(entryId, _formTitle.Trim(), _formBody, tags.Count == 0 ? null : tags), JsonOpts);
+        }
+        else
+        {
+            entryJson = _formJson;
+        }
+
+        _busy = true;
+        try
+        {
+            _outcome = await KbEdit.PublishAsync(
+                Space, _formSection, entryId, _formKind, entryJson, _formReason, _selected);
+            if (_outcome.Ok)
+            {
+                _formEntryId = string.Empty;
+                _formTitle = string.Empty;
+                _formBody = string.Empty;
+                _formTags = string.Empty;
+                _formJson = string.Empty;
+                _formReason = string.Empty;
+                _view = await Kb.BuildSpaceAsync(Space);
+                _snapshot = await Kb.LoadCurrentAsync();
+                _memoFiles = await Memos.ListAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Governance KB publish failed for space {Space}.", Space);
+            _formError = $"Publish failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
