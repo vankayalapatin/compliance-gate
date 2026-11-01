@@ -73,8 +73,8 @@ public sealed class EfCoreBatch3Tests
         await SeedScenarioSalesOrderAsync(fx);
         var so = await fx.Adapter.CreateSalesOrderAsync("USD",
             [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", Idem());
-        Assert.Equal("SO-2", so.SoNumber);
-        var seeded = await fx.Adapter.GetSalesOrderAsync("SO-1");
+        Assert.Equal("SO-0002", so.SoNumber);
+        var seeded = await fx.Adapter.GetSalesOrderAsync("SO-0001");
         Assert.NotNull(seeded);
         Assert.Equal(SalesOrderStatus.Created, seeded.Status);
         Assert.Equal("USD", seeded.Currency);
@@ -93,7 +93,7 @@ public sealed class EfCoreBatch3Tests
             [new SalesOrderLine("GLASS-1", 5)], "order-webhook", "order-webhook", key);
         var second = await fx.Adapter.CreateSalesOrderAsync("USD",
             [new SalesOrderLine("BAT-1", 99)], "order-webhook", "order-webhook", key);
-        Assert.Equal("SO-2", first.SoNumber);
+        Assert.Equal("SO-0002", first.SoNumber);
         Assert.Equal(first.SoNumber, second.SoNumber);
         var stored = await fx.Adapter.GetSalesOrderAsync(first.SoNumber);
         Assert.NotNull(stored);
@@ -221,11 +221,11 @@ public sealed class EfCoreBatch3Tests
     {
         fx.Db.SalesOrders.Add(new SalesOrderRow
         {
-            SoNumber = "SO-1", Status = nameof(SalesOrderStatus.Created), Currency = "USD"
+            SoNumber = "SO-0001", Status = nameof(SalesOrderStatus.Created), Currency = "USD"
         });
         fx.Db.SalesOrderLines.Add(new SalesOrderLineRow
         {
-            SoNumber = "SO-1", LineNo = 1, ItemId = "GLASS-1", Quantity = 7
+            SoNumber = "SO-0001", LineNo = 1, ItemId = "GLASS-1", Quantity = 7
         });
         await fx.Db.SaveChangesAsync();
     }
