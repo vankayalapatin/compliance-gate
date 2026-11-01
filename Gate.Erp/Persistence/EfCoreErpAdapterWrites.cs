@@ -100,8 +100,8 @@ public sealed partial class EfCoreErpAdapter
             default: throw new InvalidOperationException($"Unknown document {documentType} {documentNumber}.");
         }
         var routed = await _db.RoutedTo.FindAsync([documentType, documentNumber], ct).ConfigureAwait(false);
-        if (routed is null) _db.RoutedTo.Add(new RoutedToRow { DocumentType = documentType, DocumentNumber = documentNumber, RoutedTo = routedTo });
-        else routed.RoutedTo = routedTo;
+        if (routed is null) _db.RoutedTo.Add(new RoutedToRow { DocumentType = documentType, DocumentNumber = documentNumber, RoutedTo = routedTo, SubmittedBy = submittedBy });
+        else { routed.RoutedTo = routedTo; routed.SubmittedBy = submittedBy; }
         RecordReplay($"submit:{idempotencyKey}", OkPayload);
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
         await tx.CommitAsync(ct).ConfigureAwait(false);
@@ -961,6 +961,61 @@ public sealed partial class EfCoreErpAdapter
         await _db.SaveChangesAsync(ct).ConfigureAwait(false);
         await tx.CommitAsync(ct).ConfigureAwait(false);
         return posted;
+    }
+
+    public async Task<VendorDto> CreateVendorAsync(string? vendorId, string name, string countryOfOrigin, string paymentTermsId, string? email, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        var replay = await ReplayAsync<VendorDto>($"vendor:{idempotencyKey}", ct).ConfigureAwait(false);
+        if (replay is not null) return replay;
+        using var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Vendor name is required.");
+        if (string.IsNullOrWhiteSpace(countryOfOrigin)) throw new InvalidOperationException("Vendor country of origin is required.");
+        if (string.IsNullOrWhiteSpace(paymentTermsId)) throw new InvalidOperationException("Payment terms are required.");
+        _ = await _db.PaymentTerms.FindAsync([paymentTermsId], ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Unknown payment terms {paymentTermsId}.");
+        string id;
+        if (string.IsNullOrWhiteSpace(vendorId))
+        {
+            do { id = await NextAsync("V", ct).ConfigureAwait(false); }
+            while (await _db.Vendors.FindAsync([id], ct).ConfigureAwait(false) is not null);
+        }
+        else
+        {
+            id = vendorId;
+            if (await _db.Vendors.FindAsync([id], ct).ConfigureAwait(false) is not null)
+                throw new InvalidOperationException($"Vendor {id} already exists.");
+        }
+        _db.Vendors.Add(new VendorRow
+        {
+            VendorId = id, Name = name, CountryOfOrigin = countryOfOrigin,
+            IsBlocked = false, BlockReason = null, PaymentTermsId = paymentTermsId, Email = email
+        });
+        var vendor = new VendorDto(id, name, countryOfOrigin, false, null, paymentTermsId, email);
+        RecordReplay($"vendor:{idempotencyKey}", vendor);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+        return vendor;
+    }
+
+    public async Task<ItemDto> CreateItemAsync(string itemId, string description, string unit, bool isCritical, int unitsPerCarton, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        var replay = await ReplayAsync<ItemDto>($"item:{idempotencyKey}", ct).ConfigureAwait(false);
+        if (replay is not null) return replay;
+        using var tx = await _db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(itemId)) throw new InvalidOperationException("Item id is required.");
+        if (await _db.Items.FindAsync([itemId], ct).ConfigureAwait(false) is not null)
+            throw new InvalidOperationException($"Item {itemId} already exists.");
+        if (unitsPerCarton <= 0) throw new InvalidOperationException("Units per carton must be above zero.");
+        _db.Items.Add(new ItemRow
+        {
+            ItemId = itemId, Description = description, IsCritical = isCritical,
+            UnitsPerCarton = unitsPerCarton, Unit = unit
+        });
+        var item = new ItemDto(itemId, description, isCritical, unitsPerCarton, unit);
+        RecordReplay($"item:{idempotencyKey}", item);
+        await _db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct).ConfigureAwait(false);
+        return item;
     }
 
     public async Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default)
