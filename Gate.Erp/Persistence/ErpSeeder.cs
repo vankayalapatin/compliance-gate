@@ -7,7 +7,11 @@ namespace Gate.Erp;
 
 public static class ErpSeeder
 {
-    public static void SeedMasters(ErpDbContext db, ScenarioFile scenario, string soNumber, DateTimeOffset now)
+    /// <summary>Seeds masters only (currency, items, terms, vendors, banks,
+    /// prices, history, users, delegations, stock, BOM). Documents are never
+    /// inserted here: the loader creates every SO/PR/PO/ASN/receipt/invoice/
+    /// payment through adapter writes so all ERP validation is enforced.</summary>
+    public static void SeedMasters(ErpDbContext db, ScenarioFile scenario, DateTimeOffset now)
     {
         db.Config.Add(new ConfigRow { Key = EfCoreErpAdapter.BaseCurrencyKey, Value = scenario.Currency });
         db.Config.Add(new ConfigRow
@@ -27,16 +31,6 @@ public static class ErpSeeder
         {
             db.PaymentTerms.Add(new PaymentTermsRow { TermsId = terms.Id, NetDays = terms.NetDays });
         }
-        db.SalesOrders.Add(new SalesOrderRow
-        {
-            SoNumber = soNumber, Status = nameof(Gate.Contracts.SalesOrderStatus.Created), Currency = scenario.Currency
-        });
-        var soLine = 0;
-        db.SalesOrderLines.Add(new SalesOrderLineRow
-        {
-            SoNumber = soNumber, LineNo = ++soLine,
-            ItemId = scenario.SalesOrder.Item, Quantity = scenario.SalesOrder.Quantity
-        });
         foreach (var b in scenario.Bom)
         {
             db.BomLines.Add(new BomRow { ItemId = b.Item, ComponentItemId = b.Component, QtyPer = b.QtyPer });
@@ -101,6 +95,53 @@ public static class ErpSeeder
             });
         }
         db.SaveChanges();
+    }
+
+    /// <summary>Applies scenario number-sequence rules to the Sequences rows:
+    /// stores each prefix format and starts the counter at Start, or after
+    /// the max seeded number when seeded rows already run higher.</summary>
+    public static void ApplyNumberSequences(ErpDbContext db, IEnumerable<ScenarioNumberSequence> sequences)
+    {
+        foreach (var seq in sequences)
+        {
+            var next = Math.Max(seq.Start, MaxSeededNumber(db, seq.Prefix) + 1);
+            var row = db.Sequences.Find(seq.Prefix);
+            if (row is null)
+            {
+                db.Sequences.Add(new SequenceRow
+                {
+                    Name = seq.Prefix, Next = next, Format = seq.Format, Padding = seq.Padding
+                });
+            }
+            else
+            {
+                row.Next = next;
+                row.Format = seq.Format;
+                row.Padding = seq.Padding;
+            }
+        }
+        db.SaveChanges();
+    }
+
+    private static long MaxSeededNumber(ErpDbContext db, string prefix)
+    {
+        var max = 0L;
+        void Scan(string? number)
+        {
+            if (number is not null
+                && NumberSequences.TryParseNumber(prefix, number, out var n)
+                && n > max) max = n;
+        }
+        foreach (var n in db.SalesOrders.Select(s => s.SoNumber).ToList()) Scan(n);
+        foreach (var n in db.PurchaseRequisitions.Select(p => p.PrNumber).ToList()) Scan(n);
+        foreach (var n in db.PurchaseOrders.Select(p => p.PoNumber).ToList()) Scan(n);
+        foreach (var n in db.ShipmentReceipts.Select(r => r.ReceiptNumber).ToList()) Scan(n);
+        foreach (var n in db.Asns.Select(a => a.AsnNumber).ToList()) Scan(n);
+        foreach (var n in db.Holds.Select(h => h.HoldId).ToList()) Scan(n);
+        foreach (var n in db.Vendors.Select(v => v.VendorId).ToList()) Scan(n);
+        foreach (var n in db.Payments.Select(p => p.PaymentNumber).ToList()) Scan(n);
+        foreach (var n in db.VendorInvoices.Select(i => i.Voucher).ToList()) Scan(n);
+        return max;
     }
 
     public static void UpsertVendorPrice(ErpDbContext db, string vendorId, string itemId, decimal unitPrice)
