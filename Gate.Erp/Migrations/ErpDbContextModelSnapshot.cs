@@ -27,6 +27,8 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
         {
             b.Property<string>("Name").HasColumnType("TEXT");
             b.Property<long>("Next").HasColumnType("INTEGER");
+            b.Property<string>("Format").HasColumnType("TEXT");
+            b.Property<int>("Padding").HasColumnType("INTEGER");
             b.HasKey("Name");
             b.ToTable("Sequences", (string)null);
         });
@@ -516,6 +518,7 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("DocumentType").HasColumnType("TEXT");
             b.Property<string>("DocumentNumber").HasColumnType("TEXT");
             b.Property<string>("RoutedTo").HasColumnType("TEXT");
+            b.Property<string>("SubmittedBy").HasColumnType("TEXT");
             b.HasKey("DocumentType", "DocumentNumber");
             b.ToTable("RoutedTo", (string)null);
         });
