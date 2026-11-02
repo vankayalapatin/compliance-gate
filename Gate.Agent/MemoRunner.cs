@@ -50,6 +50,11 @@ public sealed class MemoRunner
     private readonly MemoWhatIfGather _gather;
     private readonly ILogger<MemoRunner> _logger;
     private readonly string _cacheDir;
+    private readonly TimeSpan _memoTimeout;
+
+    /// <summary>Code default when the caller passes no timeout. The app
+    /// passes MetaApi:MemoTimeoutSeconds from config instead.</summary>
+    public static readonly TimeSpan DefaultMemoTimeout = TimeSpan.FromSeconds(240);
 
     public MemoRunner(
         IErpAdapter erp,
@@ -57,7 +62,8 @@ public sealed class MemoRunner
         IComplianceEngine compliance,
         string cacheDir,
         ILogger<MemoRunner>? logger = null,
-        MemoWhatIfGather? gather = null)
+        MemoWhatIfGather? gather = null,
+        TimeSpan? memoTimeout = null)
     {
         _erp = erp;
         _models = models;
@@ -65,6 +71,7 @@ public sealed class MemoRunner
         _cacheDir = cacheDir;
         _logger = logger ?? NullLogger<MemoRunner>.Instance;
         _gather = gather ?? new MemoWhatIfGather(erp);
+        _memoTimeout = memoTimeout ?? DefaultMemoTimeout;
     }
 
     /// <summary>Ingests one inbox file into the memo store (idempotent).</summary>
@@ -147,14 +154,13 @@ public sealed class MemoRunner
         // snapshot (structured full plus top wiki), and reasoning models
         // can burn an 8000-token budget
         // thinking (observed live: truncated JSON, full starvation on
-        // long reasoning) before answering. 16000 tokens with an
-        // explicit 5-minute per-attempt timeout matches the proven demo
-        // wrapper; the 2-minute ResilientCalls default starves long
-        // reasoning completions.
+        // long reasoning) before answering. 16000 tokens with the memo
+        // timeout from config; the 2-minute ResilientCalls default starves
+        // long reasoning completions.
         var result = await ResilientCalls.CompleteWithRetryAsync(
             _models,
             new ModelRequest(prompt, MemoPrompts.SystemPrompt, MaxTokens: 16000),
-            _logger, $"memo proposal for {memoId}", TimeSpan.FromMinutes(5), ct).ConfigureAwait(false);
+            _logger, $"memo proposal for {memoId}", _memoTimeout, ct).ConfigureAwait(false);
 
         RuleProposal draft;
         string owner;
