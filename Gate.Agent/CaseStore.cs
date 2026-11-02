@@ -31,12 +31,22 @@ public static class CaseStore
     }
 
     /// <summary>Mints a deterministic filesystem-safe case id as
-    /// {scenario}-{soNumber}-{itemId} with unsafe chars replaced by '-'.
-    /// The safe set is fixed (letters, digits, dash, underscore, dot) so the
-    /// same inputs mint the same id on every OS.</summary>
+    /// {soNumber}-{itemId} (or {docType}-{docNumber} for document shells)
+    /// with unsafe chars replaced by '-'. The scenario segment is gone:
+    /// the first parameter stays only so older callers keep compiling and
+    /// is ignored. The safe set is fixed (letters, digits, dash,
+    /// underscore, dot) so the same inputs mint the same id on every OS.</summary>
     public static string MintCaseId(string scenario, string soNumber, string itemId)
     {
-        var raw = $"{scenario}-{soNumber}-{itemId}";
+        _ = scenario;
+        return MintCaseId(soNumber, itemId);
+    }
+
+    /// <summary>Mints a deterministic filesystem-safe case id as
+    /// {first}-{second} with unsafe chars replaced by '-'.</summary>
+    public static string MintCaseId(string first, string second)
+    {
+        var raw = $"{first}-{second}";
         var chars = raw.Select(c =>
             char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '-').ToArray();
         return new string(chars);
@@ -44,6 +54,30 @@ public static class CaseStore
 
     public static string CaseFilePath(string cacheDir, string caseId) =>
         Path.Combine(cacheDir, caseId + ".json");
+
+    /// <summary>Per-carton dock evidence sidecar: the reads plus the verdicts
+    /// from the case's dock evaluation, persisted next to the case file as
+    /// &lt;CaseId&gt;.dock.json. A sidecar file; never a case file.</summary>
+    public static string DockFilePath(string cacheDir, string caseId) =>
+        Path.Combine(cacheDir, caseId + ".dock.json");
+
+    public static DockEvidence? LoadDock(string cacheDir, string caseId)
+    {
+        var path = DockFilePath(cacheDir, caseId);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<DockEvidence>(File.ReadAllText(path), JsonOpts)
+            ?? throw new InvalidOperationException($"Dock file {path} did not parse as DockEvidence.");
+    }
+
+    public static void SaveDock(string cacheDir, DockEvidence evidence)
+    {
+        Directory.CreateDirectory(cacheDir);
+        File.WriteAllText(DockFilePath(cacheDir, evidence.CaseId), JsonSerializer.Serialize(evidence, JsonOpts));
+    }
 
     public static CaseFile? Load(string cacheDir, string caseId)
     {
@@ -70,13 +104,15 @@ public static class CaseStore
         }
 
         // Mail files (<CaseId>.mail.json), vendor-identity pendings
-        // (<CaseId>.vendor-identity.json), and memo files
-        // (<MemoId>.memo.json) share the dir but are not cases.
+        // (<CaseId>.vendor-identity.json), dock evidence sidecars
+        // (<CaseId>.dock.json), and memo files (<MemoId>.memo.json) share
+        // the dir but are not cases.
         return Directory.GetFiles(cacheDir, "*.json")
             .Select(Path.GetFileNameWithoutExtension)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Where(id => !id!.EndsWith(".mail", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".vendor-identity", StringComparison.Ordinal))
+            .Where(id => !id!.EndsWith(".dock", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".memo", StringComparison.Ordinal))
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList()!;
@@ -89,3 +125,12 @@ public static class CaseStore
     private static void WriteFile(string path, CaseFile file) =>
         File.WriteAllText(path, JsonSerializer.Serialize(file, JsonOpts));
 }
+
+/// <summary>Per-carton dock evidence for one case: the photo transcriptions
+/// plus the verdicts the dock check gave them. Persisted as a sidecar file
+/// (&lt;CaseId&gt;.dock.json) so older case files without one still load.</summary>
+public sealed record DockEvidence(
+    string CaseId,
+    IReadOnlyList<DockCartonRead> Reads,
+    IReadOnlyDictionary<string, IReadOnlyList<Verdict>> Verdicts,
+    DateTimeOffset RecordedAt);

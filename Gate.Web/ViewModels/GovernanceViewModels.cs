@@ -95,16 +95,52 @@ public static class GovernanceLabels
     public const string ShippedRuleGrounding = "Shipped rule; no proposal citations.";
 
     public const string DockNoCoverage =
-        "No dock evaluations in this run; dock-gate counts are zero.";
+        "No dock evaluations recorded; dock-gate counts are zero.";
 
     public static string DockCoverage(int files) =>
-        $"Dock evaluated in {files} case file(s) this run.";
+        $"Dock evaluated in {files} case(s).";
 
     public static string ScanLabel(int files) =>
-        $"this run ({files} case file(s) scanned)";
+        $"all cases ({files} scanned)";
 
     public static string NeedsReviewWhy(string proposalKb, string currentKb) =>
-        $"Proposal pins KB {proposalKb}; current is {currentKb}. Re-ground before relying on it.";
+        $"Proposal pins KB {KbDisplay.Version(proposalKb)}; current is {KbDisplay.Version(currentKb)}. Re-ground before relying on it.";
+}
+
+/// <summary>KB versions for display. Stored versions carry the kbvN file
+/// tag; surfaces show "version N" and keep the tag for routes only.</summary>
+public static class KbDisplay
+{
+    public static string Version(string? version)
+    {
+        if (!string.IsNullOrWhiteSpace(version)
+            && version!.StartsWith("kbv", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(version[3..], out var n))
+        {
+            return $"version {n}";
+        }
+
+        return string.IsNullOrWhiteSpace(version) ? "—" : version.Trim();
+    }
+
+    /// <summary>Activation ids for display: the embedded kbvN file tag
+    /// shows as "version N". Ids stay raw in routes and keys.</summary>
+    public static string Activation(string? activationId)
+    {
+        if (string.IsNullOrWhiteSpace(activationId))
+        {
+            return "—";
+        }
+
+        var segments = activationId!.Split('-');
+        if (segments.Length >= 2
+            && string.Equals(segments[0], "KB", StringComparison.OrdinalIgnoreCase))
+        {
+            segments[1] = Version(segments[1]);
+        }
+
+        return string.Join("-", segments);
+    }
 }
 
 /// <summary>Pure case-cache block scan. Counts timeline events that carry a

@@ -475,11 +475,12 @@ public sealed class CompanyKbVersioningTests
         Assert.Contains(rules, r => r.RuleId == "BAT-LI-01" && r.Gate == MemoRuleGate.Vendor);
         Assert.Contains(rules, r => r.RuleId == "BAT-LI-03" && r.Gate == MemoRuleGate.Dock);
         Assert.Contains(rules, r => r.RuleId == "ELEC-04" && r.Gate == MemoRuleGate.PrePay);
-        var adopted = DateOnly.Parse("2026-03-16");
-        Assert.Contains(rules, r => r.RuleId == "BAT-LI-01" && r.Owner == "Maya Planner" && r.AdoptedDate == adopted);
-        Assert.Contains(rules, r => r.RuleId == "ELEC-01" && r.Owner == "Dana Director" && r.AdoptedDate == adopted);
-        Assert.Contains(rules, r => r.RuleId == "SCR-01" && r.Owner == "Finn Finance" && r.AdoptedDate == adopted);
-        Assert.Contains(rules, r => r.RuleId == "CORP-02" && r.Owner == "Dana Director" && r.AdoptedDate == adopted);
+        var janAdopted = DateOnly.Parse("2026-01-01");
+        var corpAdopted = DateOnly.Parse("2026-10-01");
+        Assert.Contains(rules, r => r.RuleId == "BAT-LI-01" && r.Owner == "Maya Planner" && r.AdoptedDate == janAdopted);
+        Assert.Contains(rules, r => r.RuleId == "ELEC-01" && r.Owner == "Dana Director" && r.AdoptedDate == janAdopted);
+        Assert.Contains(rules, r => r.RuleId == "SCR-01" && r.Owner == "Finn Finance" && r.AdoptedDate == janAdopted);
+        Assert.Contains(rules, r => r.RuleId == "CORP-02" && r.Owner == "Dana Director" && r.AdoptedDate == corpAdopted);
     }
 
     [Fact]

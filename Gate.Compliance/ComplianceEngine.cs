@@ -62,6 +62,15 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         CancellationToken ct = default) =>
         EvaluateVendorWithExceptionAsync(vendor, item, documents, award, history, null, ct);
 
+    /// <summary>Document-rule check behind screening consequences: true
+    /// when the catalog carries the rule with a document kind. Unknown ids
+    /// (including the ERP-block marker) are not document rules.</summary>
+    public bool IsDocumentRule(string ruleId) =>
+        !string.IsNullOrWhiteSpace(ruleId)
+        && RuleCatalog.Rules.Any(r =>
+            string.Equals(r.RuleId, ruleId, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(r.DocumentKind));
+
     /// <summary>Vendor gate with an optional CORP-02 logged exception. The
     /// exception only excuses CORP-02, and only when it names this vendor,
     /// carries a named approver, and records a reason.</summary>
@@ -91,7 +100,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("ELEC-01")));
         verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("ELEC-02")));
         verdicts.Add(EvaluateScreening(vendor));
-        verdicts.Add(EvaluateOriginCap(vendor.VendorId, award, history, exception));
+        verdicts.Add(EvaluateOriginCap(vendor.VendorId, item, award, history, exception));
 
         return Task.FromResult<IReadOnlyList<Verdict>>(verdicts);
     }
@@ -136,8 +145,14 @@ public sealed partial class ComplianceEngine : IComplianceEngine
     }
 
     private Verdict EvaluateOriginCap(
-        string vendorId, ProposedAward award, IReadOnlyList<VolumeHistory> history, CorpExceptionApproval? exception)
+        string vendorId, ItemDto item, ProposedAward award, IReadOnlyList<VolumeHistory> history, CorpExceptionApproval? exception)
     {
+        if (!item.IsCritical)
+        {
+            return new Verdict(CorpOriginCapId, VerdictKind.Pass,
+                $"CORP-02 caps critical battery volume only; {award.ItemId} is not critical, so the cap is not applicable.", _corp.PolicySource);
+        }
+
         var total = history.Sum(h => h.Cells);
         if (total <= 0)
         {

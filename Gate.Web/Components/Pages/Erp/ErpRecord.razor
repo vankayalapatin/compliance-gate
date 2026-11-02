@@ -55,7 +55,6 @@
                             <span class="gate-badge">@badge</span>
                         }
                         <AgentBanner Source="@_record.SourceName" />
-                        <OriginChips Number="@_record.OriginNumber" Source="@null" Opening="@_record.OpeningNumbers" />
                     </div>
                 </div>
                 @foreach (var fact in _record.Header)
@@ -74,7 +73,7 @@
                 }
             </section>
 
-            @foreach (var table in _record.LineTables)
+            @foreach (var table in _record.LineTables.Where(t => RoleGating.TableVisible(_role, _record.Kind, t.Title)))
             {
                 <section class="gate-card">
                     <p class="gate-card-title">@table.Title</p>
@@ -155,12 +154,12 @@
                 </section>
             }
 
-            @if (_record.Actions.Count > 0)
+            @if (VisibleActions().Count > 0)
             {
                 <section class="gate-card">
                     <p class="gate-card-title">Actions (acting as @(Acting.CurrentUserId ?? "nobody selected"))</p>
                 </section>
-                @foreach (var action in _record.Actions)
+                @foreach (var action in VisibleActions())
                 {
                     <section class="gate-card">
                         <p class="gate-card-title">@action.Label</p>
@@ -228,8 +227,12 @@
 
     private ErpRecordVm? _record;
     private string? _loadError;
+    private string? _role;
     private ErpOutcome? _lastOutcome;
     private bool _busy;
+
+    private IReadOnlyList<ErpActionDef> VisibleActions() =>
+        _record?.Actions.Where(a => RoleGating.ActionVisible(_role, a.Id)).ToList() ?? [];
     private readonly Dictionary<string, Dictionary<string, string>> _inputs = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ErpOutcome> _outcomes = new(StringComparer.Ordinal);
 
@@ -276,19 +279,26 @@
     private void OnActingChanged()
     {
         // Service-raised event: marshal state touches and the render to the
-        // Dispatcher via InvokeAsync.
-        _ = InvokeAsync(StateHasChanged);
+        // Dispatcher via InvokeAsync. The continuation must stay on the
+        // renderer's sync context (no context escape).
+        _ = InvokeAsync(async () =>
+        {
+            await LoadRoleAsync();
+            StateHasChanged();
+        });
     }
 
     // The invoice route carries vendor plus number as its own segments,
-    // so Kind stays empty there: the effective kind recovers "invoice"
-    // from the route that matched. Without this every invoice opened from
-    // the invoices list failed as an unknown record kind.
+    // so Kind and Key arrive null there (Blazor overwrites their
+    // initializers with default(string) for unbound parameters): the
+    // effective kind recovers "invoice" from the route that matched.
+    // Without the null tolerance every invoice opened from the invoices
+    // list threw a NullReferenceException here.
     private string EffectiveKind() =>
-        Kind.Length > 0 ? Kind : (Vendor is not null && Number is not null ? "invoice" : Kind);
+        !string.IsNullOrEmpty(Kind) ? Kind : (Vendor is not null && Number is not null ? "invoice" : string.Empty);
 
     private string EffectiveKey() =>
-        EffectiveKind() == "invoice" && Vendor is not null && Number is not null ? Vendor : Key;
+        EffectiveKind() == "invoice" && Vendor is not null && Number is not null ? Vendor : (Key ?? string.Empty);
 
     private string? EffectiveKey2() =>
         EffectiveKind() == "invoice" && Vendor is not null && Number is not null ? Number : null;
@@ -303,12 +313,20 @@
             {
                 _loadError = $"Unknown ERP record kind '{EffectiveKind()}'.";
             }
+
+            await LoadRoleAsync();
         }
         catch (Exception ex)
         {
             Log.LogWarning(ex, "Record {Kind} {Key} failed to load.", EffectiveKind(), EffectiveKey());
             _loadError = $"Record {EffectiveKind()} {EffectiveKey()} failed to load: {ex.Message}";
         }
+    }
+
+    private async Task LoadRoleAsync()
+    {
+        var user = Acting.CurrentUserId;
+        _role = user is null ? null : await Views.GetUserRoleAsync(user);
     }
 
     private async Task AttemptAsync(string actionId)

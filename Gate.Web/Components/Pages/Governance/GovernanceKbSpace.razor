@@ -44,7 +44,7 @@
             }
             <p class="gate-meta">
                 Owner <strong>@_view.Space.Owner</strong> (@_view.Space.OwnerRole) ·
-                version <code>@_view.CurrentVersion</code> ·
+                version <code>@KbDisplay.Version(_view.CurrentVersion)</code> ·
                 acting as <strong>@(_selected ?? "—")</strong>.
             </p>
             @foreach (var sec in _view.Sections)
@@ -70,11 +70,11 @@
                                         <td>@entry.Summary</td>
                                         <td>@(entry.Owner ?? "—")</td>
                                         <td>@(entry.Status ?? "—")</td>
-                                        <td>@(entry.Version ?? "—")</td>
+                                        <td>@KbDisplay.Version(entry.Version)</td>
                                         <td>@(entry.Effective ?? "—")</td>
-                                        <td>@(entry.CreatedBy is null ? "—" : $"{entry.CreatedBy} · {entry.CreatedAt}")</td>
-                                        <td>@(entry.ModifiedBy is null ? "—" : $"{entry.ModifiedBy} · {entry.ModifiedAt}")</td>
-                                        <td>@(entry.ApprovedBy ?? "—")</td>
+                                        <td>@StampByAt(entry.CreatedBy, entry.CreatedAt)</td>
+                                        <td>@StampByAt(entry.ModifiedBy, entry.ModifiedAt)</td>
+                                        <td>@ActorLabels.Display(entry.ApprovedBy)</td>
                                         <td>
                                             @if (usedBy.Proposals.Count == 0 && usedBy.Activations.Count == 0)
                                             {
@@ -99,8 +99,9 @@
             <section class="gate-card">
                 <p class="gate-card-title">Add or edit an entry</p>
                 <p class="gate-meta">
-                    @_selected approves as the @_view.Space.Space owner (@_view.Space.Owner).
-                    Delegates resolve from the ERP delegation window; every refusal shows below.
+                    Only the @_view.Space.Space owner (@_view.Space.Owner) or their active dated delegate
+                    can approve this publish. You are acting as @(_selected ?? "nobody selected");
+                    anyone else is refused below.
                 </p>
                 <div class="gate-field">
                     <label class="gate-label" for="kb-section">Section</label>
@@ -140,11 +141,11 @@
                 else
                 {
                     <div class="gate-field">
-                        <label class="gate-label" for="kb-json">Entry JSON (full entry as authored)</label>
+                        <label class="gate-label" for="kb-json">Entry source (full entry as authored)</label>
                         <textarea class="gate-textarea" id="kb-json" rows="6" @bind="_formJson"></textarea>
                     </div>
                     <div class="gate-actions">
-                        <button class="gate-btn" disabled="@_busy" @onclick="LoadCurrentJsonAsync">Load current entry JSON</button>
+                        <button class="gate-btn" disabled="@_busy" @onclick="LoadCurrentJsonAsync">Load current entry</button>
                     </div>
                 }
                 <div class="gate-field">
@@ -152,7 +153,7 @@
                     <input class="gate-input" id="kb-reason" @bind="_formReason" />
                 </div>
                 <div class="gate-actions">
-                    <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="PublishAsync">Publish as @_selected</button>
+                    <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="PublishAsync">Publish</button>
                 </div>
                 @if (_formError is not null)
                 {
@@ -231,7 +232,14 @@
     }
 
     private string Subtitle() =>
-        _view is null ? "Loading…" : $"Owner {_view.Space.Owner} · {_view.Sections.Count} section(s) · version {_view.CurrentVersion}.";
+        _view is null
+            ? "Loading…"
+            : $"Owner {_view.Space.Owner} · {_view.Sections.Count} section(s) · {KbDisplay.Version(_view.CurrentVersion)}.";
+
+    private static string StampByAt(string? by, string? at) =>
+        by is null && at is null
+            ? "—"
+            : $"{ActorLabels.Display(by)}{(at is null ? string.Empty : $" · {at}")}";
 
     private static bool IsWikiSection(string section) =>
         KbCitations.WikiSections.Contains(section, StringComparer.Ordinal);

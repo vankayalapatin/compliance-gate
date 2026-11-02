@@ -46,6 +46,14 @@ public interface IComplianceEngine
         PrePayState state,
         CancellationToken ct = default);
 
+    /// <summary>True when the rule id names a document-presence rule (its
+    /// pack entry carries a document kind). Screening failures on document
+    /// rules alone lose the award without a vendor-master block: a vendor
+    /// missing this lot's papers cannot supply it but stays buyable for
+    /// its own trade. Unknown ids are not document rules.</summary>
+    bool IsDocumentRule(string ruleId) =>
+        throw new NotSupportedException("IsDocumentRule is implemented by the compliance engine.");
+
     // Memo-to-rule seam. The agent orchestrates (Spark proposes, humans
     // decide); every method below is deterministic C# over the Memo core.
     // Defaults throw so existing fakes compile; the engine overrides all.

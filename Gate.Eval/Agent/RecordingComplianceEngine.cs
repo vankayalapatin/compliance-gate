@@ -58,6 +58,8 @@ internal sealed class RecordingComplianceEngine : IComplianceEngine
         return _inner.EvaluatePaymentAsync(state, ct);
     }
 
+    public bool IsDocumentRule(string ruleId) => _inner.IsDocumentRule(ruleId);
+
     public Task<KbSnapshot> LoadKbSnapshotAsync(CancellationToken ct = default)
     {
         _ = ct;

@@ -1,0 +1,76 @@
+@page "/admin"
+@rendermode InteractiveServer
+@using Gate.Web.Components.Outside
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject SimulationUiService Sim
+@inject ModelSpendTracker Spend
+@inject ILogger<Admin> Log
+
+<PageTitle>Admin</PageTitle>
+
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Admin</p>
+        <p class="gate-page-sub">Operator controls: saved data, ERP-work pickup, answers mode, and spend.</p>
+    </div>
+</div>
+
+<section class="gate-card">
+    <p class="gate-card-title">Saved data</p>
+    <p class="gate-meta">Restore wipes the live workspace and copies the saved opening data back in. It runs no loader and no model call.</p>
+    <ReplayControls @rendermode="InteractiveServer" />
+</section>
+
+<section class="gate-card">
+    <p class="gate-card-title">ERP work</p>
+    <p class="gate-meta">Pick up actionable ERP documents (approved requisitions without an order, supplier-leg orders, received invoices) into live cases. Adoption only; zero model calls.</p>
+    <div class="gate-actions">
+        <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="PickupAsync">Pick up ERP work</button>
+        @if (_busy)
+        {
+            <span class="gate-meta">Working…</span>
+        }
+    </div>
+    <OutcomeBox Outcome="@_pickup" />
+</section>
+
+<section class="gate-card">
+    <p class="gate-card-title">Model spend</p>
+    <p class="gate-row"><span class="gate-label">This session:</span> @Spend.Summary</p>
+    <p class="gate-row"><span class="gate-label">Live calls:</span> @Spend.LiveCallCount</p>
+    @if (Spend.CallsByModel.Count > 0)
+    {
+        <ul class="gate-list">
+            @foreach (var kv in Spend.CallsByModel.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                <li>@kv.Key: @kv.Value call(s)</li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    private bool _busy;
+    private SimulationOutcome? _pickup;
+
+    private async Task PickupAsync()
+    {
+        _busy = true;
+        _pickup = null;
+        try
+        {
+            var company = await Sim.GetCompanyAsync();
+            _pickup = await Sim.PickUpErpWorkAsync(company?.EntityCode);
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "ERP-work pickup failed.");
+            _pickup = new SimulationOutcome(false, $"ERP-work pickup failed: {ex.Message}.", [], []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

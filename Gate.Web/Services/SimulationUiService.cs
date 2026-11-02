@@ -1,17 +1,16 @@
 // UI-side driver for the simulation endpoints. The outside-world surface
 // (customer shop, supplier inbox, dock camera) offers option lists built
-// from runtime sources only (scenario file, run manifest, case cache, dock
-// image directory, ERP adapter) and posts the human's external inputs
-// (shop orders, shipment notices, camera photos, supplier invoices, vendor
-// replies) to the existing endpoints in SimulationEndpoints.cs. This
-// service never sequences internal logic: the endpoints run, then advance,
-// and this layer only shapes the outcome for display. Failures and
-// refusals surface with the path, status, and body excerpt (the UI
-// sanitizes paths to friendly flow names); nothing is silently omitted.
+// from runtime sources only (ERP adapter, case cache, dock image
+// directory) and posts the human's external inputs (shop orders, shipment
+// notices, camera photos, supplier invoices, vendor replies) to the
+// existing endpoints in SimulationEndpoints.cs. This service never
+// sequences internal logic: the endpoints run, then advance, and this
+// layer only shapes the outcome for display. Failures and refusals surface
+// with the path, status, and body excerpt (the UI sanitizes paths to
+// friendly flow names); nothing is silently omitted.
 using System.Text.Json;
 using Gate.Agent;
 using Gate.Contracts;
-using Gate.Erp;
 using Gate.Web.ViewModels;
 
 namespace Gate.Web.Services;
@@ -40,7 +39,6 @@ public sealed class SimulationUiService
     private readonly IErpAdapter _erp;
     private readonly CaseCacheStore _cases;
     private readonly DockPhotoService _photos;
-    private readonly IConfiguration _config;
     private readonly ILogger<SimulationUiService> _log;
 
     public SimulationUiService(
@@ -48,22 +46,43 @@ public sealed class SimulationUiService
         IErpAdapter erp,
         CaseCacheStore cases,
         DockPhotoService photos,
-        IConfiguration config,
         ILogger<SimulationUiService> log)
     {
         _http = http;
         _erp = erp;
         _cases = cases;
         _photos = photos;
-        _config = config;
         _log = log;
     }
 
     public async Task<SimulateOptions> GetOptionsAsync(CancellationToken ct = default)
     {
         var notes = new List<string>();
-        var scenario = ReadScenario(notes);
-        var (soNumbers, poNumbers) = ReadManifestNumbers(notes);
+
+        var entityCode = string.Empty;
+        var currency = string.Empty;
+        try
+        {
+            var company = await _erp.GetCompanyInfoAsync(ct).ConfigureAwait(false);
+            if (company is null)
+            {
+                notes.Add("ERP has no company info; order and currency options are empty.");
+            }
+            else
+            {
+                entityCode = company.EntityCode;
+                currency = company.Currency;
+            }
+        }
+        catch (NotSupportedException ex)
+        {
+            _log.LogWarning(ex, "Company info is not implemented by the ERP layer yet.");
+            notes.Add("Company info is not implemented by the ERP layer yet.");
+        }
+        catch (Exception ex)
+        {
+            notes.Add($"ERP company info failed: {ex.Message}.");
+        }
 
         IReadOnlyList<UserDto> users = [];
         try
@@ -87,6 +106,24 @@ public sealed class SimulationUiService
             notes.Add($"ERP vendor list failed: {ex.Message}.");
         }
 
+        IReadOnlyList<ItemOption> items = [];
+        try
+        {
+            items = (await _erp.GetItemsAsync(ct).ConfigureAwait(false))
+                .OrderBy(i => i.ItemId, StringComparer.Ordinal)
+                .Select(i => new ItemOption(i.ItemId, i.Unit))
+                .ToList();
+        }
+        catch (NotSupportedException ex)
+        {
+            _log.LogWarning(ex, "Item list is not implemented by the ERP layer yet.");
+            notes.Add("Item list is not implemented by the ERP layer yet.");
+        }
+        catch (Exception ex)
+        {
+            notes.Add($"ERP item list failed: {ex.Message}.");
+        }
+
         IReadOnlyList<CaseOption> cases = [];
         try
         {
@@ -99,14 +136,52 @@ public sealed class SimulationUiService
         }
         catch (Exception ex)
         {
-            notes.Add($"Case cache list failed: {ex.Message}.");
+            notes.Add($"Case list failed: {ex.Message}.");
+        }
+
+        // Sourcing candidates are the vendors carrying a price for the
+        // item; screening then picks the winner from those. Items nobody
+        // prices (like our own finished goods) carry no candidates. If the
+        // priced-vendor read fails, every vendor stays a candidate and the
+        // PO step still recovers to a priced vendor on refusal.
+        var vendorIds = vendors
+            .Select(v => v.VendorId)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        var candidates = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var item in items)
+        {
+            try
+            {
+                candidates[item.ItemId] =
+                    await _erp.GetPricedVendorIdsAsync(item.ItemId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                notes.Add($"ERP priced vendors for {item.ItemId} failed: {ex.Message}; every vendor stays a candidate.");
+                candidates[item.ItemId] = vendorIds;
+            }
         }
 
         return new SimulateOptions(
-            scenario.Name, scenario.Currency, soNumbers, poNumbers, users, vendors,
-            cases, scenario.CartonIds, ListDockImages(notes), scenario.Items,
-            scenario.Candidates, notes, scenario.CartonDetails,
-            scenario.SalesOrderItem, scenario.SalesOrderQuantity);
+            entityCode, currency, users, vendors, cases,
+            ListDockImages(notes), items, candidates, notes);
+    }
+
+    /// <summary>Company identity for headers and sender context, or null
+    /// when the ERP layer serves none. Failures log and yield null;
+    /// callers render without the company line.</summary>
+    public async Task<CompanyInfoDto?> GetCompanyAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            return await _erp.GetCompanyInfoAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Company info lookup failed.");
+            return null;
+        }
     }
 
     public async Task<SimulationOutcome> SendOrderAsync(
@@ -117,45 +192,48 @@ public sealed class SimulationUiService
             return Refusal("No order submission was provided.");
         }
 
-        if (string.IsNullOrWhiteSpace(submission.SoNumber))
+        if (string.IsNullOrWhiteSpace(submission.EntityCode))
         {
-            return Refusal("SO number is required; pick a seeded order or type a new shop order id.");
+            return Refusal("Company code is required; reload the options when the ERP serves company info.");
         }
 
-        if (string.IsNullOrWhiteSpace(submission.ScenarioName))
+        if (string.IsNullOrWhiteSpace(submission.ShopOrderId))
         {
-            return Refusal("Scenario name is required; reload the options when the scenario file is present.");
+            return Refusal("Shop order id is required.");
         }
 
-        List<SalesOrderLine>? lines = null;
-        if (submission.Lines is not null && submission.Lines.Count > 0)
+        if (submission.Lines is null || submission.Lines.Count == 0)
         {
-            if (string.IsNullOrWhiteSpace(submission.Currency))
+            return Refusal("Add at least one order line; the ERP cannot mint an empty order.");
+        }
+
+        if (string.IsNullOrWhiteSpace(submission.Currency))
+        {
+            return Refusal(
+                $"Shop order {submission.ShopOrderId.Trim()} carries lines but no currency; the ERP cannot mint the sales order without one.");
+        }
+
+        var lines = new List<SalesOrderLine>();
+        foreach (var line in submission.Lines)
+        {
+            if (string.IsNullOrWhiteSpace(line.ItemId))
             {
-                return Refusal(
-                    $"New shop order {submission.SoNumber.Trim()} carries lines but no currency; the ERP cannot mint the SO without one.");
+                return Refusal("Every order line needs an item.");
             }
 
-            lines = [];
-            foreach (var line in submission.Lines)
+            if (line.Quantity <= 0)
             {
-                if (string.IsNullOrWhiteSpace(line.ItemId))
-                {
-                    return Refusal("Every new-order line needs an item.");
-                }
-
-                if (line.Quantity <= 0)
-                {
-                    return Refusal($"New-order line for {line.ItemId} needs a quantity above zero.");
-                }
-
-                lines.Add(new SalesOrderLine(line.ItemId.Trim(), line.Quantity));
+                return Refusal($"Order line for {line.ItemId} needs a quantity above zero.");
             }
+
+            lines.Add(new SalesOrderLine(line.ItemId.Trim(), line.Quantity));
         }
 
+        // The entity code travels in the webhook's compat name slot so new
+        // cases link the company.
         var input = new OrderWebhookInput(
-            submission.ScenarioName.Trim(),
-            submission.SoNumber.Trim(),
+            submission.EntityCode.Trim(),
+            submission.ShopOrderId.Trim(),
             BlankToNull(submission.Requester),
             submission.CandidateVendorsByItem,
             FreshKey(),
@@ -167,16 +245,16 @@ public sealed class SimulationUiService
     /// <summary>Asks the agent to pick up ERP work: approved PRs without a
     /// PO, supplier-leg POs, and received invoices each get a live case.
     /// Adoption only, zero live model calls; the touched case ids link on
-    /// to Cases. A blank scenario is refused before any POST.</summary>
+    /// to Cases. A blank company code is refused before any POST.</summary>
     public async Task<SimulationOutcome> PickUpErpWorkAsync(
-        string? scenarioName, CancellationToken ct = default)
+        string? entityCode, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(scenarioName))
+        if (string.IsNullOrWhiteSpace(entityCode))
         {
-            return Refusal("Scenario name is required; reload the options when the scenario file is present.");
+            return Refusal("Company code is required; reload the options when the ERP serves company info.");
         }
 
-        return await PostAsync(PickupPath, new { scenario = scenarioName.Trim() }, ParsePickup, ct)
+        return await PostAsync(PickupPath, new { entityCode = entityCode.Trim() }, ParsePickup, ct)
             .ConfigureAwait(false);
     }
 
@@ -202,7 +280,7 @@ public sealed class SimulationUiService
 
         var shopId = $"SHOP-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
         var outcome = await SendOrderAsync(new OrderSubmission(
-            submission.ScenarioName, shopId, submission.Requester,
+            submission.EntityCode, shopId, submission.Requester,
             submission.CandidateVendorsByItem,
             submission.Lines, submission.Currency), ct).ConfigureAwait(false);
         if (!outcome.Ok)
@@ -578,9 +656,10 @@ public sealed class SimulationUiService
     {
         var notes = new List<string>();
         InboxPoVm? po;
+        PurchaseOrder? order;
         try
         {
-            var order = await _erp.GetPurchaseOrderAsync(poNumber, ct).ConfigureAwait(false);
+            order = await _erp.GetPurchaseOrderAsync(poNumber, ct).ConfigureAwait(false);
             if (order is null)
             {
                 return null;
@@ -594,13 +673,13 @@ public sealed class SimulationUiService
             notes.Add($"PO {poNumber} read failed: {ex.Message}.");
             return new SupplierInboxVm(
                 string.Empty, null, [], null, null,
-                new ReplySuggestion(null, null, null), notes);
+                new ReplySuggestion(null, null, null), notes, [], SupplierNextAction.Unknown);
         }
 
         var caseId = await FindCaseIdForPoAsync(poNumber, ct).ConfigureAwait(false);
         if (caseId is null)
         {
-            notes.Add($"No case links PO {poNumber} yet; acknowledgement, shipping, and invoicing wait for the case. Run 'Pick up ERP work' above once its approvals land.");
+            notes.Add($"No case links PO {poNumber} yet; acknowledgement, shipping, and invoicing wait for the case. Run 'Pick up ERP work' on the Admin page once its approvals land.");
         }
 
         var resolved = caseId ?? string.Empty;
@@ -612,13 +691,114 @@ public sealed class SimulationUiService
             : await SuggestReplyAsync(resolved, ct).ConfigureAwait(false);
 
         var asn = await BuildShipPrefillAsync(resolved, po, notes, ct).ConfigureAwait(false);
+        // The supplier invoice number arrives blank: the supplier types it
+        // as printed. Lines mirror ordered qty/price as editable rows.
         var invoice = new InvoicePrefill(
-            $"INV-{po.PoNumber}",
+            string.Empty,
             po.VendorId,
             po.PoNumber,
             po.Lines.Select(l => new InvoiceLineForm(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList());
+        var (sent, next) = await BuildSentStateAsync(order!, resolved, notes, ct).ConfigureAwait(false);
 
-        return new SupplierInboxVm(resolved, po, mail, asn, invoice, reply, notes);
+        return new SupplierInboxVm(resolved, po, mail, asn, invoice, reply, notes, sent, next);
+    }
+
+    /// <summary>Sent history plus the next supplier action for one PO, read
+    /// from the ERP documents (confirmation, ASNs, invoices) and the case
+    /// file (ASN received dates). Doc-read failures land in Notes and fall
+    /// back to Unknown, which keeps every action visible.</summary>
+    private async Task<(IReadOnlyList<SupplierSentStep> Sent, string Next)> BuildSentStateAsync(
+        PurchaseOrder order, string caseId, List<string> notes, CancellationToken ct)
+    {
+        IReadOnlyList<CaseEvent> events = [];
+        if (!string.IsNullOrEmpty(caseId))
+        {
+            try
+            {
+                var file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
+                events = file?.Events ?? [];
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Case events failed to load for {Case}.", caseId);
+                notes.Add("Case history failed to load; shipment dates may be missing.");
+            }
+        }
+
+        VendorConfirmation? confirmation;
+        IReadOnlyList<AsnDto> asns;
+        IReadOnlyList<VendorInvoice> invoices;
+        try
+        {
+            confirmation = await _erp.GetVendorConfirmationAsync(order.PoNumber, ct).ConfigureAwait(false);
+            asns = (await _erp.GetAsnsAsync(ct).ConfigureAwait(false))
+                .Where(a => string.Equals(a.PoNumber, order.PoNumber, StringComparison.Ordinal))
+                .OrderBy(a => a.AsnNumber, StringComparer.Ordinal)
+                .ToList();
+            invoices = (await _erp.GetVendorInvoicesAsync(ct).ConfigureAwait(false))
+                .Where(i => string.Equals(i.PoNumber, order.PoNumber, StringComparison.Ordinal))
+                .OrderBy(i => i.SupplierInvoiceNumber, StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Sent history failed to load for PO {Po}.", order.PoNumber);
+            notes.Add($"Sent history for PO {order.PoNumber} failed to load: {ex.Message}.");
+            return ([], SupplierNextAction.Unknown);
+        }
+
+        var sent = new List<SupplierSentStep>();
+        if (confirmation is not null)
+        {
+            sent.Add(new SupplierSentStep(
+                "Acknowledged", $"Confirmed for {confirmation.ConfirmDate:yyyy-MM-dd}."));
+        }
+
+        var asnEvents = events.Where(e => e.Kind == CaseEventKind.AsnRecorded).ToList();
+        foreach (var asn in asns)
+        {
+            var at = asnEvents.FirstOrDefault(e =>
+                    string.Equals(e.DocumentNumber, asn.AsnNumber, StringComparison.Ordinal))?.Timestamp
+                ?? (asnEvents.Count == 1 ? asnEvents[0].Timestamp : null);
+            sent.Add(new SupplierSentStep(
+                "Shipment notice",
+                at is null ? $"{asn.AsnNumber} received." : $"{asn.AsnNumber} received {at.Value:yyyy-MM-dd}."));
+        }
+
+        foreach (var inv in invoices)
+        {
+            sent.Add(new SupplierSentStep(
+                "Invoice",
+                inv.CreatedAt is null
+                    ? $"{inv.SupplierInvoiceNumber} received."
+                    : $"{inv.SupplierInvoiceNumber} received {inv.CreatedAt.Value:yyyy-MM-dd}."));
+        }
+
+        if (string.IsNullOrEmpty(caseId))
+        {
+            return (sent, SupplierNextAction.WaitCase);
+        }
+
+        if (order.DocStatus is PoDocStatus.Closed or PoDocStatus.Cancelled
+            || order.ApprovalStatus == PoApprovalStatus.Cancelled)
+        {
+            return (sent, SupplierNextAction.Closed);
+        }
+
+        var acknowledged = confirmation is not null || order.ApprovalStatus == PoApprovalStatus.Confirmed;
+        if (!acknowledged)
+        {
+            return (sent, order.ApprovalStatus == PoApprovalStatus.Approved
+                ? SupplierNextAction.Acknowledge
+                : SupplierNextAction.WaitApproval);
+        }
+
+        if (asns.Count == 0)
+        {
+            return (sent, SupplierNextAction.Ship);
+        }
+
+        return (sent, invoices.Count == 0 ? SupplierNextAction.Invoice : SupplierNextAction.Done);
     }
 
     /// <summary>Supplier-inbox prefill for one case: resolves the case PO and
@@ -639,7 +819,8 @@ public sealed class SimulationUiService
             var reply = await SuggestReplyAsync(caseId, ct).ConfigureAwait(false);
             return new SupplierInboxVm(
                 caseId, null, mail, null, null, reply,
-                ["No PO on this case yet; the supplier waits for our order."]);
+                ["No PO on this case yet; the supplier waits for our order."],
+                [], SupplierNextAction.WaitCase);
         }
 
         return await GetSupplierInboxForPoAsync(file.Case.PoNumber, ct).ConfigureAwait(false);
@@ -689,10 +870,12 @@ public sealed class SimulationUiService
         }
 
         var cartons = OutsideShipPlan.Build(
-            po.PoNumber, po.Lines,
+            po.Lines,
             itemId => packs.TryGetValue(itemId, out var units) ? units : null,
             notes);
-        return new AsnSubmission(caseId, $"ASN-{po.PoNumber}", $"PACK-{po.PoNumber}", cartons);
+        // The ASN number and packing-slip number arrive blank: the supplier
+        // types them as printed when shipping. Nothing derives from the PO.
+        return new AsnSubmission(caseId, string.Empty, string.Empty, cartons);
     }
 
     /// <summary>Expected trucks at the dock: unreceived ASNs from the ERP
@@ -733,31 +916,94 @@ public sealed class SimulationUiService
         }
 
         var trucks = new List<ExpectedTruckVm>();
-        foreach (var asn in asns)
+        var listed = new HashSet<string>(StringComparer.Ordinal);
+
+        // Cases awaiting dock evidence: the ASN intake posts the receipt in
+        // the same step, so "unreceived" alone would hide every case truck.
+        // A case truck stays while its cartons lack verdicts, while dock
+        // reviews pend, or while holds keep lots back (reshot may follow).
+        foreach (var file in files.Where(f => !string.IsNullOrEmpty(f.Case.AsnNumber)))
         {
-            string? vendor = null;
+            AsnDto? asn;
             try
             {
-                var po = await _erp.GetPurchaseOrderAsync(asn.PoNumber, ct).ConfigureAwait(false);
-                vendor = po?.VendorId;
+                asn = await _erp.GetAsnAsync(file.Case.AsnNumber!, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _log.LogWarning(ex, "PO lookup failed for ASN {Asn}.", asn.AsnNumber);
-                notes.Add($"PO {asn.PoNumber} for truck {asn.AsnNumber} failed: {ex.Message}.");
+                _log.LogWarning(ex, "ASN lookup failed for case {Case}.", file.Case.CaseId);
+                notes.Add($"ASN {file.Case.AsnNumber} for case {file.Case.CaseId} failed: {ex.Message}.");
+                continue;
             }
 
+            if (asn is null)
+            {
+                notes.Add($"ASN {file.Case.AsnNumber} for case {file.Case.CaseId} is missing from the ERP.");
+                continue;
+            }
+
+            var docked = file.Events.Any(e => e.Kind == CaseEventKind.DockEvaluated);
+            var pendingReview = file.Decisions.Any(d =>
+                d.Status == DecisionStatus.Pending
+                && d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview);
+            var openHolds = false;
+            if (file.Case.ReceiptNumber is not null)
+            {
+                try
+                {
+                    openHolds = (await _erp.GetOpenHoldsAsync(file.Case.ReceiptNumber, ct).ConfigureAwait(false))
+                        .Count > 0;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Hold lookup failed for receipt {Receipt}.", file.Case.ReceiptNumber);
+                    notes.Add($"Hold check for receipt {file.Case.ReceiptNumber} failed: {ex.Message}.");
+                }
+            }
+
+            if (docked && !pendingReview && !openHolds)
+            {
+                continue;
+            }
+
+            trucks.Add(new ExpectedTruckVm(
+                asn.AsnNumber, asn.PoNumber, await VendorForAsnAsync(asn, notes, ct).ConfigureAwait(false),
+                file.Case.CaseId,
+                asn.Cartons.Select(c => new ExpectedTruckCarton(
+                    c.CartonId, c.ItemId, c.UnitsPerCarton, c.LotRef)).ToList()));
+            listed.Add(asn.AsnNumber);
+        }
+
+        // Orphan unreceived ASNs (no case yet): photos wait for the case.
+        foreach (var asn in asns.Where(a => !listed.Contains(a.AsnNumber)))
+        {
             var linked = files.FirstOrDefault(f =>
                     string.Equals(f.Case.AsnNumber, asn.AsnNumber, StringComparison.Ordinal))
                 ?? files.FirstOrDefault(f =>
                     string.Equals(f.Case.PoNumber, asn.PoNumber, StringComparison.Ordinal));
             trucks.Add(new ExpectedTruckVm(
-                asn.AsnNumber, asn.PoNumber, vendor, linked?.Case.CaseId,
+                asn.AsnNumber, asn.PoNumber, await VendorForAsnAsync(asn, notes, ct).ConfigureAwait(false),
+                linked?.Case.CaseId,
                 asn.Cartons.Select(c => new ExpectedTruckCarton(
                     c.CartonId, c.ItemId, c.UnitsPerCarton, c.LotRef)).ToList()));
         }
 
         return new ExpectedTrucks(trucks, notes);
+    }
+
+    private async Task<string?> VendorForAsnAsync(AsnDto asn, List<string> notes, CancellationToken ct)
+    {
+        try
+        {
+            var po = await _erp.GetPurchaseOrderAsync(asn.PoNumber, ct).ConfigureAwait(false);
+            return po?.VendorId;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "PO lookup failed for ASN {Asn}.", asn.AsnNumber);
+            notes.Add($"PO {asn.PoNumber} for truck {asn.AsnNumber} failed: {ex.Message}.");
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<PoLineOption>> GetPoLinesAsync(
@@ -1084,194 +1330,6 @@ public sealed class SimulationUiService
             .Where(s => s.Length > 0)
             .ToList();
     }
-
-    private sealed record ScenarioBits(
-        string Name,
-        string Currency,
-        IReadOnlyList<string> CartonIds,
-        IReadOnlyList<ItemOption> Items,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> Candidates,
-        IReadOnlyList<CartonOption> CartonDetails,
-        string SalesOrderItem,
-        decimal SalesOrderQuantity);
-
-    private ScenarioBits ReadScenario(List<string> notes)
-    {
-        var empty = new ScenarioBits(
-            string.Empty, string.Empty, [], [],
-            new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal),
-            [], string.Empty, 0m);
-        try
-        {
-            var path = ScenarioLoader.ResolvePath(ScenarioEndpoints.ScenarioPath(_config));
-            if (!File.Exists(path))
-            {
-                notes.Add("No scenario file; order, carton, and candidate options are empty until one loads.");
-                return empty;
-            }
-
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            var root = doc.RootElement;
-            var name = root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
-                ? n.GetString() ?? string.Empty
-                : string.Empty;
-            var currency = root.TryGetProperty("currency", out var c) && c.ValueKind == JsonValueKind.String
-                ? c.GetString() ?? string.Empty
-                : string.Empty;
-            var cartons = new List<string>();
-            var details = new List<CartonOption>();
-            if (root.TryGetProperty("cartons", out var cartonJson) && cartonJson.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var carton in cartonJson.EnumerateArray())
-                {
-                    if (carton.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
-                    {
-                        var value = id.GetString();
-                        if (!string.IsNullOrWhiteSpace(value))
-                        {
-                            cartons.Add(value);
-                            var part = carton.TryGetProperty("part", out var partProp)
-                                && partProp.ValueKind == JsonValueKind.String
-                                ? partProp.GetString() ?? string.Empty
-                                : string.Empty;
-                            var units = carton.TryGetProperty("units", out var unitsProp)
-                                && unitsProp.ValueKind == JsonValueKind.Number
-                                && unitsProp.TryGetInt32(out var parsed)
-                                ? parsed
-                                : 0;
-                            details.Add(new CartonOption(value, part, units));
-                        }
-                    }
-                }
-            }
-
-            var salesItem = string.Empty;
-            var salesQty = 0m;
-            if (root.TryGetProperty("salesOrder", out var salesJson)
-                && salesJson.ValueKind == JsonValueKind.Object)
-            {
-                if (salesJson.TryGetProperty("item", out var itemProp)
-                    && itemProp.ValueKind == JsonValueKind.String)
-                {
-                    salesItem = itemProp.GetString() ?? string.Empty;
-                }
-
-                if (salesJson.TryGetProperty("quantity", out var qtyProp)
-                    && qtyProp.ValueKind == JsonValueKind.Number
-                    && qtyProp.TryGetDecimal(out var qty))
-                {
-                    salesQty = qty;
-                }
-            }
-
-            var items = new List<ItemOption>();
-            if (root.TryGetProperty("items", out var itemsJson) && itemsJson.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in itemsJson.EnumerateArray())
-                {
-                    var id = item.TryGetProperty("id", out var idProp)
-                        && idProp.ValueKind == JsonValueKind.String ? idProp.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(id))
-                    {
-                        continue;
-                    }
-
-                    var unit = item.TryGetProperty("unit", out var unitProp)
-                        && unitProp.ValueKind == JsonValueKind.String ? unitProp.GetString() : null;
-                    items.Add(new ItemOption(id, unit ?? string.Empty));
-                }
-            }
-
-            var candidates = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-            if (root.TryGetProperty("vendors", out var vendorsJson) && vendorsJson.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var vendor in vendorsJson.EnumerateArray())
-                {
-                    var id = vendor.TryGetProperty("id", out var idProp)
-                        && idProp.ValueKind == JsonValueKind.String ? idProp.GetString() : null;
-                    var item = vendor.TryGetProperty("item", out var itemProp)
-                        && itemProp.ValueKind == JsonValueKind.String ? itemProp.GetString() : null;
-                    if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(item))
-                    {
-                        continue;
-                    }
-
-                    if (!candidates.TryGetValue(item, out var list))
-                    {
-                        list = [];
-                        candidates[item] = list;
-                    }
-
-                    if (!list.Contains(id, StringComparer.Ordinal))
-                    {
-                        list.Add(id);
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                notes.Add("Scenario file has no name; order submissions need one typed in.");
-            }
-
-            return new ScenarioBits(
-                name, currency, cartons, items,
-                candidates.ToDictionary(
-                    kv => kv.Key,
-                    kv => (IReadOnlyList<string>)kv.Value.Order(StringComparer.Ordinal).ToList(),
-                    StringComparer.Ordinal),
-                details, salesItem, salesQty);
-        }
-        catch (Exception ex)
-        {
-            notes.Add($"Scenario options failed: {ex.Message}.");
-            return empty;
-        }
-    }
-
-    private (IReadOnlyList<string> So, IReadOnlyList<string> Po) ReadManifestNumbers(List<string> notes)
-    {
-        try
-        {
-            var path = ScenarioLoader.ResolvePath(ScenarioEndpoints.ManifestPath(_config));
-            if (!File.Exists(path))
-            {
-                notes.Add("No run manifest yet; seeded SO and PO options are empty until a scenario load.");
-                return ([], []);
-            }
-
-            var manifest = JsonSerializer.Deserialize<ManifestDto>(File.ReadAllText(path), JsonOpts);
-            if (manifest?.Documents is null)
-            {
-                notes.Add($"Run manifest {path} did not parse.");
-                return ([], []);
-            }
-
-            var so = manifest.Documents
-                .Where(d => string.Equals(d.DocType, "SO", StringComparison.OrdinalIgnoreCase))
-                .Select(d => d.Number)
-                .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
-                .ToList();
-            var po = manifest.Documents
-                .Where(d => string.Equals(d.DocType, "PO", StringComparison.OrdinalIgnoreCase))
-                .Select(d => d.Number)
-                .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
-                .ToList();
-            return (so, po);
-        }
-        catch (Exception ex)
-        {
-            notes.Add($"Run manifest read failed: {ex.Message}.");
-            return ([], []);
-        }
-    }
-
-    private sealed record ManifestDto(IReadOnlyList<ManifestDoc>? Documents);
-
-    private sealed record ManifestDoc(string Event, string DocType, string Number);
-
     private IReadOnlyList<string> ListDockImages(List<string> notes)
     {
         try
@@ -1282,11 +1340,14 @@ public sealed class SimulationUiService
                 return [];
             }
 
+            // Base originals are working files, never counter photos; the
+            // dock panel splits the rest into pallet views vs close-ups.
             return Directory.GetFiles(_photos.ImageDir)
                 .Select(Path.GetFileName)
                 .Where(n => n is not null
                     && (n.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
-                        || n.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)))
+                        || n.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                    && !DockPhotoService.IsBaseImage(n))
                 .Select(n => n!)
                 .Order(StringComparer.Ordinal)
                 .ToList();

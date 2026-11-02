@@ -162,7 +162,7 @@ public sealed record ProposedAward(
 
 /// <summary>One row of trailing-12-month posted received volume in cells.
 /// Raw history only; shares are always computed from these rows, never stored.
-/// The read unions seeded openings plus one row per posted receipt line.</summary>
+/// The read returns one row per posted receipt line.</summary>
 public sealed record VolumeHistory(
     string Source,
     string Country,
@@ -182,7 +182,10 @@ public sealed record PurchaseRequisition(
     string Source,
     string CreatedBy,
     string IdempotencyKey,
-    IReadOnlyList<PurchaseRequisitionLine> Lines);
+    IReadOnlyList<PurchaseRequisitionLine> Lines,
+    DateTimeOffset? CreatedAt = null,
+    string? ApprovedBy = null,
+    DateTimeOffset? ApprovedAt = null);
 
 public sealed record PurchaseOrderLine(
     string PoLineRef,
@@ -207,7 +210,10 @@ public sealed record PurchaseOrder(
     string Source,
     string CreatedBy,
     string IdempotencyKey,
-    IReadOnlyList<PurchaseOrderLine> Lines);
+    IReadOnlyList<PurchaseOrderLine> Lines,
+    DateTimeOffset? CreatedAt = null,
+    string? ApprovedBy = null,
+    DateTimeOffset? ApprovedAt = null);
 
 public sealed record VendorConfirmLine(
     string PoLineRef,
@@ -252,7 +258,11 @@ public sealed record ShipmentReceipt(
     string Source,
     string CreatedBy,
     string IdempotencyKey,
-    IReadOnlyList<ReceiptLine> Lines);
+    IReadOnlyList<ReceiptLine> Lines,
+    DateTimeOffset? CreatedAt = null,
+    string? PostedBy = null,
+    DateTimeOffset? PostedAt = null,
+    DateOnly? PostingDate = null);
 
 public sealed record InvoiceLineInput(
     string? PoLineRef,
@@ -286,7 +296,13 @@ public sealed record VendorInvoice(
     string CreatedBy,
     string IdempotencyKey,
     IReadOnlyList<VendorInvoiceLine> Lines,
-    IReadOnlyList<LineMatchResult> MatchResults);
+    IReadOnlyList<LineMatchResult> MatchResults,
+    DateTimeOffset? CreatedAt = null,
+    string? ApprovedBy = null,
+    DateTimeOffset? ApprovedAt = null,
+    string? PostedBy = null,
+    DateTimeOffset? PostedAt = null,
+    DateOnly? DueDate = null);
 
 public sealed record PaymentLine(
     string VendorId,
@@ -306,7 +322,12 @@ public sealed record Payment(
     string Source,
     string CreatedBy,
     string IdempotencyKey,
-    IReadOnlyList<PaymentLine> Lines);
+    IReadOnlyList<PaymentLine> Lines,
+    DateTimeOffset? CreatedAt = null,
+    string? ApprovedBy = null,
+    DateTimeOffset? ApprovedAt = null,
+    string? PostedBy = null,
+    DateTimeOffset? PostedAt = null);
 
 public sealed record Settlement(
     string VendorId,
@@ -379,3 +400,33 @@ public sealed record SalesOrderLine(
 public sealed record BomLine(
     string ComponentItemId,
     decimal QtyPer);
+
+/// <summary>ERP-computed consequence preview for one pending decision:
+/// what approval would post, the due date, the payment run it joins, who
+/// approves next, and what stays held with its value. Read-only.</summary>
+public sealed record ConsequencePreview(
+    string DocumentType,
+    string DocumentNumber,
+    IReadOnlyList<string> Postings,
+    DateOnly? DueDate,
+    string? PaymentRun,
+    string? NextApprover,
+    decimal HeldValue,
+    string? HeldReason,
+    string? Currency);
+
+/// <summary>Company identity for headers, addresses, and sender context.
+/// The software is ComplianceGate; this is the company running it.</summary>
+public sealed record CompanyInfoDto(
+    string EntityCode,
+    string LegalName,
+    string Currency,
+    string BillToAddress,
+    string ShipToAddress,
+    string SenderEmail);
+
+public sealed record SiteDto(
+    string SiteId,
+    string Name,
+    string Address,
+    IReadOnlyList<string> Capabilities);

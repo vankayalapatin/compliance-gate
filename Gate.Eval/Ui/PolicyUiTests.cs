@@ -228,7 +228,8 @@ public sealed class PolicyUiTests
         Assert.NotNull(card.Activation);
         var pin = PolicyLabels.DecisionPin(card.Decision, card.Current.Proposal.KbVersion);
         Assert.Contains(card.Current.Proposal.ProposalHash, pin);
-        Assert.Contains(card.Current.Proposal.KbVersion, pin);
+        Assert.Contains(
+            Gate.Web.ViewModels.KbDisplay.Version(card.Current.Proposal.KbVersion), pin);
         Assert.Contains("Terry Owner", pin);
     }
 
@@ -475,7 +476,8 @@ public sealed class PolicyUiTests
         };
         var pin = PolicyLabels.DecisionPin(decided, "kbv9");
         Assert.Contains("hash9", pin);
-        Assert.Contains("kbv9", pin);
+        Assert.Contains("version 9", pin);
+        Assert.DoesNotContain("kbv9", pin);
         Assert.Contains("owner", pin);
 
         var withOptions = pending with { EvidenceRefs = ["option:A", "memo:M", "option:B"] };

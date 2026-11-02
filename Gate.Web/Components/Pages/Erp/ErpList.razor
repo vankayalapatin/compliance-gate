@@ -63,7 +63,7 @@
                                     <td>@so.Currency</td>
                                     <td class="gate-num">@ErpFormat.Count(so.Lines.Count)</td>
                                     <td class="gate-num">@ErpFormat.Qty(so.Lines.Sum(l => l.Quantity))</td>
-                                    <td><OriginChips Number="@so.SoNumber" Source="@null" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@null" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -91,7 +91,7 @@
                                     <td>@pr.Requester</td>
                                     <td class="gate-num">@ErpFormat.Money(pr.EstimatedAmount, pr.Currency)</td>
                                     <td class="gate-num">@ErpFormat.Count(pr.Lines.Count)</td>
-                                    <td><OriginChips Number="@pr.PrNumber" Source="@pr.Source" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@pr.Source" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -119,7 +119,7 @@
                                     <td>@po.DocStatus</td>
                                     <td><a href="@ErpRoutes.RecordHref("vendor", po.VendorId)">@po.VendorId</a></td>
                                     <td class="gate-num">@ErpFormat.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)</td>
-                                    <td><OriginChips Number="@po.PoNumber" Source="@po.Source" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@po.Source" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -145,7 +145,7 @@
                                     <td><a href="@ErpRoutes.RecordHref("asn", asn.AsnNumber)">@asn.AsnNumber</a></td>
                                     <td><a href="@ErpRoutes.RecordHref("po", asn.PoNumber)">@asn.PoNumber</a></td>
                                     <td class="gate-num">@ErpFormat.Count(asn.Cartons.Count)</td>
-                                    <td><OriginChips Number="@asn.AsnNumber" Source="@asn.Source" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@asn.Source" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -172,7 +172,7 @@
                                     <td><a href="@ErpRoutes.RecordHref("po", receipt.PoNumber)">@receipt.PoNumber</a></td>
                                     <td>@receipt.SupplierPackingSlipNumber</td>
                                     <td>@receipt.Status</td>
-                                    <td><OriginChips Number="@receipt.ReceiptNumber" Source="@receipt.Source" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@receipt.Source" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -228,7 +228,7 @@
                                     <td>@(inv.PoNumber ?? "—")</td>
                                     <td class="gate-num">@ErpFormat.Money(inv.Lines.Sum(l => l.Quantity * l.UnitPrice), inv.Currency)</td>
                                     <td>@(inv.Voucher ?? "—")</td>
-                                    <td><OriginChips Number="@inv.SupplierInvoiceNumber" Source="@inv.Source" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@inv.Source" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -254,9 +254,9 @@
                                     <td><a href="@ErpRoutes.RecordHref("payment", pay.PaymentNumber)">@pay.PaymentNumber</a></td>
                                     <td>@pay.Status</td>
                                     <td>@pay.DueDate</td>
-                                    <td>@pay.PayeeBank.AccountRef (verified: @pay.PayeeBank.Verified)</td>
+                                    <td>@pay.PayeeBank.AccountRef (@(pay.PayeeBank.Verified ? "verified" : "not verified"))</td>
                                     <td class="gate-num">@ErpFormat.Money(pay.Lines.Sum(l => l.Amount), pay.Currency)</td>
-                                    <td><OriginChips Number="@pay.PaymentNumber" Source="@pay.Source" Opening="@_opening" /></td>
+                                    <td><AgentBanner Source="@pay.Source" /></td>
                                 </tr>
                             }
                         </tbody>
@@ -357,7 +357,6 @@
 
     private object? _rows;
     private IReadOnlyList<string> _notes = [];
-    private IReadOnlySet<string> _opening = new HashSet<string>(StringComparer.Ordinal);
     private string? _loadError;
     private bool _loading = true;
 
@@ -367,9 +366,7 @@
         _loadError = null;
         try
         {
-            var (opening, openingNotes) = Views.GetOpeningNumbers();
-            _opening = opening;
-            var notes = new List<string>(openingNotes);
+            var notes = new List<string>();
             _rows = Slug switch
             {
                 "so" => await LoadAsync(Views.ListSalesOrdersAsync(), notes),

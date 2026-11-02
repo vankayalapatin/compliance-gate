@@ -1,6 +1,7 @@
 // Master writes: vendor and item creation with every validation refused
-// on both adapters. Blank vendor ids mint from the V sequence, explicit ids
-// override; item ids are always manual. Refusal texts match across adapters.
+// on both adapters. Blank vendor ids mint from the VND sequence, explicit
+// ids override; item ids are always manual. Refusal texts match across
+// adapters.
 using Gate.Contracts;
 
 namespace Gate.Eval;
@@ -57,8 +58,8 @@ public sealed class MasterWritesTests
         {
             var vendor = await erp.CreateVendorAsync(blank, "Minted Vendor", "US", "NET0",
                 null, RecordSource.Human, "planner", Idem());
-            Assert.StartsWith("V-", vendor.VendorId);
-            Assert.Matches(@"^V-\d{4,}$", vendor.VendorId);
+            Assert.StartsWith("VND-", vendor.VendorId);
+            Assert.Matches(@"^VND-\d{4,}$", vendor.VendorId);
             minted.Add(vendor.VendorId);
         }
         Assert.Equal(3, minted.Distinct(StringComparer.Ordinal).Count());

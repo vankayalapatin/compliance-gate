@@ -25,13 +25,13 @@ public sealed class CorpOriginCapTests
         new VendorDocumentDto(vendorId, "REACH", "reach", true)
     ];
 
-    // Demo history in cells: CN 5900, MX 3800, OTHER 300, total 10000.
+    // History in cells: CN 5900 (3400 plus DragonLeaf 2500), MX 3800, US 300 (ABC), total 10000.
     private static IReadOnlyList<VolumeHistory> DemoHistory() =>
     [
         new VolumeHistory("V-A CN active", "CN", 3400),
-        new VolumeHistory("Legacy CN inactive", "CN", 2500),
+        new VolumeHistory("DragonLeaf-CN inactive", "CN", 2500),
         new VolumeHistory("V-B MX active", "MX", 3800),
-        new VolumeHistory("Other non-CN", "OTHER", 300)
+        new VolumeHistory("ABC-US active", "US", 300)
     ];
 
     [Fact]
@@ -96,5 +96,21 @@ public sealed class CorpOriginCapTests
         var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
         Assert.Equal(VerdictKind.Pass, corp.Kind);
         Assert.Contains("not applicable", corp.Reason);
+    }
+
+    [Fact]
+    public async Task NonCriticalPartPassesAsOutOfScope()
+    {
+        // CORP-02 caps critical battery volume only: a 100% single-country
+        // screw history still passes because screws are not critical.
+        var history = new[]
+        {
+            new VolumeHistory("Home active", "TW", 2700)
+        };
+        var verdicts = await _engine.EvaluateVendorAsync(
+            Vendor("V-C", "TW"), new ItemDto("SCR-9", "Test screw", false, 1, "EA"), [], new ProposedAward("SCR-9", 100, "TW"), history);
+        var corp = Assert.Single(verdicts, v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Equal(VerdictKind.Pass, corp.Kind);
+        Assert.Contains("not critical", corp.Reason);
     }
 }

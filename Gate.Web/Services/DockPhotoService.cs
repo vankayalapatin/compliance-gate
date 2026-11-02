@@ -48,6 +48,28 @@ public sealed class DockPhotoService
             $"Dock asset directory not found: {Path.Combine(parts)} (set GATE_DOCK_IMAGES / GATE_VISION_CACHE).");
     }
 
+    // Dock-camera counter rules for the shipped image set: *-base.jpg files
+    // are the unlabeled working originals and are never offered; IMG-04 is
+    // the carton close-up and is reshot-only; every other labeled photo is
+    // a pallet view for the first dock check. These are presentation facts
+    // about the shipped photo set, kept in this one place.
+    public static bool IsBaseImage(string fileName) =>
+        fileName.EndsWith("-base.jpg", StringComparison.OrdinalIgnoreCase)
+        || fileName.EndsWith("-base.jpeg", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsCloseUp(string fileName) =>
+        string.Equals(
+            Path.GetFileNameWithoutExtension(fileName), "IMG-04", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Counter images for one dock-camera mode: pallet views for a
+    /// first check, close-ups for a reshot. Base originals never appear in
+    /// either mode. Sorted for a stable counter.</summary>
+    public static IReadOnlyList<string> OfferedCounterImages(IEnumerable<string> files, bool reshot) =>
+        files
+            .Where(f => !IsBaseImage(f) && IsCloseUp(f) == reshot)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
     /// <summary>Resolves an evidence ref to a dock image file name, or null
     /// when the ref names no photo. Never throws for unknown refs.</summary>
     public string? ResolveImageFileName(string? evidenceRef)

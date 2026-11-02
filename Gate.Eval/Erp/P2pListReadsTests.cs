@@ -282,4 +282,24 @@ public sealed class P2pListReadsTests
         Assert.Contains(pendingPay, r => r.DocumentType == "Payment" && r.DocumentNumber == draft.PaymentNumber
             && r.RoutedTo == "finance" && r.SubmittedBy == "planner" && r.DocumentAmount == 120m);
     }
+
+    [Fact]
+    public async Task PricedVendorIds_Fake()
+    {
+        await PricedVendorIdsAsync(SeededErp.Create());
+    }
+
+    [Fact]
+    public async Task PricedVendorIds_EfCore()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        await PricedVendorIdsAsync(fx.Adapter);
+    }
+
+    private static async Task PricedVendorIdsAsync(IErpAdapter erp)
+    {
+        Assert.Equal(["V-A", "V-B"], await erp.GetPricedVendorIdsAsync(SeededErp.Battery));
+        Assert.Equal(["V-B", "V-C"], await erp.GetPricedVendorIdsAsync(SeededErp.Screw));
+        Assert.Empty(await erp.GetPricedVendorIdsAsync("NOPE"));
+    }
 }

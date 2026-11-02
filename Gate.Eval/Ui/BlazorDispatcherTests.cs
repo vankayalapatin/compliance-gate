@@ -9,12 +9,12 @@
 //
 // SendOrderThroughPageThenSwitchUser drives the real Outside page shop tab
 // through bUnit (a test-only package ref, documented in Gate.Eval.csproj):
-// it places an order through the page and then switches the acting user
-// mid-run, asserting no dispatcher throw, the outcome renders, and
-// Decisions filtering follows the new user. The stubbed POST yields
-// asynchronously, like a live POST, so the old pattern genuinely leaves
-// the sync context. RazorComponents_MustNotUseConfigureAwaitFalse pins the
-// pattern itself across every .razor under Gate.Web.
+// it places an order through the page's free order form and then switches
+// the acting user mid-run, asserting no dispatcher throw, the outcome
+// renders, and Decisions filtering follows the new user. The stubbed POST
+// yields asynchronously, like a live POST, so the old pattern genuinely
+// leaves the sync context. RazorComponents_MustNotUseConfigureAwaitFalse
+// pins the pattern itself across every .razor under Gate.Web.
 //
 // All data is local to this file; nothing depends on the demo numbers. No
 // live calls.
@@ -34,19 +34,6 @@ namespace Gate.Eval.Ui;
 
 public sealed class BlazorDispatcherTests
 {
-    private const string ScenarioJson = """
-        {"name":"ui-dispatch","currency":"TST",
-         "items":[{"id":"ITEM-D1","unit":"EA"}],
-         "vendors":[{"id":"V-D1","item":"ITEM-D1"}],
-         "cartons":[{"id":"CTN-D1"}]}
-        """;
-
-    private const string ManifestJson = """
-        {"scenario":"ui-dispatch","documents":[
-         {"event":"salesOrder","docType":"SO","number":"SO-D1"},
-         {"event":"openPo.po","docType":"PO","number":"PO-D1"}]}
-        """;
-
     private const string OrderResponseJson = """
         {"caseIds":["CASE-D9"],"advances":[
          {"caseId":"CASE-D9","stage":"Created","step":"RaisePr","complete":false}]}
@@ -84,24 +71,15 @@ public sealed class BlazorDispatcherTests
     private static async Task<Harness> CreateAsync()
     {
         var dir = UiTestSupport.NewDir("gate-ui-dispatch");
-        var scenarioPath = Path.Combine(dir, "scenario.json");
-        var manifestPath = Path.Combine(dir, "run-manifest.json");
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(scenarioPath, ScenarioJson);
-        await File.WriteAllTextAsync(manifestPath, ManifestJson);
 
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Scenario:File"] = scenarioPath,
-                ["Scenario:Manifest"] = manifestPath,
-            })
-            .Build();
-
-        var erp = new InMemoryErpAdapter();
-        erp.SeedBaseCurrency("TST");
-        erp.SeedUser(new UserDto("approver", "approver", 1_000_000m, "TST"));
-        erp.SeedUser(new UserDto("requester", "requester", 50m, "TST"));
+        var fake = new InMemoryErpAdapter();
+        fake.SeedBaseCurrency("TST");
+        fake.SeedItem(new ItemDto("ITEM-D1", "Dispatch item", false, 1, "EA"));
+        fake.SeedUser(new UserDto("approver", "approver", 1_000_000m, "TST"));
+        fake.SeedUser(new UserDto("requester", "requester", 50m, "TST"));
+        var erp = new CompanyInfoErpDouble(fake, new CompanyInfoDto(
+            "LE-T", "Dispatch Company", "TST", "1 Bill St", "2 Ship St", "buy@dispatch.test"));
 
         var cacheDir = Path.Combine(dir, "case-cache");
         var cases = new CaseCacheStore(cacheDir);
@@ -125,9 +103,9 @@ public sealed class BlazorDispatcherTests
         var stub = new YieldingStubHandler();
         var http = new HttpClient(stub) { BaseAddress = new Uri("http://localhost/") };
         var simulate = new SimulationUiService(
-            http, erp, cases, photos, config, UiTestLogger<SimulationUiService>.Instance);
+            http, erp, cases, photos, UiTestLogger<SimulationUiService>.Instance);
         var views = new CaseViewService(
-            erp, cases, photos, config, UiTestLogger<CaseViewService>.Instance);
+            erp, cases, photos, UiTestLogger<CaseViewService>.Instance);
         var models = new FakeModelClient();
         var compliance = new RecordingComplianceEngine();
         var agent = new P2pAgent(erp, models, compliance);
@@ -136,10 +114,11 @@ public sealed class BlazorDispatcherTests
             cases, UiTestLogger<DecisionOutcomeService>.Instance, runner);
         var replay = new ReplayState();
         var why = new AskWhyService(
-            agent, models, cases, photos, replay, UiTestLogger<AskWhyService>.Instance,
+            agent, models, erp, cases, photos, replay, UiTestLogger<AskWhyService>.Instance,
             Path.Combine(dir, "model-cache"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
         var replaySvc = new ReplayService(
-            erp, cases, photos, replay, config, UiTestLogger<ReplayService>.Instance);
+            cases, photos, replay, config, UiTestLogger<ReplayService>.Instance, dir);
         return new Harness(stub, simulate, views, outcomes, why, replaySvc, new ActingUserState());
     }
 
@@ -161,8 +140,11 @@ public sealed class BlazorDispatcherTests
         // Dispatcher, so the catch misreports failure instead of rendering
         // the outcome.
         using var page = ctx.RenderComponent<Outside>();
-        page.WaitForAssertion(() => page.Find("#order-so"), TimeSpan.FromSeconds(10));
-        page.Find("#order-so").Change("SO-D1");
+        page.WaitForAssertion(() => page.Find("#shop-new-currency"), TimeSpan.FromSeconds(10));
+        var selects = page.FindAll("#shop select");
+        Assert.True(selects.Count >= 2);
+        selects[1].Change("ITEM-D1");
+        page.Find("#shop input[type=number]").Change("5");
         page.Find("#shop button.gate-btn-primary").Click();
         page.WaitForAssertion(
             () => Assert.Contains("Order accepted: 1 case(s).", page.Markup),

@@ -1,0 +1,33 @@
+@using Gate.Contracts
+@using Gate.Web.Services
+@inject SimulationUiService Sim
+@inject NavigationManager Nav
+
+@if (_company is not null)
+{
+    <span class="gate-entity" title="Legal entity">@_company.EntityCode · @_company.LegalName</span>
+}
+<form class="gate-search" @onsubmit="OnSearch" @onsubmit:preventDefault="true">
+    <input class="gate-input gate-search-input" @bind="_query" placeholder="Search records…" aria-label="Search records" />
+    <button class="gate-btn" type="submit">Search</button>
+</form>
+
+@code {
+    private CompanyInfoDto? _company;
+    private string _query = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _company = await Sim.GetCompanyAsync();
+    }
+
+    private void OnSearch()
+    {
+        if (string.IsNullOrWhiteSpace(_query))
+        {
+            return;
+        }
+
+        Nav.NavigateTo($"search?q={Uri.EscapeDataString(_query.Trim())}");
+    }
+}

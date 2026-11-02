@@ -114,7 +114,7 @@
     private string Subtitle() =>
         _rows is null
             ? "Loading…"
-            : $"{_rows.Count} rule(s) · KB {_currentKb} · counts are {GovernanceLabels.BlocksThisRun.ToLowerInvariant()}.";
+            : $"{_rows.Count} rule(s) · KB {KbDisplay.Version(_currentKb)} · counts are {GovernanceLabels.BlocksThisRun.ToLowerInvariant()}.";
 
     private string ScanLabel() => _scanLabel;
 

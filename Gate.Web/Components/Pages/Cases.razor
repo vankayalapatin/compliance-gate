@@ -23,7 +23,7 @@ else if (_files is null)
 }
 else if (_files.Count == 0)
 {
-    <p class="gate-meta">No cases in the cache yet. Place an order from the outside world.</p>
+    <p class="gate-meta">No cases yet. Place an order from the outside world.</p>
 }
 else
 {
@@ -45,7 +45,7 @@ else
                     }
                 </div>
             </div>
-            <p class="gate-meta">@file.Case.CaseId · SO @file.Case.SoNumber · item @file.Case.ItemId · scenario @file.Case.ScenarioName</p>
+            <p class="gate-meta">@file.Case.CaseId · SO @file.Case.SoNumber · item @file.Case.ItemId</p>
             <ChainStrip Steps="@CaseChain.Strip(file.Case)" />
             @if (file.Case.BlockedByRuleId is null)
             {

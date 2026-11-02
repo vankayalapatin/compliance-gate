@@ -58,6 +58,9 @@ public sealed class NumberSequenceTests
         var pr = await fx.Adapter.CreatePrAsync("planner", RecordSource.P2pAgent, "planner",
             [new PurchaseRequisitionLine("BAT-1", 1, "EA")], Idem());
         Assert.Equal("PR#7", pr.PrNumber);
+        // The adapter commits on its own context: clear the fixture's
+        // tracked copy so the re-read sees the minted increment.
+        fx.Db.ChangeTracker.Clear();
         var row = await fx.Db.Sequences.FindAsync("PR");
         Assert.NotNull(row);
         Assert.Equal("PR#{number}", row.Format);
@@ -87,6 +90,9 @@ public sealed class NumberSequenceTests
         var so = await fx.Adapter.CreateSalesOrderAsync("USD",
             [new SalesOrderLine("GLASS-1", 1)], "test", "test", Idem());
         Assert.Equal("SO-1002", so.SoNumber);
+        // The adapter commits on its own context: clear the fixture's
+        // tracked copy so the re-read sees the minted increment.
+        fx.Db.ChangeTracker.Clear();
         var row = await fx.Db.Sequences.FindAsync("SO");
         Assert.NotNull(row);
         Assert.Equal(4, row.Padding);
@@ -129,7 +135,7 @@ public sealed class NumberSequenceTests
                 .UseSqlite($"Data Source={Path.Combine(workDir, "erp.db")}")
                 .Options;
             await using var db = new ErpDbContext(options);
-            var manifest = await ScenarioLoader.ResetAsync(new EfCoreErpAdapter(db), scenario,
+            var manifest = await ScenarioLoader.ResetAsync(new EfCoreErpAdapter(options), scenario,
                 Path.Combine(workDir, "gate.db"), Path.Combine(workDir, "run-manifest.json"));
             string Doc(string eventKey) => manifest.Documents.Single(d => d.Event == eventKey).Number;
             Assert.Equal("SO-500", Doc("salesOrder"));

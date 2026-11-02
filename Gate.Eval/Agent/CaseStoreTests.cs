@@ -61,11 +61,42 @@ public sealed class CaseStoreTests
         Assert.DoesNotContain(":", first);
         Assert.DoesNotContain("*", first);
         Assert.DoesNotContain("?", first);
-        Assert.Equal("scen-ario-SO-1-IT-M-", first);
+        // No scenario segment: {soNumber}-{itemId}, and the legacy first
+        // argument is ignored so older callers mint the same id.
+        Assert.Equal("SO-1-IT-M-", first);
+        Assert.Equal(first, CaseStore.MintCaseId("other", "SO:1", "IT*M?"));
+        Assert.Equal(first, CaseStore.MintCaseId("SO:1", "IT*M?"));
 
         var dir = TempDir();
         CaseStore.Save(dir, SampleFile(first));
         Assert.NotNull(CaseStore.Load(dir, first));
+    }
+
+    [Fact]
+    public void DockSidecarRoundTripsAndStaysOutOfCaseList()
+    {
+        var dir = TempDir();
+        var file = SampleFile("SO-1-BAT-1");
+        CaseStore.Save(dir, file);
+        var read = new DockCartonRead(
+            "CTN-1", "BAT-1", "PO-1", null, 10, true, true, null,
+            false, false, false, null, "IMG-1.jpg", 0.9m);
+        CaseStore.SaveDock(dir, new DockEvidence(
+            "SO-1-BAT-1", [read],
+            new Dictionary<string, IReadOnlyList<Verdict>>
+            {
+                ["CTN-1"] = [new Verdict("DOCK-T", VerdictKind.Pass, "ok", RecordSource.P2pAgent)],
+            },
+            DateTimeOffset.UtcNow));
+
+        // Old files without a sidecar still load; sidecars never list.
+        Assert.Equal(["SO-1-BAT-1"], CaseStore.ListCaseIds(dir));
+        Assert.NotNull(CaseStore.Load(dir, "SO-1-BAT-1"));
+        Assert.Null(CaseStore.LoadDock(dir, "SO-1-MISSING"));
+        var dock = CaseStore.LoadDock(dir, "SO-1-BAT-1");
+        Assert.NotNull(dock);
+        Assert.Equal("IMG-1.jpg", Assert.Single(dock.Reads).ImageId);
+        Assert.Equal(VerdictKind.Pass, dock.Verdicts["CTN-1"].Single().Kind);
     }
 
     [Fact]

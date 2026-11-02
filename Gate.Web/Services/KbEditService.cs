@@ -137,7 +137,7 @@ public sealed class KbEditService
                 ? $"approved by {approval.ActingApprover} as the {match.Space} owner"
                 : $"approved by {approval.ActingApprover} for {match.Owner} (active delegate)";
             return new KbEditOutcome(true,
-                $"Published {publication.Activation.KbVersion} (prior {current.KbVersion}): " +
+                $"Published {KbDisplay.Version(publication.Activation.KbVersion)} (prior {KbDisplay.Version(current.KbVersion)}): " +
                 $"{section}#{entryId} {kind.ToString().ToLowerInvariant()} {approvedAs}.",
                 publication.Activation.KbVersion, match.Owner, approval.ApprovedFor);
         }

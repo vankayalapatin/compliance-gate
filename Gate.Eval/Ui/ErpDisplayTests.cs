@@ -172,7 +172,6 @@ public sealed class ErpDisplayTests
             erp, store,
             new DockPhotoService(
                 Path.Combine(dir, "dock"), Path.Combine(dir, "vision")),
-            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
             UiTestLogger<CaseViewService>.Instance);
         ctx.Services.AddSingleton(views);
 

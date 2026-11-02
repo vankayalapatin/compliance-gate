@@ -12,11 +12,11 @@ internal sealed class EfCoreTestDb : IAsyncDisposable
     public EfCoreErpAdapter Adapter { get; }
     public string FilePath { get; }
 
-    private EfCoreTestDb(ErpDbContext db, string filePath)
+    private EfCoreTestDb(ErpDbContext db, DbContextOptions<ErpDbContext> options, string filePath)
     {
         Db = db;
         FilePath = filePath;
-        Adapter = new EfCoreErpAdapter(db);
+        Adapter = new EfCoreErpAdapter(options);
     }
 
     public static async Task<EfCoreTestDb> CreateAsync()
@@ -30,7 +30,7 @@ internal sealed class EfCoreTestDb : IAsyncDisposable
         var db = new ErpDbContext(options);
         await db.Database.MigrateAsync().ConfigureAwait(false);
         Seed(db);
-        return new EfCoreTestDb(db, file);
+        return new EfCoreTestDb(db, options, file);
     }
 
     private static void Seed(ErpDbContext db)
@@ -66,10 +66,6 @@ internal sealed class EfCoreTestDb : IAsyncDisposable
         {
             db.VendorDocuments.Add(new VendorDocumentRow { RowId = Guid.NewGuid().ToString("N"), VendorId = v, Kind = "UN38.3", Reference = "un383-test", Present = true });
             db.VendorDocuments.Add(new VendorDocumentRow { RowId = Guid.NewGuid().ToString("N"), VendorId = v, Kind = "SDS", Reference = "sds-test", Present = true });
-        }
-        foreach (var (source, country, cells) in new[] { ("V-A CN active", "CN", 3500m), ("Legacy CN inactive", "CN", 2500m), ("V-B MX active", "MX", 3700m), ("Other non-CN", "OTHER", 300m) })
-        {
-            db.VolumeSeeds.Add(new VolumeSeedRow { RowId = Guid.NewGuid().ToString("N"), ItemId = "BAT-1", Source = source, Country = country, Cells = cells });
         }
         db.Users.Add(new UserRow { UserId = "planner", Role = "requester", SigningLimit = 5000m, LimitCurrency = "USD" });
         db.Users.Add(new UserRow { UserId = "approver", Role = "approver", SigningLimit = 100_000m, LimitCurrency = "USD" });

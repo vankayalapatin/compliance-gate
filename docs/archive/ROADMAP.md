@@ -1,3 +1,5 @@
+# ARCHIVED — early-demo history, not spec. Frozen, do not edit.
+
 # ComplianceGate — Build Roadmap (Final)
 
 Eight days, numbered one-session tasks. No task spans more than one stage.

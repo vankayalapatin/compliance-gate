@@ -312,14 +312,28 @@ public partial class CaseRunner
                 ruleId: block?.RuleId);
             if (!screening.Passed && block is not null)
             {
-                await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}",
-                    RecordSource.P2pAgent, $"{current.CaseId}:screen:block:{screening.VendorId}", ct).ConfigureAwait(false);
-                await _erp.AddPoNoteAsync(current.PrNumber,
-                    $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
-                    RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
-                work.AddEvent(CaseEventKind.VendorBlocked,
-                    $"Vendor {screening.VendorId} blocked: {block.RuleId}: {block.Reason}",
-                    ruleId: block.RuleId);
+                var blocks = screening.Verdicts.Where(v => v.Kind == VerdictKind.Block).ToList();
+                if (blocks.Count > 0 && blocks.All(v => _compliance.IsDocumentRule(v.RuleId)))
+                {
+                    await _erp.AddPoNoteAsync(current.PrNumber,
+                        $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
+                        RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
+                    work.AddEvent(CaseEventKind.Note,
+                        $"Vendor {screening.VendorId} failed screening on documents only " +
+                        $"({string.Join(", ", blocks.Select(b => b.RuleId))}); loses the award, vendor master untouched.",
+                        ruleId: block.RuleId);
+                }
+                else
+                {
+                    await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}",
+                        RecordSource.P2pAgent, $"{current.CaseId}:screen:block:{screening.VendorId}", ct).ConfigureAwait(false);
+                    await _erp.AddPoNoteAsync(current.PrNumber,
+                        $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
+                        RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
+                    work.AddEvent(CaseEventKind.VendorBlocked,
+                        $"Vendor {screening.VendorId} blocked: {block.RuleId}: {block.Reason}",
+                        ruleId: block.RuleId);
+                }
             }
         }
 
@@ -523,6 +537,13 @@ public partial class CaseRunner
         return missing;
     }
 
+    /// <summary>Creates the PO, recovering across vendors: the awarded
+    /// vendor goes first, then every other passing vendor in candidate
+    /// order. Vendors without a price or blocked in the master are
+    /// skipped with a timeline note; an ERP refusal for one vendor is
+    /// noted and the next vendor is tried. Only when no passing vendor
+    /// can supply does the step fail, with every refusal on the
+    /// timeline. A fallback award lands on the PO vendor.</summary>
     private async Task CreatePoStepAsync(CaseFile file, CancellationToken ct)
     {
         var current = file.Case;
@@ -534,15 +555,93 @@ public partial class CaseRunner
 
         var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"PR {current.PrNumber} vanished before PO creation.");
-        var po = await _erp.CreatePoAsync(current.PrNumber, current.AwardedVendorId,
-            RecordSource.P2pAgent, pr.Requester, $"{current.CaseId}:create-po", ct).ConfigureAwait(false);
+        var candidates = ReadCandidates(file, current.ItemId);
+        var raw = await _core.ScreenCandidatesAsync(current.PrNumber, candidates, ct).ConfigureAwait(false);
+        var (_, passing, _) = CorpExceptionFlow.ApplyApprovedExceptions(file, raw);
+        var rank = candidates
+            .Select((id, i) => (id, i))
+            .ToDictionary(p => p.id, p => p.i, StringComparer.Ordinal);
+        var ordered = passing
+            .OrderByDescending(v => string.Equals(v, current.AwardedVendorId, StringComparison.Ordinal))
+            .ThenBy(v => rank.TryGetValue(v, out var i) ? i : int.MaxValue)
+            .ToList();
+        if (!ordered.Contains(current.AwardedVendorId, StringComparer.Ordinal))
+        {
+            ordered.Insert(0, current.AwardedVendorId);
+        }
+
+        HashSet<string>? priced = null;
+        try
+        {
+            priced = (await _erp.GetPricedVendorIdsAsync(current.ItemId, ct).ConfigureAwait(false))
+                .ToHashSet(StringComparer.Ordinal);
+        }
+        catch (NotSupportedException)
+        {
+            // Layers without the priced-vendor read skip the pre-check;
+            // the per-vendor try below still recovers on refusal.
+        }
+
+        var vendorById = (await _erp.GetVendorsAsync(ct).ConfigureAwait(false))
+            .ToDictionary(v => v.VendorId, StringComparer.Ordinal);
         var work = new CaseWork(file);
-        work.AddEvent(CaseEventKind.PoCreated,
-            $"PO {po.PoNumber} to {po.VendorId} for {po.Lines.Sum(l => l.LineAmount)} {po.Currency}.",
-            documentType: "PO", documentNumber: po.PoNumber);
-        work.Patch(current with { PoNumber = po.PoNumber });
-        work.Stage(CaseStage.PoPlaced);
+        var failures = new List<string>();
+        foreach (var vendorId in ordered)
+        {
+            if (priced is not null && !priced.Contains(vendorId))
+            {
+                work.AddEvent(CaseEventKind.Note,
+                    $"PO skipped for {vendorId}: no price for {current.ItemId}; trying next vendor.",
+                    documentType: "PR", documentNumber: current.PrNumber);
+                continue;
+            }
+
+            if (vendorById.TryGetValue(vendorId, out var vendor) && vendor.IsBlocked)
+            {
+                work.AddEvent(CaseEventKind.Note,
+                    $"PO skipped for {vendorId}: vendor is blocked ({vendor.BlockReason}); trying next vendor.",
+                    documentType: "PR", documentNumber: current.PrNumber);
+                continue;
+            }
+
+            try
+            {
+                var po = await _erp.CreatePoAsync(current.PrNumber, vendorId,
+                    RecordSource.P2pAgent, pr.Requester, $"{current.CaseId}:create-po:{vendorId}", ct).ConfigureAwait(false);
+                if (!string.Equals(vendorId, current.AwardedVendorId, StringComparison.Ordinal))
+                {
+                    work.AddEvent(CaseEventKind.SupplierAwarded,
+                        $"Re-awarded {current.ItemId} to {vendorId} (PO could not go to {current.AwardedVendorId}).",
+                        documentType: "PR", documentNumber: current.PrNumber);
+                    work.Patch(work.Current with { AwardedVendorId = vendorId });
+                }
+
+                work.AddEvent(CaseEventKind.PoCreated,
+                    $"PO {po.PoNumber} to {po.VendorId} for {po.Lines.Sum(l => l.LineAmount)} {po.Currency}.",
+                    documentType: "PO", documentNumber: po.PoNumber);
+                work.Patch(work.Current with { PoNumber = po.PoNumber });
+                work.Stage(CaseStage.PoPlaced);
+                work.Save(_cacheDir);
+                return;
+            }
+            catch (InvalidOperationException ex)
+            {
+                failures.Add($"{vendorId}: {ex.Message}");
+                work.AddEvent(CaseEventKind.Note,
+                    $"PO refused for {vendorId}: {ex.Message}; trying next vendor.",
+                    documentType: "PR", documentNumber: current.PrNumber);
+            }
+        }
+
+        work.AddEvent(CaseEventKind.Note,
+            $"No vendor could supply {current.ItemId} for case {current.CaseId}." +
+            (failures.Count == 0
+                ? " No priced, unblocked passing vendor remained."
+                : $" Refusals: {string.Join(" | ", failures)}."),
+            documentType: "PR", documentNumber: current.PrNumber);
         work.Save(_cacheDir);
+        throw new InvalidOperationException(
+            $"No vendor could supply {current.ItemId} x{pr.Lines.Sum(l => l.Quantity)} for case {current.CaseId}.");
     }
 
     private async Task SubmitPoApprovalStepAsync(CaseFile file, CancellationToken ct)

@@ -32,6 +32,11 @@ public interface IErpAdapter
     Task<IReadOnlyList<VendorDto>> GetVendorsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<VendorDocumentDto>> GetVendorDocumentsAsync(string vendorId, CancellationToken ct = default);
     Task<string?> GetVendorCountryAsync(string vendorId, CancellationToken ct = default);
+    /// <summary>Vendor ids carrying a purchase price for the item, ordered
+    /// by vendor id. Sourcing candidates come from here: a vendor without
+    /// a price cannot be awarded or ordered.</summary>
+    Task<IReadOnlyList<string>> GetPricedVendorIdsAsync(string itemId, CancellationToken ct = default) =>
+        throw new NotSupportedException("GetPricedVendorIdsAsync is implemented by the ERP layer.");
     /// <summary>Legacy precomputed per-vendor share. New paths read raw
     /// history below and let compliance compute; kept for interface stability.</summary>
     Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default);
@@ -84,15 +89,22 @@ public interface IErpAdapter
         throw new NotSupportedException("GetPendingApprovalsAsync is implemented by the ERP layer.");
 
     // Writes: caller supplies intent + audit + idempotency key only.
-    // ERP assigns numbers (SO/PR/PO at creation; receipt, voucher, payment
-    // at posting), reads amounts/limits/due dates/bank/delegations itself.
+    // ERP assigns numbers (SO/PR/PO/ASN at creation; receipt, voucher,
+    // payment at posting), reads amounts/limits/due dates/bank/delegations
+    // itself. Posting writes take an explicit business date (null means
+    // business today); history entry passes past dates through the same
+    // services.
     Task<PurchaseRequisition> CreatePrAsync(string requester, string source, string createdBy, IReadOnlyList<PurchaseRequisitionLine> lines, string idempotencyKey, CancellationToken ct = default);
     Task<PurchaseRequisition?> GetPrAsync(string prNumber, CancellationToken ct = default);
     Task SubmitForApprovalAsync(string documentType, string documentNumber, string routedTo, string submittedBy, string idempotencyKey, CancellationToken ct = default);
     Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default);
     Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default);
     Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default);
-    Task<AsnDto> CreateAsnAsync(string asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default);
+    /// <summary>ASNs mint from the ASN number sequence. A null asnNumber
+    /// mints; an explicit one records the supplier's own reference.
+    /// Supplier packing-slip and carton ids ride as fields, never derived
+    /// from the PO number.</summary>
+    Task<AsnDto> CreateAsnAsync(string? asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default);
     Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default);
     /// <summary>Creates a sales order from an incoming order webhook. The ERP
     /// mints the SO number from its sequence; status starts Created. Repeat
@@ -104,26 +116,26 @@ public interface IErpAdapter
     Task UnblockVendorAsync(string vendorId, string unblockedBy, string idempotencyKey, CancellationToken ct = default);
     Task AddPoNoteAsync(string poNumber, string note, string createdBy, string idempotencyKey, CancellationToken ct = default);
     Task ClosePoAsync(string poNumber, string closedBy, string idempotencyKey, CancellationToken ct = default);
-    Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, CancellationToken ct = default);
+    Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default);
     Task QuarantineLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default);
     Task ReleaseLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default);
     Task ConsumeLotAsync(string lotRef, string soNumber, decimal quantity, string actedBy, string idempotencyKey, CancellationToken ct = default);
     Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default);
     Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default);
-    Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, CancellationToken ct = default);
+    Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, DateOnly? invoiceDate = null, CancellationToken ct = default);
     Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default);
-    Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, CancellationToken ct = default);
+    Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default);
     Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default);
-    Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default);
+    Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default);
     /// <summary>Payment run paying invoices due up to a date: invoices due
     /// after payUpToDate are skipped. Null means no date limit. Implemented
     /// by the ERP layer; the default pays everything.</summary>
-    Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-        CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, ct);
-    Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default);
+    Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, postingDate, ct);
+    Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default);
     Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default);
     Task<VendorBankDto> VerifyVendorBankAsync(string vendorId, string verifiedBy, string idempotencyKey, CancellationToken ct = default);
-    /// <summary>Master maintenance. Vendor accounts mint from the V number
+    /// <summary>Master maintenance. Vendor accounts mint from the VND number
     /// sequence; a blank vendorId mints, an explicit one overrides (both
     /// uniqueness-checked). Name, country, and terms are mandatory; terms
     /// must exist. Defaults throw until the ERP layer implements them.</summary>
@@ -134,4 +146,16 @@ public interface IErpAdapter
     /// layer implements them.</summary>
     Task<ItemDto> CreateItemAsync(string itemId, string description, string unit, bool isCritical, int unitsPerCarton, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
         throw new NotSupportedException("CreateItemAsync is implemented by the ERP layer.");
+    /// <summary>Consequence preview for one pending decision: what ERP would
+    /// post on approval, the due date, the payment run it joins, who approves
+    /// next, and what stays held with its value. Computed by ERP, read-only.
+    /// Defaults throw until the ERP layer implements them.</summary>
+    Task<ConsequencePreview?> GetConsequencePreviewAsync(string documentType, string documentNumber, CancellationToken ct = default) =>
+        throw new NotSupportedException("GetConsequencePreviewAsync is implemented by the ERP layer.");
+    /// <summary>Company identity and sites for headers, addresses, and sender
+    /// context. Defaults throw until the ERP layer implements them.</summary>
+    Task<CompanyInfoDto?> GetCompanyInfoAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetCompanyInfoAsync is implemented by the ERP layer.");
+    Task<IReadOnlyList<SiteDto>> GetSitesAsync(CancellationToken ct = default) =>
+        throw new NotSupportedException("GetSitesAsync is implemented by the ERP layer.");
 }

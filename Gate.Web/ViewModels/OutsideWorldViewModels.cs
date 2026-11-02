@@ -1,19 +1,18 @@
 // Outside-world view models: the customer shop, supplier inbox, and dock
 // camera. Display and form shapes only; every option value arrives from the
-// scenario file, the run manifest, the case cache, the dock image
-// directory, or the ERP adapter at runtime. No business values in code.
+// case cache, the dock image directory, or the ERP adapter at runtime. No
+// business values in code.
 //
 // Supplier-minted numbers (ASN number, packing-slip number, lot refs,
-// invoice number) cannot come from the scenario: the supplier mints them
-// when sending. Prefills derive editable defaults from the runtime PO
-// number plus carton id (the same derivation the agent-lane tests use),
-// and the human can change every one before sending.
+// invoice number) arrive blank: the supplier types them as printed when
+// sending, and the human can change every prefilled row before sending.
 using Gate.Contracts;
 
 namespace Gate.Web.ViewModels;
 
-/// <summary>One ASN carton row in the supplier inbox. Defaults derive from
-/// the runtime case plus scenario carton; the human edits before sending.</summary>
+/// <summary>One ASN carton row in the supplier inbox. Ship-plan defaults
+/// derive from the runtime PO lines plus item pack sizes; the human edits
+/// every row before sending.</summary>
 public sealed record AsnCartonForm(
     string CartonId,
     string ItemId,
@@ -48,6 +47,28 @@ public sealed record InboxPoLineVm(
     decimal UnitPrice,
     decimal LineAmount);
 
+/// <summary>One thing the supplier already sent on this PO, with its date:
+/// acknowledgement (supplier confirm date), shipment notice (received
+/// date from the case file), or invoice (recorded date). The portal
+/// renders these as the sent history above the next action.</summary>
+public sealed record SupplierSentStep(
+    string Step,
+    string Detail);
+
+/// <summary>The one supplier action that makes sense next on this PO.
+/// The portal offers only this action; anything else waits.</summary>
+public static class SupplierNextAction
+{
+    public const string WaitCase = "wait-case";
+    public const string WaitApproval = "wait-approval";
+    public const string Acknowledge = "acknowledge";
+    public const string Ship = "ship";
+    public const string Invoice = "invoice";
+    public const string Done = "done";
+    public const string Closed = "closed";
+    public const string Unknown = "unknown";
+}
+
 /// <summary>Supplier-inbox prefill for one case: our PO, the agent mail
 /// thread, ASN plus invoice defaults, and the reply suggestion. Nulls mean
 /// the runtime source had nothing; the human types the value.</summary>
@@ -58,7 +79,9 @@ public sealed record SupplierInboxVm(
     AsnSubmission? AsnPrefill,
     InvoicePrefill? InvoicePrefill,
     ReplySuggestion Reply,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<SupplierSentStep> SentSteps,
+    string NextAction);
 
 /// <summary>Invoice prefill derived from the runtime PO lines. The number is
 /// an editable supplier-minted default; lines mirror ordered qty/price.</summary>
@@ -75,9 +98,10 @@ public sealed record SupplierPoList(
     IReadOnlyList<string> Notes);
 
 /// <summary>New shop-order lines for the document-driven shop. No SO number:
-/// the shop mints a shop order id internally and the ERP mints the SO.</summary>
+/// the shop mints a shop order id internally and the ERP mints the SO.
+/// EntityCode is the company entity from the ERP.</summary>
 public sealed record NewShopOrder(
-    string ScenarioName,
+    string EntityCode,
     string? Requester,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? CandidateVendorsByItem,
     IReadOnlyList<OrderLineForm> Lines,
@@ -97,9 +121,9 @@ public sealed record ExpectedTruckCarton(
     int UnitsPerCarton,
     string LotRef);
 
-/// <summary>One expected truck at the dock: an unreceived ASN plus its PO,
-/// vendor, linked case, and cartons. CaseId is null when no case links the
-/// ASN yet; the photo forms wait for the case.</summary>
+/// <summary>One expected truck at the dock: an ASN awaiting dock evidence
+/// plus its PO, vendor, linked case, and cartons. CaseId is null when no
+/// case links the ASN yet; the photo forms wait for the case.</summary>
 public sealed record ExpectedTruckVm(
     string AsnNumber,
     string PoNumber,
@@ -121,21 +145,25 @@ public sealed record ExpectedTrucks(
 public static class OutsideShipPlan
 {
     public static IReadOnlyList<AsnCartonForm> Build(
-        string poNumber,
         IReadOnlyList<InboxPoLineVm> lines,
         Func<string, int?> unitsPerCarton,
         List<string> notes)
     {
+        // Supplier-style labels: cartons and lots number in one global
+        // sequence across the shipment (CTN-01..., LOT-001...), the way a
+        // supplier stencil reads. No PO number ever lands on a carton id.
         var cartons = new List<AsnCartonForm>();
+        var seq = 0;
         foreach (var line in lines)
         {
             var units = unitsPerCarton(line.ItemId);
             if (units is null || units <= 0)
             {
+                seq++;
+                var fallbackId = $"CTN-{seq:00}";
                 notes.Add(
-                    $"Item {line.ItemId} has no pack size; carton {poNumber}-{line.PoLineRef}-1 starts empty.");
-                var fallbackId = $"{poNumber}-{line.PoLineRef}-1";
-                cartons.Add(new AsnCartonForm(fallbackId, line.ItemId, 0, $"{fallbackId}-LOT"));
+                    $"Item {line.ItemId} has no pack size; carton {fallbackId} starts empty.");
+                cartons.Add(new AsnCartonForm(fallbackId, line.ItemId, 0, $"LOT-{seq:000}"));
                 continue;
             }
 
@@ -152,13 +180,14 @@ public static class OutsideShipPlan
                 continue;
             }
 
-            for (var seq = 1; seq <= count; seq++)
+            for (var lineSeq = 1; lineSeq <= count; lineSeq++)
             {
-                var id = $"{poNumber}-{line.PoLineRef}-{seq}";
-                var inCarton = seq < count
+                seq++;
+                var id = $"CTN-{seq:00}";
+                var inCarton = lineSeq < count
                     ? units.Value
                     : Math.Max(1, (int)Math.Ceiling(line.QtyOrdered - ((decimal)(count - 1) * units.Value)));
-                cartons.Add(new AsnCartonForm(id, line.ItemId, inCarton, $"{id}-LOT"));
+                cartons.Add(new AsnCartonForm(id, line.ItemId, inCarton, $"LOT-{seq:000}"));
             }
         }
 

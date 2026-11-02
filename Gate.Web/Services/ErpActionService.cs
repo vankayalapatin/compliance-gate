@@ -4,6 +4,7 @@
 // as the outcome message with its reason. Human creates travel with the
 // human source and the acting user as creator.
 using System.Globalization;
+using Gate.Agent;
 using Gate.Contracts;
 using Gate.Web.ViewModels;
 
@@ -14,11 +15,13 @@ public sealed record ErpOutcome(bool Ok, string Message, string? CreatedKey = nu
 public sealed class ErpActionService
 {
     private readonly IErpAdapter _erp;
+    private readonly CaseRunner _runner;
     private readonly ILogger<ErpActionService> _log;
 
-    public ErpActionService(IErpAdapter erp, ILogger<ErpActionService> log)
+    public ErpActionService(IErpAdapter erp, CaseRunner runner, ILogger<ErpActionService> log)
     {
         _erp = erp;
+        _runner = runner;
         _log = log;
     }
 
@@ -121,14 +124,26 @@ public sealed class ErpActionService
         var comment = Optional(inputs, ErpActions.InComment);
         await _erp.RecordApprovalAsync(docType, docNumber, actor, approved, comment, NewKey(), ct)
             .ConfigureAwait(false);
-        return new ErpOutcome(true,
-            $"{docType} {docNumber} {(approved ? "approved" : "rejected")} by {actor}.");
+        // The ERP decision is committed: settle the linked case cards through
+        // the same resolver the Decisions page uses, so no card stays pending
+        // on an already-decided document. Settle failures surface as notes;
+        // they never roll back the committed approval.
+        var (settled, notes) = await _runner.SettleErpDecisionsAsync(
+            docType, docNumber, approved, actor, comment, ct).ConfigureAwait(false);
+        var message = $"{docType} {docNumber} {(approved ? "approved" : "rejected")} by {actor}.";
+        if (settled.Count > 0)
+        {
+            message += $" Settled {settled.Count} linked case card(s).";
+        }
+
+        message += string.Concat(notes.Select(n => $" {n}"));
+        return new ErpOutcome(true, message);
     }
 
     private async Task<ErpOutcome> PostInvoiceAsync(
         string vendor, string number, string actor, CancellationToken ct)
     {
-        var posted = await _erp.PostInvoiceAsync(vendor, number, actor, NewKey(), ct)
+        var posted = await _erp.PostInvoiceAsync(vendor, number, actor, NewKey(), ct: ct)
             .ConfigureAwait(false);
         return new ErpOutcome(true,
             $"Invoice {vendor}/{number} posted (voucher {posted.Voucher ?? "none"}).");
@@ -157,7 +172,7 @@ public sealed class ErpActionService
 
     private async Task<ErpOutcome> PostPaymentAsync(string key, string actor, CancellationToken ct)
     {
-        await _erp.PostPaymentAsync(key, actor, NewKey(), ct).ConfigureAwait(false);
+        await _erp.PostPaymentAsync(key, actor, NewKey(), ct: ct).ConfigureAwait(false);
         return new ErpOutcome(true, $"Payment {key} posted.");
     }
 
@@ -396,7 +411,7 @@ public sealed class ErpActionService
             var inv = await _erp.CreateInvoiceAsync(
                 supplierInvoiceNumber.Trim(), vendorId.Trim(),
                 string.IsNullOrWhiteSpace(poNumber) ? null : poNumber.Trim(),
-                RecordSource.Human, actedBy.Trim(), lines, NewKey(), ct).ConfigureAwait(false);
+                RecordSource.Human, actedBy.Trim(), lines, NewKey(), ct: ct).ConfigureAwait(false);
             return new ErpOutcome(true,
                 $"Invoice {inv.VendorId}/{inv.SupplierInvoiceNumber} created.",
                 inv.VendorId, inv.SupplierInvoiceNumber);
@@ -425,7 +440,7 @@ public sealed class ErpActionService
         try
         {
             var pay = await _erp.CreatePaymentDraftAsync(
-                invoices, payUpToDate, RecordSource.Human, actedBy.Trim(), NewKey(), ct)
+                invoices, payUpToDate, RecordSource.Human, actedBy.Trim(), NewKey(), ct: ct)
                 .ConfigureAwait(false);
             return new ErpOutcome(true, $"Payment draft {pay.PaymentNumber} created.", pay.PaymentNumber);
         }
@@ -459,7 +474,7 @@ public sealed class ErpActionService
         {
             var receipt = await _erp.PostReceiptAsync(
                 poNumber.Trim(), packingSlip.Trim(), RecordSource.Human, actedBy.Trim(),
-                lines, NewKey(), ct).ConfigureAwait(false);
+                lines, NewKey(), ct: ct).ConfigureAwait(false);
             return new ErpOutcome(true,
                 $"Receipt {receipt.ReceiptNumber} posted.", receipt.ReceiptNumber);
         }

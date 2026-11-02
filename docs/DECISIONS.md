@@ -1,6 +1,6 @@
 # ComplianceGate — Decisions (Final)
 
-Each entry: decision plus reason. Full record: PROJECT.md (Final).
+Each entry: decision plus reason. Full record: docs/DATA-MODEL.md plus docs/COMPANY-DATA.md. Early-demo history: docs/archive/ (frozen).
 
 1. Single C# Blazor app, all C#. Reason: solo plus 10 days favors one codebase and one demo URL.
 2. Mini-ERP is its own module with its own tables; agent and compliance go through a data-only adapter. Reason: a future D365/NetSuite connector can replace the adapter without touching agent logic.

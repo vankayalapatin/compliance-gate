@@ -74,6 +74,8 @@ public sealed class VendorRow
     public string CountryOfOrigin { get; set; } = string.Empty;
     public bool IsBlocked { get; set; }
     public string? BlockReason { get; set; }
+    public string? BlockedBy { get; set; }
+    public string? BlockedAt { get; set; }
     public string PaymentTermsId { get; set; } = string.Empty;
     public string? Email { get; set; }
 }
@@ -138,13 +140,42 @@ public sealed class DelegationRow
     public string End { get; set; } = string.Empty;
 }
 
-public sealed class VolumeSeedRow
+public sealed class CompanyInfoRow
+{
+    public string EntityCode { get; set; } = string.Empty;
+    public string LegalName { get; set; } = string.Empty;
+    public string Currency { get; set; } = string.Empty;
+    public string BillToAddress { get; set; } = string.Empty;
+    public string ShipToAddress { get; set; } = string.Empty;
+    public string SenderEmail { get; set; } = string.Empty;
+}
+
+public sealed class SiteRow
+{
+    public string SiteId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Address { get; set; } = string.Empty;
+    public string Capabilities { get; set; } = string.Empty;
+}
+
+public sealed class InventoryJournalRow
+{
+    public string JournalId { get; set; } = string.Empty;
+    public string JournalType { get; set; } = string.Empty;
+    public string PostingDate { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public string CreatedBy { get; set; } = string.Empty;
+    public string CreatedAt { get; set; } = string.Empty;
+}
+
+public sealed class InventoryJournalLineRow
 {
     public string RowId { get; set; } = string.Empty;
+    public string JournalId { get; set; } = string.Empty;
+    public int LineNo { get; set; }
     public string ItemId { get; set; } = string.Empty;
-    public string Source { get; set; } = string.Empty;
-    public string Country { get; set; } = string.Empty;
-    public decimal Cells { get; set; }
+    public string LotRef { get; set; } = string.Empty;
+    public decimal Quantity { get; set; }
 }
 
 public sealed class PrRow
@@ -156,6 +187,9 @@ public sealed class PrRow
     public decimal EstimatedAmount { get; set; }
     public string Source { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
+    public string? CreatedAt { get; set; }
+    public string? ApprovedBy { get; set; }
+    public string? ApprovedAt { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 
@@ -179,6 +213,9 @@ public sealed class PoRow
     public string Currency { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
+    public string? CreatedAt { get; set; }
+    public string? ApprovedBy { get; set; }
+    public string? ApprovedAt { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 
@@ -249,6 +286,10 @@ public sealed class ReceiptRow
     public string Status { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
+    public string? CreatedAt { get; set; }
+    public string? PostedBy { get; set; }
+    public string? PostedAt { get; set; }
+    public string? PostingDate { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 
@@ -308,8 +349,13 @@ public sealed class InvoiceRow
     public string Currency { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
+    public string? CreatedAt { get; set; }
+    public string? ApprovedBy { get; set; }
+    public string? ApprovedAt { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
+    public string? PostedBy { get; set; }
     public string? PostedAt { get; set; }
+    public string? DueDate { get; set; }
 }
 
 public sealed class InvoiceLineRow
@@ -355,6 +401,11 @@ public sealed class PaymentRow
     public string DueDate { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
     public string CreatedBy { get; set; } = string.Empty;
+    public string? CreatedAt { get; set; }
+    public string? ApprovedBy { get; set; }
+    public string? ApprovedAt { get; set; }
+    public string? PostedBy { get; set; }
+    public string? PostedAt { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 

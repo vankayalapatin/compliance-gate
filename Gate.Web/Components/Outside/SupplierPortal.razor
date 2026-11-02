@@ -94,6 +94,57 @@
 
         <section class="gate-card">
             <div class="gate-card-head">
+                <p class="gate-card-title">Already sent</p>
+            </div>
+            @if (_inbox.SentSteps.Count == 0)
+            {
+                <p class="gate-meta">Nothing sent on this order yet.</p>
+            }
+            else
+            {
+                <ul class="gate-list">
+                    @foreach (var step in _inbox.SentSteps)
+                    {
+                        <li>@step.Step — @step.Detail</li>
+                    }
+                </ul>
+            }
+        </section>
+
+        @if ((_ackOutcome ?? _asnOutcome ?? _invOutcome) is not null)
+        {
+            <section class="gate-card">
+                <div class="gate-card-head">
+                    <p class="gate-card-title">Latest result</p>
+                </div>
+                <OutcomeBox Outcome="@(_ackOutcome ?? _asnOutcome ?? _invOutcome)" CaseId="@CaseOrNull()" />
+            </section>
+        }
+        @if (_inbox.NextAction == SupplierNextAction.WaitApproval)
+        {
+            <div class="gate-notice" role="alert">Waiting on buyer approval before anything can be sent.</div>
+        }
+        @if (_inbox.NextAction == SupplierNextAction.Closed)
+        {
+            <div class="gate-notice" role="alert">This order is closed; nothing more to send.</div>
+        }
+        @if (_inbox.NextAction == SupplierNextAction.Done && !_extraSends)
+        {
+            <div class="gate-notice gate-notice-ok" role="alert">This order is fully sent.</div>
+            <div class="gate-actions">
+                <button class="gate-btn" disabled="@_busy" @onclick="() => _extraSends = true">Send another shipment notice or invoice</button>
+            </div>
+        }
+        @if (_inbox.NextAction == SupplierNextAction.Done && _extraSends)
+        {
+            <div class="gate-actions">
+                <button class="gate-btn" disabled="@_busy" @onclick="() => _extraSends = false">Hide extra sends</button>
+            </div>
+        }
+        @if (ShowAck())
+        {
+        <section class="gate-card">
+            <div class="gate-card-head">
                 <p class="gate-card-title">Acknowledge</p>
             </div>
             <p class="gate-meta">Confirm the full ordered quantity. The ERP refuses when the order is not approved.</p>
@@ -108,9 +159,11 @@
                     <span class="gate-meta">Sending…</span>
                 }
             </div>
-            <OutcomeBox Outcome="@_ackOutcome" CaseId="@CaseOrNull()" />
         </section>
+        }
 
+        @if (ShowShip())
+        {
         <section class="gate-card">
             <div class="gate-card-head">
                 <p class="gate-card-title">Send a shipment notice</p>
@@ -144,9 +197,11 @@
                     <span class="gate-meta">Sending…</span>
                 }
             </div>
-            <OutcomeBox Outcome="@_asnOutcome" CaseId="@CaseOrNull()" />
         </section>
+        }
 
+        @if (ShowInvoice())
+        {
         <section class="gate-card">
             <div class="gate-card-head">
                 <p class="gate-card-title">Send an invoice</p>
@@ -234,8 +289,8 @@
             {
                 <ErrorBox Message="@_uploadError" />
             }
-            <OutcomeBox Outcome="@_invOutcome" CaseId="@CaseOrNull()" />
         </section>
+        }
 
         <section class="gate-card">
             <div class="gate-card-head">
@@ -267,6 +322,10 @@
             <div class="gate-card-head">
                 <p class="gate-card-title">Reply to us</p>
             </div>
+            @if (_company is not null)
+            {
+                <p class="gate-meta">You are replying to @_company.LegalName (@_company.EntityCode). Our purchasing mailbox is @_company.SenderEmail.</p>
+            }
             <div class="gate-field">
                 <label class="gate-label" for="reply-from">From (vendor address)</label>
                 <input class="gate-input" id="reply-from" @bind="_from" />
@@ -347,6 +406,24 @@
     private string _subject = string.Empty;
     private string _body = string.Empty;
     private SimulationOutcome? _replyOutcome;
+    private bool _extraSends;
+
+    private bool ShowAck() =>
+        _inbox is not null
+        && (_inbox.NextAction == SupplierNextAction.Acknowledge
+            || _inbox.NextAction == SupplierNextAction.Unknown);
+
+    private bool ShowShip() =>
+        _inbox is not null
+        && (_inbox.NextAction == SupplierNextAction.Ship
+            || _inbox.NextAction == SupplierNextAction.Unknown
+            || (_extraSends && _inbox.NextAction == SupplierNextAction.Done));
+
+    private bool ShowInvoice() =>
+        _inbox is not null
+        && (_inbox.NextAction == SupplierNextAction.Invoice
+            || _inbox.NextAction == SupplierNextAction.Unknown
+            || (_extraSends && _inbox.NextAction == SupplierNextAction.Done));
 
     private sealed class AsnRow
     {
@@ -371,6 +448,7 @@
 
     private string _loadedVendor = string.Empty;
     private SimulateOptions? _loadedOptions;
+    private CompanyInfoDto? _company;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -383,6 +461,7 @@
 
         _loadedVendor = VendorId;
         _loadedOptions = Options;
+        _company = await Simulate.GetCompanyAsync();
         await LoadPosAsync();
     }
 
@@ -467,6 +546,7 @@
         _asnOutcome = null;
         _invOutcome = null;
         _replyOutcome = null;
+        _extraSends = false;
 
         _asnNumber = inbox.AsnPrefill?.AsnNumber ?? string.Empty;
         _slip = inbox.AsnPrefill?.PackingSlipNumber ?? string.Empty;
@@ -519,7 +599,7 @@
 
     private IReadOnlyList<string> PoChoices()
     {
-        var numbers = new SortedSet<string>(Options.PoNumbers, StringComparer.Ordinal);
+        var numbers = new SortedSet<string>(StringComparer.Ordinal);
         if (!string.IsNullOrWhiteSpace(_poNumber))
         {
             numbers.Add(_poNumber);
@@ -591,6 +671,9 @@
             _ackOutcome = await Simulate.SendAckAsync(_inbox?.CaseId, confirm);
             if (_ackOutcome.Ok)
             {
+                var posted = _ackOutcome;
+                await LoadInboxAsync();
+                _ackOutcome = posted;
                 await OnChanged.InvokeAsync();
             }
         }
@@ -617,6 +700,9 @@
                 _asnCartons.Select(c => new AsnCartonForm(c.CartonId, c.ItemId, c.Units, c.LotRef)).ToList()));
             if (_asnOutcome.Ok)
             {
+                var posted = _asnOutcome;
+                await LoadInboxAsync();
+                _asnOutcome = posted;
                 await OnChanged.InvokeAsync();
             }
         }
@@ -654,6 +740,9 @@
 
             if (_invOutcome.Ok)
             {
+                var posted = _invOutcome;
+                await LoadInboxAsync();
+                _invOutcome = posted;
                 await OnChanged.InvokeAsync();
             }
         }

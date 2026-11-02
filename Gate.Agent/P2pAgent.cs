@@ -165,7 +165,12 @@ public sealed class P2pAgent
             else if (!screening.Passed)
             {
                 var block = screening.Verdicts.First(v => v.Kind is VerdictKind.Block);
-                await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Key($"block:{screening.VendorId}"), ct).ConfigureAwait(false);
+                var blocks = screening.Verdicts.Where(v => v.Kind is VerdictKind.Block).ToList();
+                if (!(blocks.Count > 0 && blocks.All(v => _compliance.IsDocumentRule(v.RuleId))))
+                {
+                    await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Key($"block:{screening.VendorId}"), ct).ConfigureAwait(false);
+                }
+
                 await _erp.AddPoNoteAsync(prNumber, $"Vendor {screening.VendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Key($"note:{screening.VendorId}"), ct).ConfigureAwait(false);
             }
         }
@@ -211,7 +216,7 @@ public sealed class P2pAgent
                 po?.Currency ?? string.Empty, source, createdBy, string.Empty, held, results);
         }
 
-        await _erp.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, Key("create"), ct).ConfigureAwait(false);
+        await _erp.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, Key("create"), ct: ct).ConfigureAwait(false);
         var matched = new List<LineMatchResult>();
         if (holdAllReason is not null)
         {
@@ -322,11 +327,19 @@ public sealed class P2pAgent
             return (null, skipped);
         }
 
-        var draft = await _erp.CreatePaymentDraftAsync(payable, payUpToDate, source, RecordSource.P2pAgent, draftKey, ct).ConfigureAwait(false);
+        var draft = await _erp.CreatePaymentDraftAsync(payable, payUpToDate, source, RecordSource.P2pAgent, draftKey, ct: ct).ConfigureAwait(false);
         return (draft, skipped);
     }
 
+    /// <summary>Answers a human question over caller-built evidence. Business
+    /// users read the answer, so the style prompt asks for 2-4 plain
+    /// sentences with no markdown, no internal ids, and no model-spend
+    /// mention. AskWhyService mirrors this exact system text for its
+    /// replay-cache guard; keep the two identical.</summary>
     public Task<string> ExplainAsync(string question, string evidence, CancellationToken ct = default) =>
-        _models.CompleteAsync(new ModelRequest(question, $"Decide using only this evidence: {evidence}"), ct)
+        _models.CompleteAsync(new ModelRequest(question,
+            "Using only this evidence, answer in 2 to 4 plain sentences for a business user. " +
+            "Use no markdown formatting, no internal ids, and do not mention model spend. " +
+            $"Evidence: {evidence}"), ct)
             .ContinueWith(t => t.Result.Text, ct);
 }

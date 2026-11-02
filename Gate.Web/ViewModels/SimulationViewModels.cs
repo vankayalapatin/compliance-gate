@@ -1,7 +1,7 @@
 // Simulation form shapes for the outside-world surface. Display and form
-// shapes only; every option value arrives from the scenario file, the run
-// manifest, the case cache, the dock image directory, or the ERP adapter at
-// runtime. No business values in code.
+// shapes only; every option value arrives from the case cache, the dock
+// image directory, or the ERP adapter at runtime. No business values in
+// code.
 using Gate.Contracts;
 
 namespace Gate.Web.ViewModels;
@@ -14,37 +14,26 @@ public sealed record CaseOption(
     string Stage,
     string? PoNumber);
 
-/// <summary>One scenario item offered for new shop-order lines.</summary>
+/// <summary>One ERP item offered for new shop-order lines.</summary>
 public sealed record ItemOption(
     string ItemId,
     string Unit);
 
-/// <summary>One scenario carton with its part and units, for ASN prefills.
-/// Missing part/units arrive as empty/zero; the human completes them.</summary>
-public sealed record CartonOption(
-    string CartonId,
-    string ItemId,
-    int UnitsPerCarton);
-
 /// <summary>Every option list on the outside-world surface, plus notes for
 /// sources that were missing or failed. Empty lists (never null) render
-/// honest empty states; notes surface the cause.</summary>
+/// honest empty states; notes surface the cause. EntityCode is the company
+/// entity from the ERP; it travels in the order webhook's compat slot so
+/// cases link the company, never a scenario.</summary>
 public sealed record SimulateOptions(
-    string ScenarioName,
+    string EntityCode,
     string Currency,
-    IReadOnlyList<string> SoNumbers,
-    IReadOnlyList<string> PoNumbers,
     IReadOnlyList<UserDto> Users,
     IReadOnlyList<VendorDto> Vendors,
     IReadOnlyList<CaseOption> Cases,
-    IReadOnlyList<string> CartonIds,
     IReadOnlyList<string> DockImages,
     IReadOnlyList<ItemOption> Items,
     IReadOnlyDictionary<string, IReadOnlyList<string>> CandidateVendorsByItem,
-    IReadOnlyList<string> Notes,
-    IReadOnlyList<CartonOption> CartonDetails,
-    string SalesOrderItem,
-    decimal SalesOrderQuantity);
+    IReadOnlyList<string> Notes);
 
 /// <summary>One photo the human injects: an uploaded file or a server dock
 /// image, read to bytes before posting. CartonHint fills a blank label id
@@ -54,17 +43,18 @@ public sealed record SimulationPhoto(
     byte[] Jpeg,
     string? CartonHint);
 
-/// <summary>New shop-order lines for an unknown order id. Known SOs post
-/// without lines.</summary>
+/// <summary>New shop-order lines. Every order carries its own lines; the
+/// shop mints a shop order id and the ERP mints the sales order.</summary>
 public sealed record OrderLineForm(
     string ItemId,
     decimal Quantity);
 
 /// <summary>Order webhook submission. Null Requester means the ERP default
-/// requester; null Lines means a known (pre-seeded) SO.</summary>
+/// requester. The shop order id is the shop's own id, never an SO number:
+/// the ERP mints the SO on intake.</summary>
 public sealed record OrderSubmission(
-    string ScenarioName,
-    string SoNumber,
+    string EntityCode,
+    string ShopOrderId,
     string? Requester,
     IReadOnlyDictionary<string, IReadOnlyList<string>>? CandidateVendorsByItem,
     IReadOnlyList<OrderLineForm>? Lines,

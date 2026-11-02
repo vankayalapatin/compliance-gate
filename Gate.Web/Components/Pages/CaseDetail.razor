@@ -38,7 +38,6 @@ else
                 {
                     <span class="gate-chip">opening data</span>
                 }
-                <span class="gate-chip">@_detail.Case.ScenarioName</span>
             </div>
         </div>
         <p class="gate-meta">@_detail.Case.CaseId</p>
@@ -249,7 +248,7 @@ else
             _detail = await Views.GetCaseDetailAsync(CaseId);
             if (_detail is null)
             {
-                _loadError = $"Case {CaseId} has no case file.";
+                _loadError = $"Case {CaseId} was not found.";
             }
         }
         catch (Exception ex)

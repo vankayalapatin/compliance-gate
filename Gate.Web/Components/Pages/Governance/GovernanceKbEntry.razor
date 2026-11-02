@@ -16,7 +16,7 @@
     <div class="gate-erp-body">
         <div class="gate-page-head">
             <div>
-                <p class="gate-page-title"><code>kb:@Section#@EntryId&#64;@Version</code></p>
+                <p class="gate-page-title"><code>kb:@Section#@EntryId&#64;@KbDisplay.Version(Version)</code></p>
                 <p class="gate-page-sub">@Subtitle()</p>
             </div>
             <div>
@@ -48,20 +48,18 @@
                     <span class="gate-label">Stamps:</span>
                     owner @(_detail.Entry.Owner ?? "—") ·
                     status @(_detail.Entry.Status ?? "—") ·
-                    version @(_detail.Entry.Version ?? "—") ·
+                    @KbDisplay.Version(_detail.Entry.Version) ·
                     effective @(_detail.Entry.Effective ?? "—")
                 </p>
                 <p class="gate-row">
                     <span class="gate-label">Audit:</span>
-                    created @(_detail.Entry.CreatedBy ?? "—") @(_detail.Entry.CreatedAt ?? string.Empty) ·
-                    modified @(_detail.Entry.ModifiedBy ?? "—") @(_detail.Entry.ModifiedAt ?? string.Empty) ·
-                    approved @(_detail.Entry.ApprovedBy ?? "—")
+                    @AuditLine(_detail.Entry)
                 </p>
                 @if (!string.Equals(_detail.SnapshotVersion, _detail.CurrentVersion, StringComparison.Ordinal))
                 {
                     <p class="gate-row">
                         <span class="gate-label">Current:</span>
-                        <a href="/@GovernanceRoutes.KbEntryHref(_detail.CurrentVersion, Section, EntryId)">view at @_detail.CurrentVersion</a>
+                        <a href="/@GovernanceRoutes.KbEntryHref(_detail.CurrentVersion, Section, EntryId)">view at @KbDisplay.Version(_detail.CurrentVersion)</a>
                     </p>
                 }
             </section>
@@ -79,7 +77,7 @@
                         <ul class="gate-list">
                             @foreach (var use in _detail.UsedBy.Proposals)
                             {
-                                <li>memo @use.MemoId · @use.ProposalId · KB @use.KbVersion</li>
+                                <li>memo @use.MemoId · @use.ProposalId · KB @KbDisplay.Version(use.KbVersion)</li>
                             }
                         </ul>
                     }
@@ -89,7 +87,7 @@
                         <ul class="gate-list">
                             @foreach (var use in _detail.UsedBy.Activations)
                             {
-                                <li>@use.RuleId in @use.PackId @use.NewPackVersion (memo @use.MemoId · @use.ActivationId)</li>
+                                <li>@use.RuleId in @use.PackId @use.NewPackVersion (memo @use.MemoId · @KbDisplay.Activation(use.ActivationId))</li>
                             }
                         </ul>
                     }
@@ -133,7 +131,30 @@
     }
 
     private string Subtitle() =>
-        _detail is null ? "Loading…" : $"Pinned at {_detail.SnapshotVersion} · current {_detail.CurrentVersion}.";
+        _detail is null
+            ? "Loading…"
+            : $"Pinned at {KbDisplay.Version(_detail.SnapshotVersion)} · current {KbDisplay.Version(_detail.CurrentVersion)}.";
+
+    // Audit stamps with no visibly-empty halves: each stamp renders only
+    // the halves the entry carries; a stamp with neither shows unset.
+    private static string AuditLine(KbEntryVm entry)
+    {
+        var created = StampParts("created", entry.CreatedBy, entry.CreatedAt);
+        var modified = StampParts("modified", entry.ModifiedBy, entry.ModifiedAt);
+        return $"{created} · {modified} · approved {ActorLabels.Display(entry.ApprovedBy)}";
+    }
+
+    private static string StampParts(string label, string? by, string? at)
+    {
+        if (by is null && at is null)
+        {
+            return $"{label} —";
+        }
+
+        return at is null
+            ? $"{label} {ActorLabels.Display(by)}"
+            : $"{label} {ActorLabels.Display(by)} {at}";
+    }
 
     private async Task ReloadAsync()
     {

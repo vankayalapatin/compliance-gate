@@ -7,6 +7,7 @@
 // through the fake's real controls. Test data is local; nothing depends
 // on the demo numbers. No live calls.
 using Bunit;
+using Gate.Agent;
 using Gate.Contracts;
 using Gate.Erp;
 using Gate.Web.Components.Pages.Erp;
@@ -190,7 +191,7 @@ public sealed class ErpAreaTests
             _inner.CreatePoAsync(prNumber, vendorId, source, createdBy, idempotencyKey, ct);
         public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) =>
             _inner.RecordVendorConfirmationAsync(poNumber, confirmDate, source, createdBy, lines, idempotencyKey, ct);
-        public Task<AsnDto> CreateAsnAsync(string asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) =>
+        public Task<AsnDto> CreateAsnAsync(string? asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) =>
             _inner.CreateAsnAsync(asnNumber, poNumber, source, createdBy, cartons, idempotencyKey, ct);
         public Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
             _inner.UpdateSalesOrderStatusAsync(soNumber, status, actedBy, idempotencyKey, ct);
@@ -204,8 +205,8 @@ public sealed class ErpAreaTests
             _inner.AddPoNoteAsync(poNumber, note, createdBy, idempotencyKey, ct);
         public Task ClosePoAsync(string poNumber, string closedBy, string idempotencyKey, CancellationToken ct = default) =>
             _inner.ClosePoAsync(poNumber, closedBy, idempotencyKey, ct);
-        public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, CancellationToken ct = default) =>
-            _inner.PostReceiptAsync(poNumber, supplierPackingSlipNumber, source, createdBy, lines, idempotencyKey, ct);
+        public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+            _inner.PostReceiptAsync(poNumber, supplierPackingSlipNumber, source, createdBy, lines, idempotencyKey, postingDate, ct: ct);
         public Task QuarantineLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
             _inner.QuarantineLotAsync(lotRef, holdId, actedBy, idempotencyKey, ct);
         public Task ReleaseLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
@@ -216,20 +217,20 @@ public sealed class ErpAreaTests
             _inner.SetHoldAsync(reasonCode, note, ruleId, caseId, setBy, documentType, documentNumber, poLineRef, lotRef, cartonId, idempotencyKey, ct);
         public Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default) =>
             _inner.ReleaseHoldAsync(holdId, releasedBy, approvalRef, idempotencyKey, ct);
-        public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, CancellationToken ct = default) =>
-            _inner.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, idempotencyKey, ct);
+        public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, DateOnly? invoiceDate = null, CancellationToken ct = default) =>
+            _inner.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, idempotencyKey, invoiceDate, ct: ct);
         public Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default) =>
             _inner.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, results, idempotencyKey, ct);
-        public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
-            _inner.PostInvoiceAsync(vendorId, supplierInvoiceNumber, postedBy, idempotencyKey, ct);
+        public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+            _inner.PostInvoiceAsync(vendorId, supplierInvoiceNumber, postedBy, idempotencyKey, postingDate, ct: ct);
         public Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default) =>
             _inner.ReleaseHeldInvoiceLineAsync(vendorId, supplierInvoiceNumber, poLineRef, quantity, releasedBy, idempotencyKey, ct);
-        public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-            _inner.CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, ct);
-        public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-            _inner.CreatePaymentDraftAsync(invoices, payUpToDate, source, createdBy, idempotencyKey, ct);
-        public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
-            _inner.PostPaymentAsync(draftPaymentNumber, postedBy, idempotencyKey, ct);
+        public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+            _inner.CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, postingDate, ct: ct);
+        public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+            _inner.CreatePaymentDraftAsync(invoices, payUpToDate, source, createdBy, idempotencyKey, postingDate, ct: ct);
+        public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+            _inner.PostPaymentAsync(draftPaymentNumber, postedBy, idempotencyKey, postingDate, ct: ct);
         public Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default) =>
             _inner.RecordVendorBankChangeAsync(vendorId, newAccountRef, source, changedBy, idempotencyKey, ct);
         public Task<VendorBankDto> VerifyVendorBankAsync(string vendorId, string verifiedBy, string idempotencyKey, CancellationToken ct = default) =>
@@ -240,12 +241,10 @@ public sealed class ErpAreaTests
             _inner.CreateItemAsync(itemId, description, unit, isCritical, unitsPerCarton, source, createdBy, idempotencyKey, ct);
     }
 
-    private static string WriteConfig(string manifestJson = """{"scenario":"ui-erp","documents":[]}""")
+    private static string WriteConfig()
     {
         var dir = UiTestSupport.NewDir("gate-ui-erp");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "scenario.json"), "{}");
-        File.WriteAllText(Path.Combine(dir, "run-manifest.json"), manifestJson);
         return dir;
     }
 
@@ -253,18 +252,22 @@ public sealed class ErpAreaTests
         new(erp,
             new CaseViewService(erp, new CaseCacheStore(Path.Combine(dir, "cache")),
                 new DockPhotoService(Path.Combine(dir, "dock"), Path.Combine(dir, "vision")),
-                new ConfigurationBuilder()
-                    .AddInMemoryCollection(new Dictionary<string, string?>
-                    {
-                        ["Scenario:File"] = Path.Combine(dir, "scenario.json"),
-                        ["Scenario:Manifest"] = Path.Combine(dir, "run-manifest.json"),
-                    })
-                    .Build(),
                 UiTestLogger<CaseViewService>.Instance),
             UiTestLogger<ErpViewService>.Instance);
 
-    private static ErpActionService Actions(IErpAdapter erp) =>
-        new(erp, UiTestLogger<ErpActionService>.Instance);
+    private static ErpActionService Actions(IErpAdapter erp)
+    {
+        // Fresh empty case dir: record-page decisions settle nothing here.
+        var dir = UiTestSupport.NewDir("gate-ui-erp-cache");
+        var models = new FakeModelClient();
+        var compliance = new RecordingComplianceEngine();
+        return new(
+            erp,
+            new CaseRunner(
+                erp, new P2pAgent(erp, models, compliance), models, compliance,
+                new DockEvaluatorAdapter(), dir),
+            UiTestLogger<ErpActionService>.Instance);
+    }
 
     private static void SeedUsers(ListErpAdapter erp)
     {
@@ -453,21 +456,64 @@ public sealed class ErpAreaTests
     }
 
     [Fact]
-    public async Task Record_OpeningNumbersComeFromManifest()
+    public async Task Record_PrCarriesCreatedAndApprovedStamps()
     {
         var erp = new ListErpAdapter();
         SeedUsers(erp);
         var pr = await erp.CreatePrAsync(
             "requester", RecordSource.Human, "requester",
             [new PurchaseRequisitionLine("ITEM-E", 5m, "EA")], Guid.NewGuid().ToString("N"));
-        var dir = WriteConfig(
-            $$"""{"scenario":"ui-erp","documents":[{"event":"openPoInbound.pr","docType":"PR","number":"{{pr.PrNumber}}"}]}""");
-        var views = Views(erp, dir);
+        await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "requester", Guid.NewGuid().ToString("N"));
+        await erp.RecordApprovalAsync(
+            "PR", pr.PrNumber, "approver", true, "scenario seed", Guid.NewGuid().ToString("N"));
+        var views = Views(erp, WriteConfig());
 
         var record = await views.GetRecordAsync("pr", pr.PrNumber);
 
         Assert.NotNull(record);
-        Assert.Contains(pr.PrNumber, record.OpeningNumbers);
+        Assert.Contains(record.Header, f => f.Label == "Created" && f.Value.Contains("requester"));
+        Assert.Contains(record.Header, f => f.Label == "Approved" && f.Value.Contains("approver"));
+        // Loader-era comments and the system actor never render raw.
+        var approvals = Assert.Single(record.LineTables.Where(t => t.Title == "Approvals"));
+        var row = Assert.Single(approvals.Rows);
+        Assert.Equal("—", row[4].Text);
+    }
+
+    [Fact]
+    public async Task Record_PoCarriesCompanyHeader()
+    {
+        var erp = new ListErpAdapter();
+        SeedUsers(erp);
+        var prNumber = await SeedApprovedPrAsync(erp);
+        var po = await erp.CreatePoAsync(
+            prNumber, "V-E", RecordSource.Human, "requester", Guid.NewGuid().ToString("N"));
+        var views = Views(
+            new CompanyInfoErpDouble(erp, new CompanyInfoDto(
+                "LE-T", "Test Company Inc", "TST", "1 Bill St", "2 Ship St", "buy@test.example")),
+            WriteConfig());
+
+        var record = await views.GetRecordAsync("po", po.PoNumber);
+
+        Assert.NotNull(record);
+        Assert.Contains(record.Header, f => f.Label == "Company" && f.Value == "LE-T · Test Company Inc");
+        Assert.Contains(record.Header, f => f.Label == "Bill to" && f.Value == "1 Bill St");
+        Assert.Contains(record.Header, f => f.Label == "Ship to" && f.Value == "2 Ship St");
+    }
+
+    [Fact]
+    public void RoleGating_HidesQuarantineAndVendorBlockForApClerk()
+    {
+        Assert.True(RoleGating.IsApClerk("ap-clerk"));
+        Assert.False(RoleGating.IsApClerk("approver"));
+        Assert.False(RoleGating.ActionVisible("ap-clerk", ErpActions.BlockVendor));
+        Assert.False(RoleGating.ActionVisible("ap-clerk", ErpActions.UnblockVendor));
+        Assert.False(RoleGating.ActionVisible("ap-clerk", ErpActions.QuarantineLot));
+        Assert.False(RoleGating.ActionVisible("ap-clerk", ErpActions.ReleaseLot));
+        Assert.True(RoleGating.ActionVisible("ap-clerk", ErpActions.VerifyBank));
+        Assert.True(RoleGating.ActionVisible("approver", ErpActions.BlockVendor));
+        Assert.False(RoleGating.TableVisible("ap-clerk", "stock", "Lots"));
+        Assert.True(RoleGating.TableVisible("ap-clerk", "stock", "Transactions"));
+        Assert.True(RoleGating.TableVisible("approver", "stock", "Lots"));
     }
 
     [Fact]
@@ -908,119 +954,6 @@ public sealed class ErpAreaTests
             record.Actions.Select(a => a.Id).ToList());
     }
 
-    [Fact]
-    public async Task ResetSeedsOpeningDecisionsIntoClearedCache()
-    {
-        // Reset wiring for the agent lane: the stale live file is cleared
-        // away, then the lifecycle's four submitted-stage rows (PR, PO,
-        // invoice, payment) seed one opening shell each with a single
-        // pending card and zero agent-authored events, and the ERP-work
-        // pickup adopts the four actionable documents into live cases
-        // with pickup events. Document numbers come from the run manifest,
-        // never from literals. The UI lane only asserts the cache state;
-        // the projector and adopter stay agent-side.
-        var erp = new InMemoryErpAdapter();
-        var dir = UiTestSupport.NewDir("gate-ui-erp-seed");
-        Directory.CreateDirectory(dir);
-        var scenarioPath = Path.Combine(dir, "scenario.json");
-        File.WriteAllText(scenarioPath, DemoScenarioJson);
-        var manifestPath = Path.Combine(dir, "run-manifest.json");
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Scenario:File"] = scenarioPath,
-                ["Scenario:Sqlite"] = Path.Combine(dir, "gate.db"),
-                ["Scenario:Manifest"] = manifestPath,
-            })
-            .Build();
-        var cacheDir = Path.Combine(dir, "case-cache");
-        var store = new CaseCacheStore(cacheDir);
-        await store.WriteAsync(UiTestSupport.CaseFileWith("CASE-STALE", "SO-STALE", "ITEM-STALE"));
-        var models = new FakeModelClient();
-        var runner = new Gate.Agent.CaseRunner(
-            erp, new Gate.Agent.P2pAgent(erp, models, new RecordingComplianceEngine()),
-            models, new RecordingComplianceEngine(), new DockEvaluatorAdapter(), cacheDir);
-        var service = new ReplayService(
-            erp, store,
-            new DockPhotoService(Path.Combine(dir, "dock"), Path.Combine(dir, "vision")),
-            new ReplayState(), config, UiTestLogger<ReplayService>.Instance, runner);
-
-        var report = await service.ResetAsync();
-
-        Assert.Null(report.Error);
-        Assert.Contains(report.Steps, s => s.Contains("4 opening decision(s) seeded"));
-        var manifest = ManifestNumbers(manifestPath);
-        var files = await store.ListAsync();
-        Assert.DoesNotContain(files, f => f.Case.CaseId == "CASE-STALE");
-        var shells = files.Where(f => f.Case.IsOpeningData).ToList();
-        var live = files.Where(f => !f.Case.IsOpeningData).ToList();
-        Assert.Equal(4, shells.Count);
-        Assert.Equal(4, live.Count);
-        Assert.Contains(report.Steps, s => s.Contains("4 ERP-work case(s) picked up"));
-        foreach (var file in shells)
-        {
-            Assert.Empty(file.Events);
-            var card = Assert.Single(file.Decisions);
-            Assert.Equal(DecisionStatus.Pending, card.Status);
-        }
-
-        foreach (var file in live)
-        {
-            Assert.NotEmpty(file.Events);
-            Assert.True(
-                file.Case.PrNumber is not null
-                    || file.Case.PoNumber is not null
-                    || file.Case.Invoices.Count > 0);
-        }
-
-        Assert.Contains(shells, f => f.Case.PrNumber == manifest["lc.prSubmitted.pr"]);
-        Assert.Contains(shells, f => f.Case.PoNumber == manifest["lc.poSubmitted.po"]);
-        Assert.Contains(shells, f => f.Case.Invoices.Any(k =>
-            k.VendorId == "V-L" && k.SupplierInvoiceNumber == manifest["lc.inv.submitted.inv"]));
-        Assert.Contains(shells, f => f.Case.PaymentNumbers.Contains(manifest["lc.paySubmitted.pay"]));
-    }
-
-    private static Dictionary<string, string> ManifestNumbers(string manifestPath)
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
-        return doc.RootElement.GetProperty("Documents").EnumerateArray()
-            .ToDictionary(
-                d => d.GetProperty("Event").GetString() ?? string.Empty,
-                d => d.GetProperty("Number").GetString() ?? string.Empty,
-                StringComparer.Ordinal);
-    }
-
-    [Fact]
-    public async Task ResetWithoutRunnerWarnsNothingAndLeavesCacheEmpty()
-    {
-        // The runner is optional so older hosts still reset: no runner
-        // means zero seeded cards and no seed warning.
-        var dir = UiTestSupport.NewDir("gate-ui-erp-seed");
-        Directory.CreateDirectory(dir);
-        var scenarioPath = Path.Combine(dir, "scenario.json");
-        File.WriteAllText(scenarioPath, DemoScenarioJson);
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Scenario:File"] = scenarioPath,
-                ["Scenario:Sqlite"] = Path.Combine(dir, "gate.db"),
-                ["Scenario:Manifest"] = Path.Combine(dir, "run-manifest.json"),
-            })
-            .Build();
-        var store = new CaseCacheStore(Path.Combine(dir, "case-cache"));
-        var service = new ReplayService(
-            new InMemoryErpAdapter(), store,
-            new DockPhotoService(Path.Combine(dir, "dock"), Path.Combine(dir, "vision")),
-            new ReplayState(), config, UiTestLogger<ReplayService>.Instance);
-
-        var report = await service.ResetAsync();
-
-        Assert.Null(report.Error);
-        Assert.Contains(report.Steps, s => s.Contains("0 opening decision(s) seeded"));
-        Assert.DoesNotContain(report.Warnings, w => w.Contains("seed failed"));
-        Assert.Empty(await store.ListAsync());
-    }
-
     private static async Task<(string PrNumber, PurchaseOrder Po, VendorInvoice Inv)> SeedPoWithInvoiceAsync(
         ListErpAdapter erp)
     {
@@ -1123,37 +1056,4 @@ public sealed class ErpAreaTests
             Assert.Contains(ErpModules.TitleFor(link.Slug), page.Markup);
         }
     }
-
-    private const string DemoScenarioJson = """
-        {"name":"ui-erp-gap","currency":"TST",
-         "salesOrder":{"item":"ITEM-G","quantity":10},
-         "bom":[],"stock":[],
-         "openPoInbound":{"item":"ITEM-G","quantity":5,"vendor":"V-G"},
-         "items":[{"id":"ITEM-G","description":"Gap item","critical":false,"packSize":1,"unit":"EA"},
-          {"id":"ITEM-L","description":"Lifecycle item","critical":false,"packSize":1,"unit":"EA"}],
-         "paymentTerms":[{"id":"NET0","netDays":0}],
-         "vendors":[{"id":"V-G","name":"Gap Vendor","country":"US","role":"test",
-          "item":"ITEM-G","unitPrice":10,"terms":"NET0","bankAccount":"BANK-G",
-          "documents":[],"email":"g@test.example"},
-          {"id":"V-L","name":"Lifecycle Vendor","country":"US","role":"test",
-          "item":"ITEM-L","unitPrice":10,"terms":"NET0","bankAccount":"BANK-L",
-          "documents":[],"email":"l@test.example"}],
-         "historyPart":"ITEM-G","historyCells":[],
-         "users":[{"name":"requester","role":"requester","signingLimit":50},
-          {"name":"approver","role":"approver","signingLimit":1000000},
-          {"name":"finance","role":"payment-approver","signingLimit":1000000}],
-         "delegations":[],"autoApproveUnder":10,
-         "cartonPlan":{"unitsPerCarton":5,"cartons":2},
-         "smallPos":[],
-         "lifecycle":{"item":"ITEM-L","vendor":"V-L",
-          "prDraftQty":5,"prSubmittedQty":5,"prSubmittedTo":"approver","prApprovedQty":5,
-          "poDraftQty":5,"poSubmittedQty":5,"poSubmittedTo":"approver","poApprovedQty":5,
-          "backboneQty":10,"packingSlip":"PACK-T","asn":"ASN-T","carton":"CTN-T","lot":"LOT-T",
-          "invoiceSubmittedTo":"approver","paySubmittedTo":"finance",
-          "invoices":[{"key":"submitted","number":"INV-T-S","quantity":1,"stage":"submitted"},
-           {"key":"payDraft","number":"INV-T-D","quantity":1,"stage":"posted"},
-           {"key":"paySubmitted","number":"INV-T-P","quantity":1,"stage":"posted"},
-           {"key":"payApproved","number":"INV-T-G","quantity":1,"stage":"posted"},
-           {"key":"paid","number":"INV-T-F","quantity":1,"stage":"posted"}]}}
-        """;
 }

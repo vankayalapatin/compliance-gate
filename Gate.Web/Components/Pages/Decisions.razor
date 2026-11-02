@@ -128,6 +128,26 @@ else
 
     <section class="gate-card">
         <p class="gate-card-title">Decided by me (@_history.Count)</p>
+        @foreach (var settled in _outcomes.Where(kv => _history.Any(c => c.Decision.DecisionId == kv.Key)))
+        {
+            @if (settled.Value.Ok)
+            {
+                <div class="gate-notice gate-notice-ok" role="alert">@settled.Value.Message</div>
+            }
+            else
+            {
+                <div class="gate-notice gate-notice-error" role="alert"><strong>Refused.</strong> @settled.Value.Message</div>
+            }
+            @foreach (var warning in settled.Value.Warnings)
+            {
+                <div class="gate-notice" role="alert">@warning</div>
+            }
+            @if (settled.Value.AdvanceFailed)
+            {
+                var settledCaseId = _history.First(c => c.Decision.DecisionId == settled.Key).Decision.CaseId;
+                <button class="gate-btn" disabled="@_busy" @onclick="() => RetryAsync(settledCaseId, settled.Key)">Try again</button>
+            }
+        }
         @if (_history.Count == 0)
         {
             <p class="gate-meta">Nothing decided by @_selected yet.</p>
@@ -295,6 +315,27 @@ else
             Log.LogWarning(ex, "Decision {DecisionId} failed.", card.Decision.DecisionId);
             _outcomes[card.Decision.DecisionId] =
                 new DecisionOutcome(false, $"Decision failed: {ex.Message}", []);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RetryAsync(string caseId, string decisionId)
+    {
+        _busy = true;
+        try
+        {
+            _outcomes[decisionId] = await Outcomes.RetryAdvanceAsync(caseId);
+            _cards = await Views.ListDecisionCardsAsync();
+            Recompute();
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Retry advance for case {CaseId} failed.", caseId);
+            _outcomes[decisionId] =
+                new DecisionOutcome(false, $"Retry failed: {ex.Message}", []);
         }
         finally
         {

@@ -132,6 +132,103 @@ public sealed class CaseRunnerTests
     }
 
     [Fact]
+    public async Task DocumentOnlyScreeningFailureKeepsVendorBuyable()
+    {
+        var h = Create();
+        var mixed = new Dictionary<string, IReadOnlyList<string>>
+        {
+            [SeededErp.Battery] = ["V-A", "V-C", "V-B"],
+            [SeededErp.Screw] = ["V-C"]
+        };
+        var cases = await h.Runner.OnOrderWebhookAsync(
+            new OrderWebhookInput("test", "SO-1001", "planner", mixed));
+        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
+
+        await h.Runner.AdvanceAsync(battery);
+        var file = Load(h, battery);
+        await h.Runner.ResolveDecisionAsync(
+            battery, PendingDecision(file, DecisionKind.PrApproval).DecisionId, true, "delegate", "ok");
+        await h.Runner.AdvanceAsync(battery);
+
+        var screened = Load(h, battery);
+        Assert.Equal("V-B", screened.Case.AwardedVendorId);
+        var vendors = await h.Erp.GetVendorsAsync();
+        Assert.True(vendors.Single(v => v.VendorId == "V-A").IsBlocked);
+        Assert.False(vendors.Single(v => v.VendorId == "V-C").IsBlocked);
+        Assert.DoesNotContain(screened.Events,
+            e => e.Kind == CaseEventKind.VendorBlocked && e.Summary.Contains("V-C", StringComparison.Ordinal));
+        Assert.Contains(screened.Events,
+            e => e.Kind == CaseEventKind.Note
+                && e.Summary.Contains("V-C", StringComparison.Ordinal)
+                && e.Summary.Contains("vendor master untouched", StringComparison.Ordinal));
+    }
+
+    private static void SeedPricelessVendor(InMemoryErpAdapter erp)
+    {
+        erp.SeedVendor(new VendorDto("V-D", "Delta Parts Co", "US", false, null, "NET0"));
+        erp.SeedVendorDocuments("V-D", [
+            new VendorDocumentDto("V-D", "UN38.3", "un383-d", true),
+            new VendorDocumentDto("V-D", "SDS", "sds-d", true),
+            new VendorDocumentDto("V-D", "RoHS", "rohs-d", true),
+            new VendorDocumentDto("V-D", "REACH", "reach-d", true)]);
+    }
+
+    [Fact]
+    public async Task PoRefusalReawardsToNextPricedVendor()
+    {
+        var h = Create();
+        SeedPricelessVendor(h.Erp);
+        var mixed = new Dictionary<string, IReadOnlyList<string>>
+        {
+            [SeededErp.Battery] = ["V-D", "V-B"]
+        };
+        var cases = await h.Runner.OnOrderWebhookAsync(
+            new OrderWebhookInput("test", "SO-1001", "planner", mixed));
+        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
+
+        await h.Runner.AdvanceAsync(battery);
+        var file = Load(h, battery);
+        await h.Runner.ResolveDecisionAsync(
+            battery, PendingDecision(file, DecisionKind.PrApproval).DecisionId, true, "delegate", "ok");
+        await h.Runner.AdvanceAsync(battery);
+
+        var done = Load(h, battery);
+        Assert.Equal("V-B", done.Case.AwardedVendorId);
+        Assert.NotNull(done.Case.PoNumber);
+        var po = await h.Erp.GetPurchaseOrderAsync(done.Case.PoNumber);
+        Assert.Equal("V-B", po!.VendorId);
+        Assert.Contains(done.Events, e =>
+            e.Kind == CaseEventKind.Note && e.Summary.Contains("PO skipped for V-D: no price", StringComparison.Ordinal));
+        Assert.Contains(done.Events, e =>
+            e.Kind == CaseEventKind.SupplierAwarded && e.Summary.Contains("Re-awarded", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PoRefusalWithNoPricedVendorExplainsOnTimeline()
+    {
+        var h = Create();
+        SeedPricelessVendor(h.Erp);
+        var mixed = new Dictionary<string, IReadOnlyList<string>>
+        {
+            [SeededErp.Battery] = ["V-D"]
+        };
+        var cases = await h.Runner.OnOrderWebhookAsync(
+            new OrderWebhookInput("test", "SO-1001", "planner", mixed));
+        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
+
+        await h.Runner.AdvanceAsync(battery);
+        var file = Load(h, battery);
+        await h.Runner.ResolveDecisionAsync(
+            battery, PendingDecision(file, DecisionKind.PrApproval).DecisionId, true, "delegate", "ok");
+
+        var boom = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.AdvanceAsync(battery));
+        Assert.Contains("No vendor could supply", boom.Message);
+        var done = Load(h, battery);
+        Assert.Contains(done.Events, e =>
+            e.Kind == CaseEventKind.Note && e.Summary.Contains("No vendor could supply", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PrRejectionCancelsTheCase()
     {
         var h = Create();

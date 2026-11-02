@@ -29,7 +29,10 @@ public sealed class ErpDbContext : DbContext
     public DbSet<LegacyShareRow> LegacyShares => Set<LegacyShareRow>();
     public DbSet<UserRow> Users => Set<UserRow>();
     public DbSet<DelegationRow> Delegations => Set<DelegationRow>();
-    public DbSet<VolumeSeedRow> VolumeSeeds => Set<VolumeSeedRow>();
+    public DbSet<CompanyInfoRow> CompanyInfo => Set<CompanyInfoRow>();
+    public DbSet<SiteRow> Sites => Set<SiteRow>();
+    public DbSet<InventoryJournalRow> InventoryJournals => Set<InventoryJournalRow>();
+    public DbSet<InventoryJournalLineRow> InventoryJournalLines => Set<InventoryJournalLineRow>();
     public DbSet<PrRow> PurchaseRequisitions => Set<PrRow>();
     public DbSet<PrLineRow> PurchaseRequisitionLines => Set<PrLineRow>();
     public DbSet<PoRow> PurchaseOrders => Set<PoRow>();
@@ -145,11 +148,26 @@ public sealed class ErpDbContext : DbContext
             b.ToTable("Delegations");
             b.HasKey(x => x.RowId);
         });
-        modelBuilder.Entity<VolumeSeedRow>(b =>
+        modelBuilder.Entity<CompanyInfoRow>(b =>
         {
-            b.ToTable("VolumeSeeds");
+            b.ToTable("company_info");
+            b.HasKey(x => x.EntityCode);
+        });
+        modelBuilder.Entity<SiteRow>(b =>
+        {
+            b.ToTable("sites");
+            b.HasKey(x => x.SiteId);
+        });
+        modelBuilder.Entity<InventoryJournalRow>(b =>
+        {
+            b.ToTable("inventory_journals");
+            b.HasKey(x => x.JournalId);
+        });
+        modelBuilder.Entity<InventoryJournalLineRow>(b =>
+        {
+            b.ToTable("inventory_journal_lines");
             b.HasKey(x => x.RowId);
-            b.HasIndex(x => x.ItemId);
+            b.HasIndex(x => x.JournalId);
         });
         modelBuilder.Entity<PrRow>(b =>
         {

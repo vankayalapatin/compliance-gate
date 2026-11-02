@@ -81,6 +81,26 @@ public sealed class EndToEndTests
     }
 
     [Fact]
+    public async Task DocumentOnlyScreeningFailureSkipsMasterBlock()
+    {
+        var erp = SeededErp.Create();
+        var agent = new P2pAgent(erp, new FakeModelClient(), new ComplianceEngine());
+
+        var shortfall = await agent.ComputeShortfallAsync("SO-1001");
+        var pr = await agent.RaisePrAsync("planner", "approver", RecordSource.P2pAgent, shortfall);
+        await erp.RecordApprovalAsync("PR", pr.PrNumber, "approver", true, "ok", Idem());
+
+        var (po, screenings) = await agent.ScreenAndOrderAsync(
+            pr.PrNumber, ["V-C", "V-B"], RecordSource.P2pAgent, "case-doc");
+        Assert.Equal("V-B", po.VendorId);
+        var loser = screenings.Single(s => s.VendorId == "V-C");
+        Assert.False(loser.Passed);
+        Assert.Contains(loser.Verdicts, v => v.RuleId == "BAT-LI-01" && v.Kind == VerdictKind.Block);
+        var vendors = await erp.GetVendorsAsync();
+        Assert.False(vendors.Single(v => v.VendorId == "V-C").IsBlocked);
+    }
+
+    [Fact]
     public async Task HeldLinesStayOutOfPayment()
     {
         var erp = SeededErp.Create();

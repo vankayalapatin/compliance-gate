@@ -43,7 +43,7 @@
                     @foreach (var version in _versions)
                     {
                         <tr>
-                            <td><code>@version</code></td>
+                            <td><code>@KbDisplay.Version(version)</code></td>
                             <td>
                                 @if (string.Equals(version, _current, StringComparison.Ordinal))
                                 {
@@ -76,7 +76,9 @@
     }
 
     private string Subtitle() =>
-        _versions is null ? "Loading…" : $"{_versions.Count} version(s) · current {_current}.";
+        _versions is null
+            ? "Loading…"
+            : $"{_versions.Count} version(s) · current {KbDisplay.Version(_current)}.";
 
     private async Task ReloadAsync()
     {

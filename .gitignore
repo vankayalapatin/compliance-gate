@@ -5,9 +5,11 @@ TestResults/
 .vs/
 # Generated scenario run state: sequence-assigned document ids per event.
 scenarios/run-manifest.json
-# Local scenario sqlite database (lands beside the app working directory).
+# Local sqlite databases (live app state stays untracked).
 **/*.db
 **/*.db-journal
+# Exception: the shipped baseline snapshot pair.
+!Gate.Web/data/baseline/erp.db
 # Agent check runner traffic (requests, results, logs).
 .agent-checks/inbox/*.json
 .agent-checks/outbox/*.json
@@ -16,4 +18,5 @@ scenarios/run-manifest.json
 .agent-checks/.lock
 # Image-tool scratch (see DECISIONS.md 35); deliverables live in assets/.
 generated_images/
-Gate.Web/data/
+Gate.Web/data/*
+!Gate.Web/data/baseline/

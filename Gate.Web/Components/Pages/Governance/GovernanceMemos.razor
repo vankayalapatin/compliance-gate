@@ -146,8 +146,10 @@ else
                 </div>
             </div>
             <p class="gate-meta">
-                Memo @card.MemoId · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
-                · ref @(d.DocumentNumber ?? "—")
+                Memo @card.MemoId · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")@if (d.DocumentNumber is not null)
+                {
+                    <span> · ref @d.DocumentNumber</span>
+                }
             </p>
             @if (d.Amount is not null)
             {
@@ -262,7 +264,7 @@ else
             {
                 <p class="gate-row">
                     <span class="gate-label">Proposal @proposal.ProposalId</span>
-                    · KB @proposal.KbVersion · proposed @proposal.ProposedAt.ToString("u")
+                    · KB @KbDisplay.Version(proposal.KbVersion) · proposed @proposal.ProposedAt.ToString("u")
                     · hash <code>@proposal.ProposalHash</code>
                 </p>
                 <p class="gate-row">
@@ -331,8 +333,10 @@ else
                         @foreach (var q in proposal.Questions)
                         {
                             <li>
-                                [@q.QuestionId] @(q.Blocking ? "blocking" : "advisory"): @q.Question
-                                (options: @(q.Options.Count == 0 ? "none" : string.Join("; ", q.Options)))
+                                [@q.QuestionId] @(q.Blocking ? "blocking" : "advisory"): @q.Question@if (q.Options.Count > 0)
+                                {
+                                    <span> (options: @string.Join("; ", q.Options))</span>
+                                }
                             </li>
                         }
                     </ul>

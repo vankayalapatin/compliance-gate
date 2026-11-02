@@ -1,0 +1,192 @@
+@page "/search"
+@rendermode InteractiveServer
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject ErpViewService Views
+@inject CaseCacheStore Cases
+@inject ILogger<Search> Log
+
+<PageTitle>Search</PageTitle>
+
+<div class="gate-page-head">
+    <div>
+        <p class="gate-page-title">Search</p>
+        <p class="gate-page-sub">@Subtitle()</p>
+    </div>
+</div>
+
+@if (_loadError is not null)
+{
+    <ErrorBox Message="@_loadError" />
+}
+else if (_loading)
+{
+    <p class="gate-meta">Searching…</p>
+}
+else if (string.IsNullOrWhiteSpace(Q))
+{
+    <p class="gate-meta">Type a search in the top bar.</p>
+}
+else if (_hits.Count == 0)
+{
+    <p class="gate-meta">No records match “@Q”.</p>
+}
+else
+{
+    @foreach (var note in _notes)
+    {
+        <div class="gate-notice" role="alert">@note</div>
+    }
+    @foreach (var group in _hits.GroupBy(h => h.Section, StringComparer.Ordinal))
+    {
+        <section class="gate-card">
+            <p class="gate-card-title">@group.Key (@group.Count())</p>
+            <ul class="gate-list">
+                @foreach (var hit in group)
+                {
+                    <li><a href="@hit.Href">@hit.Label</a></li>
+                }
+            </ul>
+        </section>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? Q { get; set; }
+
+    private sealed record SearchHit(string Section, string Label, string Href);
+
+    private IReadOnlyList<SearchHit> _hits = [];
+    private IReadOnlyList<string> _notes = [];
+    private string? _loadError;
+    private bool _loading = true;
+
+    private string Subtitle() =>
+        string.IsNullOrWhiteSpace(Q) ? "Case-insensitive search over cases and ERP records." : $"“{Q}” · {_hits.Count} match(es).";
+
+    private static bool Matches(string? value, string query) =>
+        value is not null && value.Contains(query, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            await RunAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Search failed.");
+            _loadError = $"Search failed: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        var hits = new List<SearchHit>();
+        var notes = new List<string>();
+        var query = Q?.Trim() ?? string.Empty;
+        if (query.Length == 0)
+        {
+            _hits = hits;
+            _notes = notes;
+            return;
+        }
+
+        try
+        {
+            foreach (var file in await Cases.ListAsync())
+            {
+                var kase = file.Case;
+                if (Matches(kase.CaseId, query) || Matches(kase.SoNumber, query) || Matches(kase.ItemId, query))
+                {
+                    hits.Add(new SearchHit("Cases", CaseDisplay.DisplayName(kase), $"cases/{kase.CaseId}"));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            notes.Add($"Case search failed: {ex.Message}.");
+        }
+
+        var sos = await Views.ListSalesOrdersAsync();
+        notes.AddRange(sos.Notes);
+        foreach (var so in sos.Rows.Where(so => Matches(so.SoNumber, query)))
+        {
+            hits.Add(new SearchHit("Sales orders", so.SoNumber, ErpRoutes.RecordHref("so", so.SoNumber)));
+        }
+
+        var prs = await Views.ListPurchaseRequisitionsAsync();
+        notes.AddRange(prs.Notes);
+        foreach (var pr in prs.Rows.Where(pr => Matches(pr.PrNumber, query) || Matches(pr.Requester, query)))
+        {
+            hits.Add(new SearchHit("Purchase requisitions", pr.PrNumber, ErpRoutes.RecordHref("pr", pr.PrNumber)));
+        }
+
+        var pos = await Views.ListPurchaseOrdersAsync();
+        notes.AddRange(pos.Notes);
+        foreach (var po in pos.Rows.Where(po =>
+            Matches(po.PoNumber, query) || Matches(po.VendorId, query) || Matches(po.PrNumber, query)))
+        {
+            hits.Add(new SearchHit("Purchase orders", po.PoNumber, ErpRoutes.RecordHref("po", po.PoNumber)));
+        }
+
+        var asns = await Views.ListAsnsAsync();
+        notes.AddRange(asns.Notes);
+        foreach (var asn in asns.Rows.Where(asn => Matches(asn.AsnNumber, query) || Matches(asn.PoNumber, query)))
+        {
+            hits.Add(new SearchHit("ASNs", asn.AsnNumber, ErpRoutes.RecordHref("asn", asn.AsnNumber)));
+        }
+
+        var receipts = await Views.ListReceiptsAsync();
+        notes.AddRange(receipts.Notes);
+        foreach (var receipt in receipts.Rows.Where(receipt =>
+            Matches(receipt.ReceiptNumber, query) || Matches(receipt.PoNumber, query)))
+        {
+            hits.Add(new SearchHit("Receipts", receipt.ReceiptNumber, ErpRoutes.RecordHref("receipt", receipt.ReceiptNumber)));
+        }
+
+        var invoices = await Views.ListInvoicesAsync();
+        notes.AddRange(invoices.Notes);
+        foreach (var inv in invoices.Rows.Where(inv =>
+            Matches(inv.SupplierInvoiceNumber, query) || Matches(inv.VendorId, query)))
+        {
+            hits.Add(new SearchHit("Invoices", $"{inv.VendorId}/{inv.SupplierInvoiceNumber}",
+                ErpRoutes.RecordHref("invoice", inv.VendorId, inv.SupplierInvoiceNumber)));
+        }
+
+        var payments = await Views.ListPaymentsAsync();
+        notes.AddRange(payments.Notes);
+        foreach (var pay in payments.Rows.Where(pay => Matches(pay.PaymentNumber, query)))
+        {
+            hits.Add(new SearchHit("Payments", pay.PaymentNumber, ErpRoutes.RecordHref("payment", pay.PaymentNumber)));
+        }
+
+        var vendors = await Views.ListVendorsAsync();
+        notes.AddRange(vendors.Notes);
+        foreach (var vendor in vendors.Rows.Where(vendor =>
+            Matches(vendor.VendorId, query) || Matches(vendor.Name, query)))
+        {
+            hits.Add(new SearchHit("Vendors", $"{vendor.VendorId} — {vendor.Name}",
+                ErpRoutes.RecordHref("vendor", vendor.VendorId)));
+        }
+
+        var items = await Views.ListItemsAsync();
+        notes.AddRange(items.Notes);
+        foreach (var item in items.Rows.Where(item =>
+            Matches(item.ItemId, query) || Matches(item.Description, query)))
+        {
+            hits.Add(new SearchHit("Items", $"{item.ItemId} — {item.Description}",
+                ErpRoutes.RecordHref("item", item.ItemId)));
+        }
+
+        _hits = hits;
+        _notes = notes;
+    }
+}

@@ -1,3 +1,5 @@
+# ARCHIVED — early-demo history, not spec. Frozen, do not edit.
+
 # ComplianceGate — Demo Scenario (Planned)
 
 Status: **Planned, not built.** This file is the single source of truth for the

@@ -181,7 +181,8 @@ public sealed class EfCoreBatch3Tests
         await PostedInvoiceAsync(erp, "INV-E2");
         var early = await fx.Db.VendorInvoices.FindAsync(["V-B", "INV-E1"]);
         Assert.NotNull(early);
-        early.PostedAt = DateTimeOffset.UtcNow.AddDays(-10).ToString("O", CultureInfo.InvariantCulture);
+        early.DueDate = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime).AddDays(-10)
+            .ToString("O", CultureInfo.InvariantCulture);
         await fx.Db.SaveChangesAsync();
         var keys = new[] { new InvoiceKey("V-B", "INV-E1"), new InvoiceKey("V-B", "INV-E2") };
         var full = await erp.CreatePaymentDraftAsync(keys, RecordSource.P2pAgent, "planner", Idem());
@@ -290,7 +291,7 @@ public sealed class EfCoreBatch3Tests
             .UseSqlite($"Data Source={erpFile}")
             .Options;
         await using var db = new ErpDbContext(options);
-        var erp = new EfCoreErpAdapter(db);
+        var erp = new EfCoreErpAdapter(options);
         try
         {
             await ScenarioLoader.ResetAsync(erp, path,

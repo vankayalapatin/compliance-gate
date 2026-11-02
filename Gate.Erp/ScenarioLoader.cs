@@ -51,9 +51,10 @@ public static class ScenarioLoader
 
         if (adapter is EfCoreErpAdapter ef)
         {
-            await ef.Db.Database.MigrateAsync(ct).ConfigureAwait(false);
-            ErpSeeder.SeedMasters(ef.Db, scenario, now);
-            ErpSeeder.ApplyNumberSequences(ef.Db, scenario.NumberSequences ?? []);
+            using var db = ef.DbFactory.CreateDbContext();
+            await db.Database.MigrateAsync(ct).ConfigureAwait(false);
+            ErpSeeder.SeedMasters(db, scenario, now);
+            ErpSeeder.ApplyNumberSequences(db, scenario.NumberSequences ?? []);
         }
         else if (adapter is InMemoryErpAdapter erp)
         {
@@ -138,7 +139,8 @@ public static class ScenarioLoader
             }
             else if (adapter is EfCoreErpAdapter efPrices)
             {
-                ErpSeeder.UpsertVendorPrice(efPrices.Db, small.Vendor, small.Item, small.UnitPrice);
+                using var priceDb = efPrices.DbFactory.CreateDbContext();
+                ErpSeeder.UpsertVendorPrice(priceDb, small.Vendor, small.Item, small.UnitPrice);
             }
             var created = await CreateApprovedPoAsync(
                 adapter, requester, approver, UnitFor(small.Item),
@@ -153,11 +155,11 @@ public static class ScenarioLoader
                 ?? throw new InvalidOperationException($"Small PO {created.PoNumber} vanished after seeding.");
             await adapter.CreateInvoiceAsync(seedInvoice, small.Vendor, created.PoNumber, RecordSource.Erp, requester,
                 smallPo.Lines.Select(l => new InvoiceLineInput(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList(),
-                Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+                Guid.NewGuid().ToString("N"), ct: ct).ConfigureAwait(false);
             var seedInvKey = $"{small.Vendor}/{seedInvoice}";
             await adapter.SubmitForApprovalAsync("Invoice", seedInvKey, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
             await adapter.RecordApprovalAsync("Invoice", seedInvKey, approver, true, "scenario seed", Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
-            await adapter.PostInvoiceAsync(small.Vendor, seedInvoice, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+            await adapter.PostInvoiceAsync(small.Vendor, seedInvoice, requester, Guid.NewGuid().ToString("N"), ct: ct).ConfigureAwait(false);
             Record($"smallPo.{small.Key}.invoice", "INV", seedInvoice);
             await adapter.ClosePoAsync(created.PoNumber, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         }
@@ -197,9 +199,7 @@ public static class ScenarioLoader
         }
         else if (adapter is EfCoreErpAdapter ef)
         {
-            await ef.Db.Database.EnsureDeletedAsync(ct).ConfigureAwait(false);
-            ef.Db.ChangeTracker.Clear();
-            await ef.Db.Database.MigrateAsync(ct).ConfigureAwait(false);
+            await ef.ResetDatabaseForTestsAsync(ct).ConfigureAwait(false);
         }
         else
         {
@@ -338,7 +338,7 @@ public static class ScenarioLoader
         record("lc.backbone.asn", "ASN", asn.AsnNumber);
         var receipt = await erp.PostReceiptAsync(backbonePo.PoNumber, lc.PackingSlip,
             RecordSource.P2pAgent, requester,
-            [new ReceiptLine(backboneLine, lc.BackboneQty, 0, 0, lc.Lot, null)], Idem(), ct).ConfigureAwait(false);
+            [new ReceiptLine(backboneLine, lc.BackboneQty, 0, 0, lc.Lot, null)], Idem(), ct: ct).ConfigureAwait(false);
         record("lc.backbone.receipt", "RCP", receipt.ReceiptNumber);
 
         // PR stages: draft, submitted (pending), approved.
@@ -381,7 +381,7 @@ public static class ScenarioLoader
             await erp.CreateInvoiceAsync(intent.Number, lc.Vendor, backbonePo.PoNumber,
                 RecordSource.Vendor, requester,
                 [new InvoiceLineInput(backboneLine, intent.Quantity, backbonePo.Lines[0].UnitPrice)],
-                Idem(), ct).ConfigureAwait(false);
+                Idem(), ct: ct).ConfigureAwait(false);
             var key = $"{lc.Vendor}/{intent.Number}";
             switch (intent.Stage)
             {
@@ -408,7 +408,7 @@ public static class ScenarioLoader
             }
             if (intent.Stage == "posted")
             {
-                await erp.PostInvoiceAsync(lc.Vendor, intent.Number, requester, Idem(), ct).ConfigureAwait(false);
+                await erp.PostInvoiceAsync(lc.Vendor, intent.Number, requester, Idem(), ct: ct).ConfigureAwait(false);
             }
             record($"lc.inv.{intent.Key}.inv", "INV", intent.Number);
             return intent.Number;
@@ -432,25 +432,25 @@ public static class ScenarioLoader
 
         var payDraft = await erp.CreatePaymentDraftAsync(
             [new InvoiceKey(lc.Vendor, PostedInvoice("payDraft"))],
-            RecordSource.P2pAgent, requester, Idem(), ct).ConfigureAwait(false);
+            RecordSource.P2pAgent, requester, Idem(), ct: ct).ConfigureAwait(false);
         record("lc.payDraft.pay", "PAY", payDraft.PaymentNumber);
         var paySubmitted = await erp.CreatePaymentDraftAsync(
             [new InvoiceKey(lc.Vendor, PostedInvoice("paySubmitted"))],
-            RecordSource.P2pAgent, requester, Idem(), ct).ConfigureAwait(false);
+            RecordSource.P2pAgent, requester, Idem(), ct: ct).ConfigureAwait(false);
         await erp.SubmitForApprovalAsync("Payment", paySubmitted.PaymentNumber, lc.PaySubmittedTo, requester, Idem(), ct).ConfigureAwait(false);
         record("lc.paySubmitted.pay", "PAY", paySubmitted.PaymentNumber);
         var payApproved = await erp.CreatePaymentDraftAsync(
             [new InvoiceKey(lc.Vendor, PostedInvoice("payApproved"))],
-            RecordSource.P2pAgent, requester, Idem(), ct).ConfigureAwait(false);
+            RecordSource.P2pAgent, requester, Idem(), ct: ct).ConfigureAwait(false);
         await erp.SubmitForApprovalAsync("Payment", payApproved.PaymentNumber, finance, requester, Idem(), ct).ConfigureAwait(false);
         await erp.RecordApprovalAsync("Payment", payApproved.PaymentNumber, finance, true, "scenario seed", Idem(), ct).ConfigureAwait(false);
         record("lc.payApproved.pay", "PAY", payApproved.PaymentNumber);
         var payPosted = await erp.CreatePaymentDraftAsync(
             [new InvoiceKey(lc.Vendor, PostedInvoice("paid"))],
-            RecordSource.P2pAgent, requester, Idem(), ct).ConfigureAwait(false);
+            RecordSource.P2pAgent, requester, Idem(), ct: ct).ConfigureAwait(false);
         await erp.SubmitForApprovalAsync("Payment", payPosted.PaymentNumber, finance, requester, Idem(), ct).ConfigureAwait(false);
         await erp.RecordApprovalAsync("Payment", payPosted.PaymentNumber, finance, true, "scenario seed", Idem(), ct).ConfigureAwait(false);
-        var posted = await erp.PostPaymentAsync(payPosted.PaymentNumber, finance, Idem(), ct).ConfigureAwait(false);
+        var posted = await erp.PostPaymentAsync(payPosted.PaymentNumber, finance, Idem(), ct: ct).ConfigureAwait(false);
         record("lc.payPosted.pay", "PAY", posted.PaymentNumber);
     }
 

@@ -16,16 +16,24 @@ var builder = WebApplication.CreateBuilder(args);
 var spark = new SparkOptions();
 builder.Configuration.GetSection("MetaApi").Bind(spark);
 builder.Services.AddSingleton(spark);
-// Real ERP: EF Core over sqlite, one context per scope. The in-memory fake
-// stays for unit tests only and never backs the app.
-var erpSqlite = Path.GetFullPath(ScenarioEndpoints.ErpSqlitePath(builder.Configuration));
+// Real ERP: EF Core over sqlite, one context per adapter call from the
+// factory. A single scoped context breaks under interleaved Blazor circuit
+// handlers ("a second operation was started on this context") and serves
+// stale tracked reads; per-call contexts keep handlers independent and
+// reads fresh. The in-memory fake stays for unit tests only and never
+// backs the app.
+var erpSqlite = Path.GetFullPath(BaselineRestore.LiveErpPath(builder.Configuration));
 var erpDir = Path.GetDirectoryName(erpSqlite);
 if (!string.IsNullOrEmpty(erpDir))
 {
     Directory.CreateDirectory(erpDir);
 }
-builder.Services.AddDbContext<ErpDbContext>(options => options.UseSqlite($"Data Source={erpSqlite}"));
-builder.Services.AddScoped<IErpAdapter, EfCoreErpAdapter>();
+builder.Services.AddDbContextFactory<ErpDbContext>(options => options.UseSqlite($"Data Source={erpSqlite}"));
+// Factory lambda, not the bare type: the adapter also carries a unit-test
+// options constructor, and DI refuses the ambiguous pair. Production
+// always resolves through the context factory.
+builder.Services.AddScoped<IErpAdapter>(sp =>
+    new EfCoreErpAdapter(sp.GetRequiredService<IDbContextFactory<ErpDbContext>>()));
 builder.Services.AddSingleton<IComplianceEngine, ComplianceEngine>();
 // Spend ledger: process-wide, config-driven (ModelSpend section). The
 // meter wraps the live client only, between the cache and Spark, so
@@ -84,20 +92,19 @@ builder.Services.AddScoped(sp => new MemoSubmitService(
 builder.Services.AddScoped(sp => new AskWhyService(
     sp.GetRequiredService<P2pAgent>(),
     sp.GetRequiredService<IModelClient>(),
+    sp.GetRequiredService<IErpAdapter>(),
     sp.GetRequiredService<CaseCacheStore>(),
     sp.GetRequiredService<DockPhotoService>(),
     sp.GetRequiredService<ReplayState>(),
     sp.GetRequiredService<ILogger<AskWhyService>>(),
-    ModelCachePaths.ResolveDir(),
-    sp.GetRequiredService<ModelSpendTracker>()));
+    ModelCachePaths.ResolveDir()));
 builder.Services.AddScoped(sp => new ReplayService(
-    sp.GetRequiredService<IErpAdapter>(),
     sp.GetRequiredService<CaseCacheStore>(),
     sp.GetRequiredService<DockPhotoService>(),
     sp.GetRequiredService<ReplayState>(),
     sp.GetRequiredService<IConfiguration>(),
     sp.GetRequiredService<ILogger<ReplayService>>(),
-    sp.GetService<CaseRunner>(),
+    sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath,
     sp.GetRequiredService<ModelSpendTracker>()));
 // Outside-world surface: posts the human's external inputs back to this
 // app's own simulation endpoints. The generous timeout covers photo
@@ -133,16 +140,21 @@ app.UseAntiforgery();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-// Scenario seed (additive): migrates the ERP database, then fills sqlite +
-// ERP from GATE_SCENARIO on startup when the store is empty; no-op when no
-// scenario file resolves.
+// Startup restore: with missing live stores the shipped snapshot pair is
+// copied into the live paths (logged as 'Baseline restored'); otherwise
+// the app starts on its live stores. Then migrations bring the ERP
+// database current. Zero model calls on this path.
 using (var startup = app.Services.CreateScope())
 {
-    var db = startup.ServiceProvider.GetRequiredService<ErpDbContext>();
+    var services = startup.ServiceProvider;
+    await BaselineRestore.EnsureAsync(
+        app.Environment.ContentRootPath,
+        builder.Configuration,
+        services.GetRequiredService<ILoggerFactory>().CreateLogger("BaselineRestore"));
+    var factory = services.GetRequiredService<IDbContextFactory<ErpDbContext>>();
+    using var db = factory.CreateDbContext();
     await db.Database.MigrateAsync();
-    await ScenarioEndpoints.EnsureLoadedAsync(startup.ServiceProvider, builder.Configuration);
 }
-app.MapScenarioReset();
 app.MapAgentPickup();
 app.MapDockImages();
 app.MapSimulation();

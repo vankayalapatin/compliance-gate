@@ -1,10 +1,8 @@
 // Simulate-surface service tests: options come from runtime sources only
-// (temp scenario, temp manifest, fake ERP, temp cache, temp dock dir —
-// never the demo numbers), every POST wires to the existing simulation
-// endpoint path with the endpoint's input shape, successes parse, and
-// every refusal and failure surfaces with context. No live calls. Scenario
-// and manifest paths arrive via in-memory configuration, so these tests
-// never touch GATE_MANIFEST / GATE_SCENARIO (see RecordsViewTests).
+// (fake ERP, temp case dir, temp dock dir — never company-data numbers),
+// every POST wires to the existing simulation endpoint path with the
+// endpoint's input shape, successes parse, and every refusal and failure
+// surfaces with context. No live calls.
 using System.Net;
 using System.Text.Json;
 using Gate.Agent;
@@ -53,36 +51,18 @@ public sealed class SimulationUiTests
     private sealed record Harness(
         SimulationUiService Service, StubHandler Http, string CacheDir, InMemoryErpAdapter Erp);
 
-    private static Harness Create(
-        string? scenarioJson = null, string? manifestJson = null, bool seedErp = true)
+    private static Harness Create(bool seedErp = true)
     {
         var dir = UiTestSupport.NewDir("gate-ui-sim");
-        var scenarioPath = Path.Combine(dir, "scenario.json");
-        var manifestPath = Path.Combine(dir, "run-manifest.json");
         Directory.CreateDirectory(dir);
-        if (scenarioJson is not null)
-        {
-            File.WriteAllText(scenarioPath, scenarioJson);
-        }
-
-        if (manifestJson is not null)
-        {
-            File.WriteAllText(manifestPath, manifestJson);
-        }
-
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Scenario:File"] = scenarioPath,
-                ["Scenario:Manifest"] = manifestPath,
-            })
-            .Build();
         var erp = new InMemoryErpAdapter();
         if (seedErp)
         {
             erp.SeedBaseCurrency("TST");
             erp.SeedAutoApproveThreshold(10m);
             erp.SeedPaymentTerms(new PaymentTermsDto("NET0", 0));
+            erp.SeedItem(new ItemDto("ITEM-1", "Test item 1", false, 10, "EA"));
+            erp.SeedItem(new ItemDto("ITEM-2", "Test item 2", false, 5, "EA"));
             erp.SeedVendor(new VendorDto("V-2", "No Mail Vendor", "US", false, null, "NET0"));
             erp.SeedVendor(new VendorDto("V-1", "Mail Vendor", "US", false, null, "NET0", "vendor@test.example"));
             erp.SeedVendorPrice("V-1", "ITEM-1", 10m);
@@ -98,22 +78,9 @@ public sealed class SimulationUiTests
         var service = new SimulationUiService(
             http, erp, new CaseCacheStore(cacheDir),
             new DockPhotoService(dockDir, Path.Combine(dir, "vision")),
-            config, UiTestLogger<SimulationUiService>.Instance);
+            UiTestLogger<SimulationUiService>.Instance);
         return new Harness(service, stub, cacheDir, erp);
     }
-
-    private const string ScenarioJson = """
-        {"name":"ui-sim","currency":"TST",
-         "items":[{"id":"ITEM-1","unit":"EA"},{"id":"ITEM-2"}],
-         "vendors":[{"id":"V-1","item":"ITEM-1"},{"id":"V-2","item":"ITEM-1"},{"id":"V-3","item":"ITEM-2"}],
-         "cartons":[{"id":"CTN-A"},{"id":"CTN-B"}]}
-        """;
-
-    private const string ManifestJson = """
-        {"scenario":"ui-sim","documents":[
-         {"event":"salesOrder","docType":"SO","number":"SO-7"},
-         {"event":"openPo.po","docType":"PO","number":"PO-7"}]}
-        """;
 
     private static void Respond(Harness h, string json, HttpStatusCode status = HttpStatusCode.OK) =>
         h.Http.Response = new HttpResponseMessage(status)
@@ -126,45 +93,92 @@ public sealed class SimulationUiTests
         ?? throw new InvalidOperationException($"POST body did not parse as {typeof(T).Name}.");
 
     [Fact]
-    public async Task OptionsComeFromRuntimeSources()
+    public async Task OptionsComeFromErpAndCaseDir()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         await File.WriteAllBytesAsync(
             Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "dock", "IMG-T.jpg"), [1, 2, 3]);
+        // Base originals are working files, never counter photos.
+        await File.WriteAllBytesAsync(
+            Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "dock", "IMG-T-base.jpg"), [4, 5, 6]);
         await new CaseCacheStore(h.CacheDir).WriteAsync(
             UiTestSupport.CaseFileWith("CASE-1", "SO-7", "ITEM-1"));
 
         var options = await h.Service.GetOptionsAsync();
 
-        Assert.Equal("ui-sim", options.ScenarioName);
-        Assert.Equal("TST", options.Currency);
-        Assert.Equal(new[] {"SO-7"}, options.SoNumbers);
-        Assert.Equal(new[] {"PO-7"}, options.PoNumbers);
+        // The fake serves no company info: entity and currency stay empty
+        // with a note, never guessed.
+        Assert.Empty(options.EntityCode);
+        Assert.Empty(options.Currency);
+        Assert.Contains(options.Notes, n => n.Contains("Company info"));
         Assert.Equal(2, options.Users.Count);
         Assert.Equal(new[] {"V-1", "V-2"}, options.Vendors.Select(v => v.VendorId).ToList());
         var kase = Assert.Single(options.Cases);
         Assert.Equal("CASE-1", kase.CaseId);
-        Assert.Equal(new[] {"CTN-A", "CTN-B"}, options.CartonIds);
         Assert.Equal(new[] {"IMG-T.jpg"}, options.DockImages);
         Assert.Equal(new[] {"ITEM-1", "ITEM-2"}, options.Items.Select(i => i.ItemId).ToList());
-        Assert.Equal(new[] {"V-1", "V-2"}, options.CandidateVendorsByItem["ITEM-1"]);
-        Assert.Equal(new[] {"V-3"}, options.CandidateVendorsByItem["ITEM-2"]);
-        Assert.Empty(options.Notes);
+        Assert.Equal("EA", options.Items[0].Unit);
+        // Candidates are the vendors carrying a price for the item: V-1
+        // prices ITEM-1 only, and nothing prices ITEM-2.
+        Assert.Equal(new[] {"V-1"}, options.CandidateVendorsByItem["ITEM-1"]);
+        Assert.Empty(options.CandidateVendorsByItem["ITEM-2"]);
     }
 
     [Fact]
-    public async Task MissingScenarioAndManifestYieldNotesNotErrors()
+    public void DockCounterSplitsPalletViewsFromReshotCloseUp()
+    {
+        // Dock-camera modes: a first check offers pallet views, a reshot
+        // offers the close-up only, and base originals appear in neither.
+        var files = new[]
+        {
+            "IMG-01.jpg", "IMG-02.jpg", "IMG-03.jpg", "IMG-04.jpg",
+            "IMG-01-base.jpg", "IMG-02-base.jpg", "IMG-03-base.jpg",
+        };
+
+        Assert.Equal(
+            new[] { "IMG-01.jpg", "IMG-02.jpg", "IMG-03.jpg" },
+            DockPhotoService.OfferedCounterImages(files, reshot: false));
+        Assert.Equal(
+            new[] { "IMG-04.jpg" },
+            DockPhotoService.OfferedCounterImages(files, reshot: true));
+    }
+
+    [Fact]
+    public async Task OptionsCarryCompanyInfoWhenServed()
     {
         var h = Create();
+        var company = new CompanyInfoDto(
+            "LE-T", "Test Company Inc", "TST", "1 Bill St", "2 Ship St", "buy@test.example");
+        var service = new SimulationUiService(
+            new HttpClient(h.Http) { BaseAddress = new Uri("http://localhost/") },
+            new CompanyInfoErpDouble(h.Erp, company),
+            new CaseCacheStore(h.CacheDir),
+            new DockPhotoService(
+                Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "dock"),
+                Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "vision")),
+            UiTestLogger<SimulationUiService>.Instance);
+
+        var options = await service.GetOptionsAsync();
+
+        Assert.Equal("LE-T", options.EntityCode);
+        Assert.Equal("TST", options.Currency);
+        Assert.DoesNotContain(options.Notes, n => n.Contains("Company info"));
+    }
+
+    [Fact]
+    public async Task EmptyErpYieldsEmptyOptionsWithNotes()
+    {
+        var h = Create(seedErp: false);
         await new CaseCacheStore(h.CacheDir).WriteAsync(
             UiTestSupport.CaseFileWith("CASE-1", "SO-7", "ITEM-1"));
 
         var options = await h.Service.GetOptionsAsync();
 
-        Assert.Empty(options.ScenarioName);
-        Assert.Empty(options.SoNumbers);
-        Assert.Empty(options.PoNumbers);
-        Assert.Empty(options.CartonIds);
+        Assert.Empty(options.EntityCode);
+        Assert.Empty(options.Users);
+        Assert.Empty(options.Vendors);
+        Assert.Empty(options.Items);
+        Assert.Empty(options.CandidateVendorsByItem);
         Assert.NotEmpty(options.Notes);
         Assert.Single(options.Cases);
     }
@@ -172,23 +186,23 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendOrderPostsWebhookShapeAndParsesAdvances()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """
             {"caseIds":["CASE-1"],"advances":[
              {"caseId":"CASE-1","stage":"Created","step":"RaisePr","complete":false}]}
             """);
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SO-7", "requester",
+            "LE-T", "SHOP-7", "requester",
             new Dictionary<string, IReadOnlyList<string>> { ["ITEM-1"] = ["V-1"] },
-            null, null));
+            [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.Equal(1, h.Http.CallCount);
         Assert.Equal(HttpMethod.Post, h.Http.LastRequest!.Method);
         Assert.Equal(SimulationUiService.OrderPath, h.Http.LastRequest.RequestUri!.AbsolutePath);
         var sent = SentAs<OrderWebhookInput>(h);
-        Assert.Equal("ui-sim", sent.ScenarioName);
-        Assert.Equal("SO-7", sent.SoNumber);
+        Assert.Equal("LE-T", sent.ScenarioName);
+        Assert.Equal("SHOP-7", sent.SoNumber);
         Assert.Equal("requester", sent.Requester);
         Assert.Equal(new[] {"V-1"}, sent.CandidateVendorsByItem!["ITEM-1"]);
         Assert.False(string.IsNullOrWhiteSpace(sent.IdempotencyKey));
@@ -200,11 +214,11 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendOrderWithLinesCarriesCurrency()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """{"caseIds":[],"advances":[]}""");
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SHOP-9", null, null,
+            "LE-T", "SHOP-9", null, null,
             [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.True(outcome.Ok, outcome.Summary);
@@ -215,22 +229,36 @@ public sealed class SimulationUiTests
     }
 
     [Fact]
-    public async Task SendOrderRefusesBlankSo()
+    public async Task SendOrderRefusesBlankShopId()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "  ", "requester", null, null, null));
+            "LE-T", "  ", "requester", null,
+            [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.False(outcome.Ok);
-        Assert.Contains("SO number", outcome.Summary);
+        Assert.Contains("Shop order id", outcome.Summary);
+        Assert.Equal(0, h.Http.CallCount);
+    }
+
+    [Fact]
+    public async Task SendOrderRefusesWithoutLines()
+    {
+        var h = Create();
+
+        var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
+            "LE-T", "SHOP-9", null, null, null, "TST"));
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("order line", outcome.Summary);
         Assert.Equal(0, h.Http.CallCount);
     }
 
     [Fact]
     public async Task SendOrderRefusesNullSubmission()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendOrderAsync(null!);
 
@@ -239,25 +267,26 @@ public sealed class SimulationUiTests
     }
 
     [Fact]
-    public async Task SendOrderRefusesBlankScenario()
+    public async Task SendOrderRefusesBlankEntity()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "  ", "SO-7", null, null, null, null));
+            "  ", "SHOP-9", null, null,
+            [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.False(outcome.Ok);
-        Assert.Contains("Scenario", outcome.Summary);
+        Assert.Contains("Company code", outcome.Summary);
         Assert.Equal(0, h.Http.CallCount);
     }
 
     [Fact]
     public async Task SendOrderRefusesLineWithoutItem()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SHOP-9", null, null, [new OrderLineForm("", 5m)], "TST"));
+            "LE-T", "SHOP-9", null, null, [new OrderLineForm("", 5m)], "TST"));
 
         Assert.False(outcome.Ok);
         Assert.Contains("item", outcome.Summary);
@@ -267,10 +296,10 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendOrderRefusesLineWithoutQuantity()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SHOP-9", null, null, [new OrderLineForm("ITEM-1", 0m)], "TST"));
+            "LE-T", "SHOP-9", null, null, [new OrderLineForm("ITEM-1", 0m)], "TST"));
 
         Assert.False(outcome.Ok);
         Assert.Contains("quantity", outcome.Summary);
@@ -280,10 +309,10 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendOrderRefusesLinesWithoutCurrency()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SHOP-9", null, null, [new OrderLineForm("ITEM-1", 5m)], null));
+            "LE-T", "SHOP-9", null, null, [new OrderLineForm("ITEM-1", 5m)], null));
 
         Assert.False(outcome.Ok);
         Assert.Contains("currency", outcome.Summary);
@@ -293,7 +322,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendDockPhotosPostsBytesAndParsesCartons()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """{"cartons":["CTN-A"],"step":"EvaluateDock","complete":false}""");
 
         var outcome = await h.Service.SendDockPhotosAsync(
@@ -315,7 +344,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendDockPhotosRefusesWithoutPhotos()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendDockPhotosAsync("CASE-1", []);
 
@@ -327,7 +356,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendDockPhotosRefusesWithoutCase()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendDockPhotosAsync(
             null, [new SimulationPhoto("IMG-T.jpg", [1], null)]);
@@ -340,7 +369,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendDockPhotosRefusesEmptyBytes()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendDockPhotosAsync(
             "CASE-1", [new SimulationPhoto("IMG-T.jpg", [], null)]);
@@ -353,7 +382,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendReshotPostsCartonsAndPhotos()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """{"Cartons":["CTN-B"],"Step":"EvaluateReshot","Complete":true}""");
 
         var outcome = await h.Service.SendReshotAsync(
@@ -372,7 +401,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendReshotRefusesWithoutCase()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendReshotAsync(
             null, ["CTN-A"], [new SimulationPhoto("IMG-R.jpg", [4], null)]);
@@ -385,7 +414,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendReshotRefusesWithoutCartons()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendReshotAsync(
             "CASE-1", [], [new SimulationPhoto("IMG-R.jpg", [4], null)]);
@@ -398,7 +427,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoicePostsTypedLinesAndParsesValues()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """
             {"invoice":"V-1/INV-1","persisted":true,"acceptedValue":100,"heldValue":0,
              "step":"Match","complete":true}
@@ -426,7 +455,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoiceAllowsBlankVendorForMissingFieldsPath()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """
             {"invoice":"/INV-2","persisted":true,"acceptedValue":0,"heldValue":50,
              "step":"Match","complete":false}
@@ -445,7 +474,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoiceRefusesWithoutCase()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendInvoiceAsync(
             null, "INV-1", "V-1", "PO-7", [new InvoiceLineForm("L1", 1m, 1m)], null);
@@ -458,7 +487,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoiceRefusesWithoutLines()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendInvoiceAsync("CASE-1", "INV-1", "V-1", "PO-7", [], null);
 
@@ -470,7 +499,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoiceRefusesZeroQuantity()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendInvoiceAsync(
             "CASE-1", "INV-1", "V-1", "PO-7", [new InvoiceLineForm("L1", 0m, 20m)], null);
@@ -483,7 +512,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoiceRefusesNegativePrice()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendInvoiceAsync(
             "CASE-1", "INV-1", "V-1", "PO-7", [new InvoiceLineForm("L1", 1m, -1m)], null);
@@ -496,7 +525,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoicePhotosPostsPhotoShape()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """
             {"invoice":"V-1/INV-9","persisted":true,"acceptedValue":10,"heldValue":0,
              "step":"Match","complete":false}
@@ -516,7 +545,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoicePhotosRefusesWithoutCase()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendInvoicePhotosAsync(
             null, [new SimulationPhoto("PAGE-1.jpg", [9], null)]);
@@ -529,7 +558,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendInvoicePhotosRefusesWithoutPhotos()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendInvoicePhotosAsync("CASE-1", []);
 
@@ -541,7 +570,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendVendorReplyPostsReplyShapeAndParsesMail()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, """{"emailId":"E-9","step":"ReadReply","complete":false}""");
 
         var outcome = await h.Service.SendVendorReplyAsync(
@@ -561,7 +590,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendVendorReplyRefusesWithoutCase()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendVendorReplyAsync(null, "v@t", "Hi.", null, null);
 
@@ -573,7 +602,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendVendorReplyRefusesBlankBody()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendVendorReplyAsync(
             "CASE-1", "vendor@test.example", "  ", null, null);
@@ -586,7 +615,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SendVendorReplyRefusesBlankFrom()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         var outcome = await h.Service.SendVendorReplyAsync("CASE-1", null, "Hello.", null, null);
 
@@ -598,7 +627,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task FailureSurfacesStatusAndBody()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, "Unknown case CASE-X.", HttpStatusCode.BadRequest);
 
         var outcome = await h.Service.SendDockPhotosAsync(
@@ -613,7 +642,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task TransportErrorRetriesOnceThenSurfacesWithContext()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         h.Http.FailuresBeforeSuccess = 10;
         h.Http.Throw = new HttpRequestException("No connection could be made.");
 
@@ -629,7 +658,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task RetryReusesTheSameIdempotentPayload()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         h.Http.FailuresBeforeSuccess = 1;
         Respond(h, """{"emailId":"E-9","step":"ReadReply","complete":false}""");
 
@@ -646,14 +675,15 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task CallerCancellationNeverRetries()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         h.Http.FailuresBeforeSuccess = 10;
         h.Http.Throw = new TaskCanceledException("Caller went away.");
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
         var outcome = await h.Service.SendOrderAsync(
-            new OrderSubmission("ui-sim", "SO-7", null, null, null, null), cts.Token);
+            new OrderSubmission("LE-T", "SHOP-7", null, null,
+                [new OrderLineForm("ITEM-1", 5m)], "TST"), cts.Token);
 
         Assert.False(outcome.Ok);
         Assert.Equal(1, h.Http.CallCount);
@@ -663,13 +693,14 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task ClientTimeoutRetriesOnce()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         h.Http.FailuresBeforeSuccess = 1;
         h.Http.Throw = new TaskCanceledException("Client timed out.");
         Respond(h, """{"caseIds":[],"advances":[]}""");
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SO-7", null, null, null, null));
+            "LE-T", "SHOP-7", null, null,
+            [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.True(outcome.Ok, outcome.Summary);
         Assert.Equal(2, h.Http.CallCount);
@@ -678,11 +709,12 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task UnexpectedShapeStillReportsSuccessWithBody()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         Respond(h, "not json");
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
-            "ui-sim", "SO-7", null, null, null, null));
+            "LE-T", "SHOP-7", null, null,
+            [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.True(outcome.Ok);
         Assert.Contains("unexpected", outcome.Summary);
@@ -692,7 +724,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task ReadMailReturnsThreadInOrder()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         await new CaseMailStore(h.CacheDir).WriteAsync(new CaseMail("CASE-1",
         [
             new VendorEmail("E-2", "CASE-1", "V-1", "vendor@test.example", "p2p-agent",
@@ -711,7 +743,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task ReadMailMissingYieldsEmpty()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
         Assert.Empty(await h.Service.ReadMailAsync("CASE-MISSING"));
     }
@@ -719,7 +751,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SuggestReplyPrefillsFromAgentQuery()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         await new CaseMailStore(h.CacheDir).WriteAsync(new CaseMail("CASE-1",
         [
             new VendorEmail("E-1", "CASE-1", "V-1", RecordSource.P2pAgent, "vendor@test.example",
@@ -737,7 +769,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SuggestReplyFallsBackToLatestVendorMessage()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         await new CaseMailStore(h.CacheDir).WriteAsync(new CaseMail("CASE-1",
         [
             new VendorEmail("E-1", "CASE-1", "V-1", "vendor@test.example", "p2p-agent",
@@ -754,7 +786,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task SuggestReplyWithNoThreadResolvesVendorEmail()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         var pr = await h.Erp.CreatePrAsync(
             "requester", RecordSource.P2pAgent, "requester",
             [new PurchaseRequisitionLine("ITEM-1", 5m, "EA")], Guid.NewGuid().ToString("N"));
@@ -764,7 +796,7 @@ public sealed class SimulationUiTests
             pr.PrNumber, "V-1", RecordSource.P2pAgent, "requester", Guid.NewGuid().ToString("N"));
         var now = DateTimeOffset.UtcNow;
         await new CaseCacheStore(h.CacheDir).WriteAsync(new CaseFile(
-            new Case("CASE-1", "SO-7", "ITEM-1", "ui-sim", CaseStage.Created, now, now,
+            new Case("CASE-1", "SO-7", "ITEM-1", "LE-T", CaseStage.Created, now, now,
                 pr.PrNumber, po.PoNumber, null, null, [], [], null, null),
             [], []));
 
@@ -777,7 +809,7 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task DockImageReadReturnsBytes()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         var path = Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "dock", "IMG-T.jpg");
         await File.WriteAllBytesAsync(path, [1, 2, 3]);
 
@@ -790,18 +822,18 @@ public sealed class SimulationUiTests
     [Fact]
     public async Task DockImageReadRefusesTraversal()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
 
-        var (bytes, error) = await h.Service.TryReadDockImageAsync("../scenario.json");
+        var (bytes, error) = await h.Service.TryReadDockImageAsync("../secret.json");
 
         Assert.Null(bytes);
-        Assert.Contains("../scenario.json", error);
+        Assert.Contains("../secret.json", error);
     }
 
     [Fact]
     public async Task PoLinesComeFromErp()
     {
-        var h = Create(ScenarioJson, ManifestJson);
+        var h = Create();
         var pr = await h.Erp.CreatePrAsync(
             "requester", RecordSource.P2pAgent, "requester",
             [new PurchaseRequisitionLine("ITEM-1", 5m, "EA")], Guid.NewGuid().ToString("N"));

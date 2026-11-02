@@ -137,7 +137,8 @@ public sealed class GovernanceKbTests
         var views = new KbViewService(engine, UiTestLogger<KbViewService>.Instance);
 
         var stale = await views.FindEntryAsync("kbv4", "items", "BAT-9", []);
-        Assert.Contains(stale.Notes, n => n.Contains("kbv9"));
+        Assert.Contains(stale.Notes, n => n.Contains("version 9"));
+        Assert.DoesNotContain(stale.Notes, n => n.Contains("kbv"));
 
         var missingEntry = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             views.FindEntryAsync("kbv9", "items", "missing", []));

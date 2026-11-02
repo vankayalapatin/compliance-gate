@@ -10,17 +10,23 @@ adapter interface, and this file change in the lead session only.
   receipts, invoices) plus pipeline list queries (open PRs, draft POs, open
   invoices, open payments, unreceived ASNs) for what-if gather, plus
   full-list reads per document type, POs-by-vendor, items, all inventory
-  transactions, and pending approvals for the ERP area. Writes take intent
-  plus audit actor plus idempotency key; ERP reads limits, amounts, dates,
-  statuses, vouchers, and bank snapshots itself. Master writes create
-  vendors (V sequence with manual override) and items (manual numbers).
+  transactions, pending approvals, consequence previews, and company/site
+  info for the ERP area. Writes take intent plus audit actor plus
+  idempotency key plus optional business date (null means today); ERP
+  reads limits, amounts, dates, statuses, vouchers, and bank snapshots
+  itself. ASNs mint from the ASN sequence (null mints, explicit records
+  the supplier ref). Master writes create vendors (VND sequence with
+  manual override) and items (manual numbers).
   Number format, padding, and start come from the scenario number-seq
   setup; each sequence starts after seeded history.
 - `Gate.Contracts/Documents.cs` — canonical plain-DTO P2P model (vendor, PR,
   PO, confirmation, ASN with cartons, receipt, invoice with line
   dispositions, payment with bank snapshot, settlement, hold with rule id
-  plus case link, approvals, inventory transactions, pending approvals).
-  Carton splits use `ItemDto.UnitsPerCarton` (ceil per PO line).
+  plus case link, approvals, inventory transactions, pending approvals,
+  consequence preview, company info, sites). Carton splits use
+  `ItemDto.UnitsPerCarton` (ceil per PO line). PR/PO carry created +
+  approved stamps; receipt/invoice/payment carry created + approved +
+  posted stamps; invoice carries its due date.
 - `Gate.Contracts/ICompliance.cs` — compliance verdicts. C# decides, every
   block cites rule id plus stored source. Document packs (BAT-LI, ELEC)
   apply to critical parts only (`ItemDto.IsCritical`); non-critical parts

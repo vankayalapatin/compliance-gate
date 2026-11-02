@@ -101,6 +101,8 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("CountryOfOrigin").HasColumnType("TEXT");
             b.Property<bool>("IsBlocked").HasColumnType("INTEGER");
             b.Property<string>("BlockReason").HasColumnType("TEXT");
+            b.Property<string>("BlockedBy").HasColumnType("TEXT");
+            b.Property<string>("BlockedAt").HasColumnType("TEXT");
             b.Property<string>("PaymentTermsId").HasColumnType("TEXT");
             b.Property<string>("Email").HasColumnType("TEXT");
             b.HasKey("VendorId");
@@ -184,16 +186,51 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.ToTable("Delegations", (string)null);
         });
 
-        modelBuilder.Entity("Gate.Erp.VolumeSeedRow", b =>
+        modelBuilder.Entity("Gate.Erp.CompanyInfoRow", b =>
+        {
+            b.Property<string>("EntityCode").HasColumnType("TEXT");
+            b.Property<string>("LegalName").HasColumnType("TEXT");
+            b.Property<string>("Currency").HasColumnType("TEXT");
+            b.Property<string>("BillToAddress").HasColumnType("TEXT");
+            b.Property<string>("ShipToAddress").HasColumnType("TEXT");
+            b.Property<string>("SenderEmail").HasColumnType("TEXT");
+            b.HasKey("EntityCode");
+            b.ToTable("company_info", (string)null);
+        });
+
+        modelBuilder.Entity("Gate.Erp.SiteRow", b =>
+        {
+            b.Property<string>("SiteId").HasColumnType("TEXT");
+            b.Property<string>("Name").HasColumnType("TEXT");
+            b.Property<string>("Address").HasColumnType("TEXT");
+            b.Property<string>("Capabilities").HasColumnType("TEXT");
+            b.HasKey("SiteId");
+            b.ToTable("sites", (string)null);
+        });
+
+        modelBuilder.Entity("Gate.Erp.InventoryJournalRow", b =>
+        {
+            b.Property<string>("JournalId").HasColumnType("TEXT");
+            b.Property<string>("JournalType").HasColumnType("TEXT");
+            b.Property<string>("PostingDate").HasColumnType("TEXT");
+            b.Property<string>("Reason").HasColumnType("TEXT");
+            b.Property<string>("CreatedBy").HasColumnType("TEXT");
+            b.Property<string>("CreatedAt").HasColumnType("TEXT");
+            b.HasKey("JournalId");
+            b.ToTable("inventory_journals", (string)null);
+        });
+
+        modelBuilder.Entity("Gate.Erp.InventoryJournalLineRow", b =>
         {
             b.Property<string>("RowId").HasColumnType("TEXT");
+            b.Property<string>("JournalId").HasColumnType("TEXT");
+            b.Property<int>("LineNo").HasColumnType("INTEGER");
             b.Property<string>("ItemId").HasColumnType("TEXT");
-            b.Property<string>("Source").HasColumnType("TEXT");
-            b.Property<string>("Country").HasColumnType("TEXT");
-            b.Property<decimal>("Cells").HasColumnType("TEXT");
+            b.Property<string>("LotRef").HasColumnType("TEXT");
+            b.Property<decimal>("Quantity").HasColumnType("TEXT");
             b.HasKey("RowId");
-            b.HasIndex("ItemId");
-            b.ToTable("VolumeSeeds", (string)null);
+            b.HasIndex("JournalId");
+            b.ToTable("inventory_journal_lines", (string)null);
         });
 
         modelBuilder.Entity("Gate.Erp.PrRow", b =>
@@ -205,6 +242,9 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<decimal>("EstimatedAmount").HasColumnType("TEXT");
             b.Property<string>("Source").HasColumnType("TEXT");
             b.Property<string>("CreatedBy").HasColumnType("TEXT");
+            b.Property<string>("CreatedAt").HasColumnType("TEXT");
+            b.Property<string>("ApprovedBy").HasColumnType("TEXT");
+            b.Property<string>("ApprovedAt").HasColumnType("TEXT");
             b.Property<string>("IdempotencyKey").HasColumnType("TEXT");
             b.HasKey("PrNumber");
             b.ToTable("PurchaseRequisitions", (string)null);
@@ -232,6 +272,9 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("Currency").HasColumnType("TEXT");
             b.Property<string>("Source").HasColumnType("TEXT");
             b.Property<string>("CreatedBy").HasColumnType("TEXT");
+            b.Property<string>("CreatedAt").HasColumnType("TEXT");
+            b.Property<string>("ApprovedBy").HasColumnType("TEXT");
+            b.Property<string>("ApprovedAt").HasColumnType("TEXT");
             b.Property<string>("IdempotencyKey").HasColumnType("TEXT");
             b.HasKey("PoNumber");
             b.ToTable("PurchaseOrders", (string)null);
@@ -318,6 +361,10 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("Status").HasColumnType("TEXT");
             b.Property<string>("Source").HasColumnType("TEXT");
             b.Property<string>("CreatedBy").HasColumnType("TEXT");
+            b.Property<string>("CreatedAt").HasColumnType("TEXT");
+            b.Property<string>("PostedBy").HasColumnType("TEXT");
+            b.Property<string>("PostedAt").HasColumnType("TEXT");
+            b.Property<string>("PostingDate").HasColumnType("TEXT");
             b.Property<string>("IdempotencyKey").HasColumnType("TEXT");
             b.HasKey("ReceiptNumber");
             b.HasIndex("PoNumber");
@@ -390,8 +437,13 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("Currency").HasColumnType("TEXT");
             b.Property<string>("Source").HasColumnType("TEXT");
             b.Property<string>("CreatedBy").HasColumnType("TEXT");
+            b.Property<string>("CreatedAt").HasColumnType("TEXT");
+            b.Property<string>("ApprovedBy").HasColumnType("TEXT");
+            b.Property<string>("ApprovedAt").HasColumnType("TEXT");
             b.Property<string>("IdempotencyKey").HasColumnType("TEXT");
+            b.Property<string>("PostedBy").HasColumnType("TEXT");
             b.Property<string>("PostedAt").HasColumnType("TEXT");
+            b.Property<string>("DueDate").HasColumnType("TEXT");
             b.HasKey("VendorId", "SupplierInvoiceNumber");
             b.ToTable("VendorInvoices", (string)null);
         });
@@ -447,6 +499,11 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("DueDate").HasColumnType("TEXT");
             b.Property<string>("Source").HasColumnType("TEXT");
             b.Property<string>("CreatedBy").HasColumnType("TEXT");
+            b.Property<string>("CreatedAt").HasColumnType("TEXT");
+            b.Property<string>("ApprovedBy").HasColumnType("TEXT");
+            b.Property<string>("ApprovedAt").HasColumnType("TEXT");
+            b.Property<string>("PostedBy").HasColumnType("TEXT");
+            b.Property<string>("PostedAt").HasColumnType("TEXT");
             b.Property<string>("IdempotencyKey").HasColumnType("TEXT");
             b.HasKey("PaymentNumber");
             b.ToTable("Payments", (string)null);

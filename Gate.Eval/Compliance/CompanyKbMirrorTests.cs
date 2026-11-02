@@ -65,7 +65,7 @@ public sealed class CompanyKbMirrorTests
     public async Task HighestKbStillMirrorsScenarioSeededErp()
     {
         var (kb, erp) = await LoadHighestKbAndSeededErpAsync();
-        await AssertOverlapAsync(kb, erp, "kbv2");
+        await AssertOverlapAsync(kb, erp, "kbv3");
     }
 
     private static async Task AssertOverlapAsync(CompanyKbFile kb, InMemoryErpAdapter erp, string expectedVersion)

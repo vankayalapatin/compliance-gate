@@ -1,6 +1,6 @@
 # ComplianceGate — Product (Final)
 
-Source of truth for decisions: PROJECT.md (Final). This file is the product view; docs/DECISIONS.md is the decision-by-decision view.
+Source of truth for decisions: docs/DATA-MODEL.md plus docs/COMPANY-DATA.md. Early-demo history lives frozen in docs/archive/. This file is the product view; docs/DECISIONS.md is the decision-by-decision view.
 
 ## Problem (one line)
 A carton arrived without battery marking and nobody noticed until a carrier rejected it.

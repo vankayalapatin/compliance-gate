@@ -1,44 +1,58 @@
 #!/usr/bin/env bash
-# Scenario smoke: boots the web app with a scenario file, shows the generated
-# manifest, exercises wipe-plus-reload, then stops the app.
-# Usage: ./scripts/scenario-smoke.sh [scenarios/demo-v1.json]
+# Baseline smoke: boots the web app on wiped live databases, waits for the
+# startup baseline restore, then checks the app answers HTTP 200.
+# Usage: ./scripts/scenario-smoke.sh
 # Requires: the app builds; port 5295 free (override with PORT=...).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SCENARIO="${1:-scenarios/demo-v1.json}"
 PORT="${PORT:-5295}"
 APP_URL="http://localhost:${PORT}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LOG="/tmp/gate-baseline-smoke.log"
 
 dotnet build Gate.Web/Gate.Web.csproj --nologo -v q
 
-# Absolute paths: dotnet run executes with the project directory as its
-# working directory, so relative store paths would land under Gate.Web/
-# while cleanup here would miss them (stale store, permanent no-op load).
-rm -f "${ROOT}/data/gate.db" "${ROOT}/data/erp.db" "${ROOT}/scenarios/run-manifest.json"
+# Wipe LIVE databases only. The shipped snapshot pair at
+# Gate.Web/data/baseline/ is never touched; startup restore copies it over
+# the live stores.
+rm -f "${ROOT}/Gate.Web/data/erp.db" "${ROOT}/Gate.Web/data/erp.db-wal" \
+  "${ROOT}/Gate.Web/data/erp.db-shm" "${ROOT}/Gate.Web/data/erp.db-journal"
+rm -f "${ROOT}/data/erp.db" "${ROOT}/data/erp.db-wal" \
+  "${ROOT}/data/erp.db-shm" "${ROOT}/data/erp.db-journal"
+rm -f "${ROOT}/Gate.Web/data/gate.db" "${ROOT}/data/gate.db"
+rm -f "${ROOT}/scenarios/run-manifest.json"
 
-GATE_SCENARIO="${SCENARIO}" GATE_SQLITE="${ROOT}/data/gate.db" GATE_ERP_SQLITE="${ROOT}/data/erp.db" GATE_MANIFEST="${ROOT}/scenarios/run-manifest.json" \
-  dotnet run --project Gate.Web --no-build --urls "${APP_URL}" > /tmp/gate-scenario-smoke.log 2>&1 &
+dotnet run --project Gate.Web --no-build --urls "${APP_URL}" > "${LOG}" 2>&1 &
 APP_PID=$!
 trap 'kill ${APP_PID} 2>/dev/null || true' EXIT
 
+echo "-- waiting for 'Baseline restored' in ${LOG}"
+RESTORED=0
+for _ in $(seq 1 120); do
+  if grep -q "Baseline restored" "${LOG}" 2>/dev/null; then RESTORED=1; break; fi
+  if ! kill -0 "${APP_PID}" 2>/dev/null; then break; fi
+  sleep 1
+done
+if [ "${RESTORED}" -ne 1 ]; then
+  echo "FAIL: 'Baseline restored' never logged. Last log lines:"
+  tail -n 40 "${LOG}" 2>/dev/null || true
+  exit 1
+fi
+
 echo "-- waiting for app on ${APP_URL}"
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   if curl -sf "${APP_URL}/" > /dev/null 2>&1; then break; fi
   sleep 1
 done
 
-echo "-- manifest after startup load --"
-cat scenarios/run-manifest.json
-
-echo "-- POST /scenario/reset (wipe plus reload) --"
-curl -sf -X POST "${APP_URL}/scenario/reset"
-echo
-
-echo "-- manifest after reset --"
-cat scenarios/run-manifest.json
+CODE="$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/" || true)"
+if [ "${CODE}" != "200" ]; then
+  echo "FAIL: expected HTTP 200 on ${APP_URL}/, got ${CODE}."
+  tail -n 40 "${LOG}" 2>/dev/null || true
+  exit 1
+fi
 
 kill "${APP_PID}" 2>/dev/null || true
 trap - EXIT
-echo "OK: startup load + reset both wrote the manifest."
+echo "OK: baseline restored at startup and / answers 200."

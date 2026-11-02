@@ -69,7 +69,7 @@ public sealed class VendorResetTests
                     .UseSqlite($"Data Source={erpFile}")
                     .Options;
                 db = new ErpDbContext(options);
-                erp = new EfCoreErpAdapter(db);
+                erp = new EfCoreErpAdapter(options);
             }
             else
             {
@@ -166,7 +166,7 @@ public sealed class VendorResetTests
                     .UseSqlite($"Data Source={Path.Combine(workDir, "erp.db")}")
                     .Options;
                 db = new ErpDbContext(options);
-                erp = new EfCoreErpAdapter(db);
+                erp = new EfCoreErpAdapter(options);
             }
             else
             {

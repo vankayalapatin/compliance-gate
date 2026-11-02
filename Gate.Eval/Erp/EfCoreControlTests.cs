@@ -340,7 +340,7 @@ public sealed class EfCoreControlTests
             .UseSqlite($"Data Source={erpFile}")
             .Options;
         await using var db = new ErpDbContext(options);
-        var erp = new EfCoreErpAdapter(db);
+        var erp = new EfCoreErpAdapter(options);
         var sqlite = Path.Combine(workDir, "gate.db");
         var manifestFile = Path.Combine(workDir, "run-manifest.json");
         try

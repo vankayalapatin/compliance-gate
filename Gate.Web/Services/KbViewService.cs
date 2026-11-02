@@ -151,7 +151,7 @@ public sealed class KbViewService
         var notes = new List<string>();
         if (!string.Equals(snapshot.KbVersion, version, StringComparison.Ordinal))
         {
-            notes.Add($"Asked for '{version}'; the seam returned '{snapshot.KbVersion}'.");
+            notes.Add($"Asked for '{KbDisplay.Version(version)}'; the seam returned '{KbDisplay.Version(snapshot.KbVersion)}'.");
         }
 
         IReadOnlyList<KbEntryVm> rows;
@@ -162,7 +162,7 @@ public sealed class KbViewService
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                $"KB '{snapshot.KbVersion}' section '{section}' failed: {ex.Message}", ex);
+                $"KB '{KbDisplay.Version(snapshot.KbVersion)}' section '{section}' failed: {ex.Message}", ex);
         }
 
         var entry = rows.FirstOrDefault(e =>
@@ -170,14 +170,14 @@ public sealed class KbViewService
         if (entry is null)
         {
             throw new InvalidOperationException(
-                $"KB '{snapshot.KbVersion}' section '{section}' carries no entry '{entryId}' " +
+                $"KB '{KbDisplay.Version(snapshot.KbVersion)}' section '{section}' carries no entry '{entryId}' " +
                 $"({rows.Count} entr(y/ies) present).");
         }
 
         if (!string.Equals(snapshot.KbVersion, current.KbVersion, StringComparison.Ordinal))
         {
             notes.Add(
-                $"Pinned at {snapshot.KbVersion}; current is {current.KbVersion}. " +
+                $"Pinned at {KbDisplay.Version(snapshot.KbVersion)}; current is {KbDisplay.Version(current.KbVersion)}. " +
                 "Grounding may be stale.");
         }
 

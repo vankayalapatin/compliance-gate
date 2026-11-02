@@ -133,11 +133,13 @@ public static class PolicyLabels
         || decision.DecidedBy is null
         || decision.DecidedAt is null
             ? "Not yet decided; the pin (proposal hash + KB version + approver + timestamp) lands on decision."
-            : $"hash {decision.DocumentNumber} · KB {kbVersion ?? "—"} · " +
-              $"{decision.DecidedBy} · {decision.DecidedAt:u}";
+            : $"hash {decision.DocumentNumber} · KB {KbDisplay.Version(kbVersion)} · " +
+              $"{ActorLabels.Display(decision.DecidedBy)} · {decision.DecidedAt:u}";
 
-    /// <summary>Wire form kb:&lt;section&gt;#&lt;id&gt;@&lt;version&gt;.</summary>
-    public static string Citation(KbCitation citation) => KbCitations.Format(citation);
+    /// <summary>Citation for display: kb:&lt;section&gt;#&lt;id&gt;@&lt;version&gt;
+    /// with the version in display form ("version N", never kbvN).</summary>
+    public static string Citation(KbCitation citation) =>
+        $"kb:{citation.Section}#{citation.EntryId}@{KbDisplay.Version(citation.KbVersion)}";
 
     /// <summary>One flip's money, always with its currency.</summary>
     public static string FlipMoney(decimal amount, string? currency) =>

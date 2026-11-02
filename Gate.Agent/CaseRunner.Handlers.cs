@@ -209,7 +209,7 @@ public partial class CaseRunner
             }).ToList();
             receipt = await _erp.PostReceiptAsync(
                 po.PoNumber, input.SupplierPackingSlipNumber, RecordSource.P2pAgent, createdBy,
-                lines, $"{current.CaseId}:receipt:{asn.AsnNumber}", ct).ConfigureAwait(false);
+                lines, $"{current.CaseId}:receipt:{asn.AsnNumber}", ct: ct).ConfigureAwait(false);
         }
 
         var work = new CaseWork(file);
@@ -276,7 +276,9 @@ public partial class CaseRunner
                 asnIds = replayAsn?.Cartons.Select(c => c.CartonId).ToList() ?? [];
             }
 
-            return _dock.EvaluateDock(asnIds, reads);
+            var replayed = _dock.EvaluateDock(asnIds, reads);
+            CaseStore.SaveDock(_cacheDir, new DockEvidence(caseId, reads, replayed, DateTimeOffset.UtcNow));
+            return replayed;
         }
 
         var outcome = await EvaluateCartonsAsync(file, null, reads, isReshot: false, ct).ConfigureAwait(false);
@@ -288,6 +290,7 @@ public partial class CaseRunner
             documentType: "Receipt", documentNumber: work.Current.ReceiptNumber);
         work.Stage(CaseStage.DockChecked);
         work.Save(_cacheDir);
+        CaseStore.SaveDock(_cacheDir, new DockEvidence(caseId, reads, outcome, DateTimeOffset.UtcNow));
         return outcome;
     }
 
@@ -328,6 +331,21 @@ public partial class CaseRunner
         }
 
         work.Save(_cacheDir);
+        var reshot = new HashSet<string>(input.CartonIds, StringComparer.Ordinal);
+        var prior = CaseStore.LoadDock(_cacheDir, input.CaseId);
+        var mergedReads = (prior?.Reads ?? [])
+            .Where(r => !reshot.Contains(r.CartonId))
+            .Concat(input.Reads)
+            .ToList();
+        var mergedVerdicts = new Dictionary<string, IReadOnlyList<Verdict>>(
+            prior?.Verdicts ?? new Dictionary<string, IReadOnlyList<Verdict>>(),
+            StringComparer.Ordinal);
+        foreach (var (cartonId, verdicts) in outcome)
+        {
+            mergedVerdicts[cartonId] = verdicts;
+        }
+
+        CaseStore.SaveDock(_cacheDir, new DockEvidence(input.CaseId, mergedReads, mergedVerdicts, DateTimeOffset.UtcNow));
         return outcome;
     }
 
@@ -870,6 +888,53 @@ public partial class CaseRunner
         return updated;
     }
 
+    /// <summary>Settles pending case cards linked to an ERP document that was
+    /// just decided outside the Decisions page (the ERP record page). Each
+    /// linked approval decision resolves through the same resolver the
+    /// Decisions page uses; the ERP re-call is a same-actor no-op. Returns
+    /// the settled decision ids plus one note per decision that could not
+    /// settle, so the committed ERP decision still stands with its warnings
+    /// surfaced.</summary>
+    public async Task<(IReadOnlyList<string> Settled, IReadOnlyList<string> Notes)> SettleErpDecisionsAsync(
+        string documentType, string documentNumber, bool approved, string decidedBy,
+        string? comment = null, CancellationToken ct = default)
+    {
+        var settled = new List<string>();
+        var notes = new List<string>();
+        foreach (var caseId in CaseStore.ListCaseIds(_cacheDir))
+        {
+            var file = CaseStore.Load(_cacheDir, caseId);
+            if (file is null)
+            {
+                continue;
+            }
+
+            var linked = file.Decisions
+                .Where(d => d.Status == DecisionStatus.Pending
+                    && d.Kind is DecisionKind.PrApproval or DecisionKind.PoApproval
+                        or DecisionKind.InvoiceApproval or DecisionKind.PaymentApproval
+                    && string.Equals(d.DocumentType, documentType, StringComparison.Ordinal)
+                    && string.Equals(d.DocumentNumber, documentNumber, StringComparison.Ordinal))
+                .ToList();
+            foreach (var decision in linked)
+            {
+                try
+                {
+                    await ResolveDecisionAsync(
+                        caseId, decision.DecisionId, approved, decidedBy, comment, ct).ConfigureAwait(false);
+                    settled.Add($"{caseId}:{decision.DecisionId}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Linked decision {DecisionId} on case {CaseId} did not settle.", decision.DecisionId, caseId);
+                    notes.Add($"Card {decision.DecisionId} on case {caseId} did not settle: {ex.Message}");
+                }
+            }
+        }
+
+        return (settled, notes);
+    }
+
     private async Task<Decision> ResolvePrApprovalAsync(
         CaseWork work, Decision decision, bool approved, string decidedBy, string? comment,
         CancellationToken ct)
@@ -944,7 +1009,7 @@ public partial class CaseRunner
         var (vendorId, invoiceNumber) = SplitInvoiceDoc(doc);
         var posted = await _erp.PostInvoiceAsync(
             vendorId, invoiceNumber, decidedBy,
-            $"{work.Current.CaseId}:{decision.DecisionId}:post", ct).ConfigureAwait(false);
+            $"{work.Current.CaseId}:{decision.DecisionId}:post", ct: ct).ConfigureAwait(false);
         work.AddEvent(CaseEventKind.Note,
             $"Invoice {doc} approved by {decidedBy} and posted as voucher {posted.Voucher}.",
             documentType: "Invoice", documentNumber: doc);
@@ -970,7 +1035,7 @@ public partial class CaseRunner
         }
 
         var posted = await _erp.PostPaymentAsync(
-            doc, decidedBy, $"{work.Current.CaseId}:{decision.DecisionId}:post", ct).ConfigureAwait(false);
+            doc, decidedBy, $"{work.Current.CaseId}:{decision.DecisionId}:post", ct: ct).ConfigureAwait(false);
         var current = work.Current;
         work.Patch(current with { PaymentNumbers = current.PaymentNumbers.Append(posted.PaymentNumber).ToList() });
         var total = posted.Lines.Sum(l => l.Amount);

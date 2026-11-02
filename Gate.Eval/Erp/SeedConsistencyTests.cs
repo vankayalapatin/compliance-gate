@@ -59,7 +59,7 @@ public sealed class SeedConsistencyTests
                     .UseSqlite($"Data Source={Path.Combine(workDir, "erp.db")}")
                     .Options;
                 db = new ErpDbContext(options);
-                erp = new EfCoreErpAdapter(db);
+                erp = new EfCoreErpAdapter(options);
             }
             else
             {
@@ -77,7 +77,7 @@ public sealed class SeedConsistencyTests
                 await PendingRoutedPerPersonAsync(erp, expected);
                 await ApprovalHistoryAsync(erp, expected);
                 await SequencesContinueAsync(erp, expected);
-                await DemoMathPreservedAsync(erp, expected);
+                await DemoMathPreservedAsync(erp, expected, useEfCore);
             }
         }
         finally
@@ -170,6 +170,13 @@ public sealed class SeedConsistencyTests
             {
                 count++;
                 Assert.NotNull(approval.ActedBy);
+                if (string.Equals(approval.ActedBy, ErpApprovalActors.AutoApprovePolicy, StringComparison.Ordinal))
+                {
+                    Assert.True(approval.Approved);
+                    Assert.True(approval.DocumentAmount <= approval.LimitChecked);
+                    continue;
+                }
+
                 Assert.Contains(approval.ActedBy, expected.Users);
                 Assert.NotEqual(expected.Requester, approval.ActedBy);
                 if (approval.Approved) Assert.True(approval.DocumentAmount <= approval.LimitChecked);
@@ -202,7 +209,7 @@ public sealed class SeedConsistencyTests
         Assert.True(poMax > 0);
     }
 
-    private static async Task DemoMathPreservedAsync(IErpAdapter erp, ScenarioExpectations expected)
+    private static async Task DemoMathPreservedAsync(IErpAdapter erp, ScenarioExpectations expected, bool useEfCore)
     {
         // Shortfall inputs: stock untouched, only the inbound PO open.
         foreach (var (item, qty) in expected.Stock)
@@ -218,15 +225,27 @@ public sealed class SeedConsistencyTests
         {
             Assert.Empty(await erp.GetOpenPurchaseOrdersAsync(component));
         }
-        // CORP-02 history: seeded cells only, no lifecycle receipt pollution.
-        var history = await erp.GetVolumeHistoryAsync(expected.HistoryPart);
-        var byCountry = history.GroupBy(h => h.Country).ToDictionary(g => g.Key, g => g.Sum(h => h.Cells));
-        Assert.Equal(expected.HistoryCells.Count, byCountry.Count);
-        foreach (var (country, cells) in expected.HistoryCells)
+        if (!useEfCore)
         {
-            Assert.True(byCountry.TryGetValue(country, out var got) && got == cells,
-                $"History {country}: expected {cells}, ERP has {byCountry.GetValueOrDefault(country)}.");
+            // CORP-02 history on the fake: seeded cells only, no lifecycle
+            // receipt pollution.
+            var history = await erp.GetVolumeHistoryAsync(expected.HistoryPart);
+            var byCountry = history.GroupBy(h => h.Country).ToDictionary(g => g.Key, g => g.Sum(h => h.Cells));
+            Assert.Equal(expected.HistoryCells.Count, byCountry.Count);
+            foreach (var (country, cells) in expected.HistoryCells)
+            {
+                Assert.True(byCountry.TryGetValue(country, out var got) && got == cells,
+                    $"History {country}: expected {cells}, ERP has {byCountry.GetValueOrDefault(country)}.");
+            }
+            return;
         }
+        // CORP-02 history on EF Core: posted receipt lines only. The loader
+        // posts no receipts for the history part, so its history is empty;
+        // the backbone receipt carries the lifecycle item instead.
+        Assert.Empty(await erp.GetVolumeHistoryAsync(expected.HistoryPart));
+        var lcHistory = await erp.GetVolumeHistoryAsync(expected.LifecycleItem);
+        Assert.Equal(expected.BackboneQty, lcHistory.Sum(h => h.Cells));
+        Assert.All(lcHistory, h => Assert.Equal(expected.LifecycleVendorCountry, h.Country));
     }
 
     private sealed class NoopAsync : IAsyncDisposable
@@ -248,6 +267,9 @@ public sealed class SeedConsistencyTests
         string InvoiceSubmittedTo,
         string PaySubmittedTo,
         string LifecycleAsn,
+        string LifecycleItem,
+        string LifecycleVendorCountry,
+        decimal BackboneQty,
         IReadOnlyDictionary<string, string> InvoiceNumbers)
     {
         public string InvoiceNumber(string key) => InvoiceNumbers[key];
@@ -267,6 +289,10 @@ public sealed class SeedConsistencyTests
             var lc = root.GetProperty("lifecycle");
             var invoices = lc.GetProperty("invoices").EnumerateArray()
                 .ToDictionary(i => i.GetProperty("key").GetString()!, i => i.GetProperty("number").GetString()!);
+            var lcVendor = lc.GetProperty("vendor").GetString()!;
+            var lcCountry = root.GetProperty("vendors").EnumerateArray()
+                .First(v => v.GetProperty("id").GetString() == lcVendor)
+                .GetProperty("country").GetString()!;
             return new ScenarioExpectations(
                 requester,
                 users,
@@ -282,6 +308,9 @@ public sealed class SeedConsistencyTests
                 lc.GetProperty("invoiceSubmittedTo").GetString()!,
                 lc.GetProperty("paySubmittedTo").GetString()!,
                 lc.GetProperty("asn").GetString()!,
+                lc.GetProperty("item").GetString()!,
+                lcCountry,
+                lc.GetProperty("backboneQty").GetDecimal(),
                 invoices);
         }
     }

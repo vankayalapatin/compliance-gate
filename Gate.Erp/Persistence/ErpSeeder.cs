@@ -8,9 +8,11 @@ namespace Gate.Erp;
 public static class ErpSeeder
 {
     /// <summary>Seeds masters only (currency, items, terms, vendors, banks,
-    /// prices, history, users, delegations, stock, BOM). Documents are never
+    /// prices, users, delegations, stock, BOM). Documents are never
     /// inserted here: the loader creates every SO/PR/PO/ASN/receipt/invoice/
-    /// payment through adapter writes so all ERP validation is enforced.</summary>
+    /// payment through adapter writes so all ERP validation is enforced.
+    /// Volume history reads posted receipt lines; scenario history cells
+    /// have no EF store (the fake keeps them for its own unit tests).</summary>
     public static void SeedMasters(ErpDbContext db, ScenarioFile scenario, DateTimeOffset now)
     {
         db.Config.Add(new ConfigRow { Key = EfCoreErpAdapter.BaseCurrencyKey, Value = scenario.Currency });
@@ -70,14 +72,6 @@ public static class ErpSeeder
         foreach (var (itemId, price) in lastPrices)
         {
             db.LastPrices.Add(new LastPriceRow { ItemId = itemId, UnitPrice = price });
-        }
-        foreach (var h in scenario.HistoryCells)
-        {
-            db.VolumeSeeds.Add(new VolumeSeedRow
-            {
-                RowId = Guid.NewGuid().ToString("N"), ItemId = scenario.HistoryPart,
-                Source = h.Source, Country = h.Country, Cells = h.Cells
-            });
         }
         foreach (var u in scenario.Users)
         {

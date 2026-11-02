@@ -21,12 +21,21 @@
             <div class="gate-card-head">
                 <p class="gate-card-title">Expected trucks (@_trucks.Trucks.Count)</p>
             </div>
-            <p class="gate-meta">You are the dock camera. Each truck is an unreceived shipment notice. Images in, reads out: the run transcribes and judges every label.</p>
+            <p class="gate-meta">You are the dock camera. Each truck is a shipment waiting on dock evidence. Images in, reads out: the dock check transcribes and judges every label.</p>
             @if (_trucks.Trucks.Count == 0)
             {
                 <p class="gate-meta">No expected trucks; nothing is waiting at the dock.</p>
             }
         </section>
+        @foreach (var gone in _states.Where(s => s.Value.Outcome is not null && !_trucks.Trucks.Any(t => string.Equals(t.AsnNumber, s.Key, StringComparison.Ordinal))))
+        {
+            <section class="gate-card">
+                <div class="gate-card-head">
+                    <p class="gate-card-title">Latest result for truck @gone.Key</p>
+                </div>
+                <OutcomeBox Outcome="@gone.Value.Outcome" CaseId="@gone.Value.CaseId" />
+            </section>
+        }
         @foreach (var truck in _trucks.Trucks)
         {
             var state = StateFor(truck.AsnNumber);
@@ -80,12 +89,15 @@
                         </label>
                     }
                 }
-                <p class="gate-row"><span class="gate-label">Counter images</span></p>
-                @if (Options.DockImages.Count == 0)
-                {
-                    <p class="gate-meta">No images on the counter; upload files below.</p>
+                <p class="gate-row"><span class="gate-label">Counter images @(state.Reshot ? "(close-ups)" : "(pallet views)")</span></p>
+                @{
+                    var offered = DockPhotoService.OfferedCounterImages(Options.DockImages, state.Reshot);
                 }
-                @foreach (var image in Options.DockImages)
+                @if (offered.Count == 0)
+                {
+                    <p class="gate-meta">@(state.Reshot ? "No close-up on the counter; upload a file below." : "No pallet views on the counter; upload files below.")</p>
+                }
+                @foreach (var image in offered)
                 {
                     <div class="gate-field">
                         <label class="gate-checkline" for="dockimg-@truck.AsnNumber-@image">
@@ -157,6 +169,7 @@
     private sealed class TruckState
     {
         public bool Reshot;
+        public string? CaseId;
         public SimulationOutcome? Outcome;
         public string? UploadError;
         public readonly HashSet<string> ReshotCartons = new(StringComparer.Ordinal);
@@ -264,11 +277,23 @@
         var state = StateFor(truck.AsnNumber);
         _busy = true;
         state.Outcome = null;
+        state.CaseId = truck.CaseId;
         try
         {
             var photos = new List<SimulationPhoto>();
+            var dropped = new List<string>();
             foreach (var pick in state.ServerPicks)
             {
+                // Dock-camera modes never mix: a pick from the other mode
+                // (ticked before the reshot toggle flipped) stays out of
+                // this send and is named in the outcome, never silently
+                // omitted. The pick stays ticked for its own mode.
+                if (DockPhotoService.IsCloseUp(pick.Key) != state.Reshot)
+                {
+                    dropped.Add(pick.Key);
+                    continue;
+                }
+
                 var (bytes, error) = await Simulate.TryReadDockImageAsync(pick.Key);
                 if (bytes is null)
                 {
@@ -281,9 +306,16 @@
 
             photos.AddRange(state.Uploads.Select(u => new SimulationPhoto(u.FileName, u.Bytes, u.CartonHint)));
 
-            state.Outcome = state.Reshot
+            var sent = state.Reshot
                 ? await Simulate.SendReshotAsync(truck.CaseId, state.ReshotCartons.ToList(), photos)
                 : await Simulate.SendDockPhotosAsync(truck.CaseId, photos);
+            state.Outcome = dropped.Count == 0
+                ? sent
+                : sent with
+                {
+                    Details = [.. sent.Details,
+                        $"Left out of this send (other dock-camera mode): {string.Join(", ", dropped.Order(StringComparer.Ordinal))}."]
+                };
             if (state.Outcome.Ok)
             {
                 await ReloadAsync();

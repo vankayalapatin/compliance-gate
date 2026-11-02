@@ -5,6 +5,7 @@
 // last-writer-wins: callers re-read on every page load and before applying
 // a decision outcome. No business values here; all ids arrive at runtime.
 using System.Text.Json;
+using Gate.Agent;
 using Gate.Contracts;
 
 namespace Gate.Web.Services;
@@ -34,12 +35,14 @@ public sealed class CaseCacheStore
         }
 
         // Mail files (<CaseId>.mail.json), vendor-identity pendings
-        // (<CaseId>.vendor-identity.json), and memo files
-        // (<MemoId>.memo.json) share the dir but are not cases (mirrors the
-        // agent CaseStore exclusions; memo files belong to MemoFileStore).
+        // (<CaseId>.vendor-identity.json), dock evidence sidecars
+        // (<CaseId>.dock.json), and memo files (<MemoId>.memo.json) share
+        // the dir but are not cases (mirrors the agent CaseStore
+        // exclusions; memo files belong to MemoFileStore).
         var files = Directory.GetFiles(_dir, "*.json")
             .Where(f => !f.EndsWith(".mail.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".vendor-identity.json", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.EndsWith(".dock.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".memo.json", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         Array.Sort(files, StringComparer.Ordinal);
@@ -75,6 +78,14 @@ public sealed class CaseCacheStore
         var json = JsonSerializer.Serialize(file, JsonOpts);
         await File.WriteAllTextAsync(
             Path.Combine(_dir, file.Case.CaseId + ".json"), json, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads one case's dock-evidence sidecar, or null when the
+    /// case recorded no dock evidence yet. Small local file; sync read.</summary>
+    public Task<DockEvidence?> ReadDockAsync(string caseId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(CaseStore.LoadDock(_dir, caseId));
     }
 
     /// <summary>Deletes every cached case file. Returns the cleared count.</summary>

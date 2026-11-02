@@ -1,3 +1,5 @@
+# ARCHIVED — early-demo history, not spec. Frozen, do not edit.
+
 # ComplianceGate — POC Decision Record (Final)
 
 Status: **Final** — accepted by you on this turn with the forecasting-data clarification, stretch gate, boundary amendment for docs/PRODUCT.md and docs/DECISIONS.md, and the 3-minute demo script.

@@ -225,9 +225,33 @@ public static class ErpActions
     public const string InSoNumber = "soNumber";
 }
 
+/// <summary>Role-gated views on record pages. The AP clerk hides the
+/// quarantine-lot views (the stock lots table plus the quarantine and
+/// release actions) and the vendor-block actions. This is display only:
+/// the ERP still enforces every control behind the attempt.</summary>
+public static class RoleGating
+{
+    public const string ApClerk = "ap-clerk";
+
+    public static bool IsApClerk(string? role) =>
+        string.Equals(role, ApClerk, StringComparison.OrdinalIgnoreCase);
+
+    public static bool ActionVisible(string? role, string actionId) =>
+        !IsApClerk(role)
+        || (actionId is not ErpActions.BlockVendor
+            and not ErpActions.UnblockVendor
+            and not ErpActions.QuarantineLot
+            and not ErpActions.ReleaseLot);
+
+    public static bool TableVisible(string? role, string kind, string title) =>
+        !IsApClerk(role)
+        || !(string.Equals(kind, "stock", StringComparison.Ordinal)
+            && string.Equals(title, "Lots", StringComparison.Ordinal));
+}
+
 /// <summary>One ERP record page: header facts, line tables, related
-/// documents, candidate actions, and notes. OpeningNumbers drives the
-/// opening-data chips; SourceName feeds the agent-made banner.</summary>
+/// documents, candidate actions, and notes. SourceName feeds the
+/// agent-made banner; every other row stays plain.</summary>
 public sealed record ErpRecordVm(
     string Kind,
     string Key,
@@ -241,8 +265,7 @@ public sealed record ErpRecordVm(
     IReadOnlyList<ErpActionDef> Actions,
     IReadOnlyList<string> ImageFileNames,
     IReadOnlyList<string> CachedReads,
-    IReadOnlyList<string> Notes,
-    IReadOnlySet<string> OpeningNumbers);
+    IReadOnlyList<string> Notes);
 
 /// <summary>One ERP list page: typed rows plus notes. Notes name every
 /// partial failure; nothing is silently omitted.</summary>

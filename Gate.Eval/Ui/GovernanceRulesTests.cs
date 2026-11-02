@@ -64,7 +64,7 @@ public sealed class GovernanceRulesTests
         Assert.Equal(2, scan.Counts["DOCK-T3"]);
         Assert.Equal(1, scan.Counts["DOCK-T5"]);
         Assert.Equal(1, scan.DockEvaluatedFiles);
-        Assert.Contains("1 case file(s)", scan.DockNote);
+        Assert.Contains("1 case(s)", scan.DockNote);
     }
 
     [Fact]
@@ -127,10 +127,11 @@ public sealed class GovernanceRulesTests
         Assert.Equal("2026-12-01", company.EffectiveOrAdopted);
         Assert.Contains("MEMO-9", company.Source);
         Assert.Equal(1, company.BlockCount);
-        Assert.Equal("kb:items#BAT-9@kbv4", PolicyLabels.Citation(Assert.Single(company.GroundedEntries)));
+        Assert.Equal("kb:items#BAT-9@version 4", PolicyLabels.Citation(Assert.Single(company.GroundedEntries)));
         Assert.True(company.NeedsReview);
-        Assert.Contains("kbv4", company.NeedsReviewReason);
-        Assert.Contains("kbv9", company.NeedsReviewReason);
+        Assert.Contains("version 4", company.NeedsReviewReason);
+        Assert.Contains("version 9", company.NeedsReviewReason);
+        Assert.DoesNotContain("kbv", company.NeedsReviewReason);
 
         var rolled = rows.Single(r => r.IsCompanyRule && r.KbVersion is null);
         Assert.False(rolled.NeedsReview);
@@ -268,8 +269,8 @@ public sealed class GovernanceRulesTests
         Assert.Equal("Fixture pack source.", shipped.Source);
         Assert.Equal("2026-03-16", shipped.EffectiveOrAdopted);
         Assert.Single(vm.Rows.Single(r => r.IsCompanyRule).GroundedEntries);
-        Assert.Contains("this run (1 case file(s) scanned)", vm.ScanLabel);
-        Assert.Contains("1 case file(s)", vm.DockNote);
+        Assert.Contains("all cases (1 scanned)", vm.ScanLabel);
+        Assert.Contains("1 case(s)", vm.DockNote);
         Assert.Empty(vm.Notes);
     }
 

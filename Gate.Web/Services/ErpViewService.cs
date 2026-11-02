@@ -22,9 +22,6 @@ public sealed class ErpViewService
         _log = log;
     }
 
-    public (IReadOnlySet<string> Opening, IReadOnlyList<string> Notes) GetOpeningNumbers() =>
-        _views.GetOpeningNumbers();
-
     private async Task<ErpListVm<T>> ListAsync<T>(
         string label, Func<CancellationToken, Task<IReadOnlyList<T>>> read,
         Func<IReadOnlyList<T>, IReadOnlyList<T>>? order, CancellationToken ct)
@@ -214,25 +211,24 @@ public sealed class ErpViewService
     public async Task<ErpRecordVm?> GetRecordAsync(
         string kind, string key, string? key2 = null, CancellationToken ct = default)
     {
-        var (opening, openingNotes) = _views.GetOpeningNumbers();
-        var notes = new List<string>(openingNotes);
+        var notes = new List<string>();
         try
         {
             return kind switch
             {
-                "so" => await SoRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "pr" => await PrRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "po" => await PoRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "asn" => await AsnRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "receipt" => await ReceiptRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "stock" => await StockRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
+                "so" => await SoRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "pr" => await PrRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "po" => await PoRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "asn" => await AsnRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "receipt" => await ReceiptRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "stock" => await StockRecordAsync(key, notes, ct).ConfigureAwait(false),
                 "invoice" => key2 is null
-                    ? Shell(kind, key, $"Invoice {key} needs its vendor: open it as vendor/number.", opening, notes)
-                    : await InvoiceRecordAsync(key, key2, opening, notes, ct).ConfigureAwait(false),
-                "payment" => await PaymentRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "hold" => await HoldRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "vendor" => await VendorRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
-                "item" => await ItemRecordAsync(key, opening, notes, ct).ConfigureAwait(false),
+                    ? Shell(kind, key, $"Invoice {key} needs its vendor: open it as vendor/number.", notes)
+                    : await InvoiceRecordAsync(key, key2, notes, ct).ConfigureAwait(false),
+                "payment" => await PaymentRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "hold" => await HoldRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "vendor" => await VendorRecordAsync(key, notes, ct).ConfigureAwait(false),
+                "item" => await ItemRecordAsync(key, notes, ct).ConfigureAwait(false),
                 _ => null,
             };
         }
@@ -240,17 +236,16 @@ public sealed class ErpViewService
         {
             _log.LogWarning(ex, "Record {Kind} {Key} failed.", kind, key);
             notes.Add($"Record {kind} {key} failed: {ex.Message}.");
-            return Shell(kind, key, null, opening, notes);
+            return Shell(kind, key, null, notes);
         }
     }
 
     private static ErpRecordVm Shell(
-        string kind, string key, string? note,
-        IReadOnlySet<string> opening, IReadOnlyList<string> notes)
+        string kind, string key, string? note, IReadOnlyList<string> notes)
     {
         var all = note is null ? notes : notes.Append(note).ToList();
         return new ErpRecordVm(kind, key, $"{ErpModules.TitleFor(kind)} {key}",
-            [], null, key, [], [], [], [], [], [], all, opening);
+            [], null, key, [], [], [], [], [], [], all);
     }
 
     private static ErpActionDef SubmitAction() => new(ErpActions.Submit, "Submit for approval",
@@ -264,6 +259,27 @@ public sealed class ErpViewService
     private static ErpActionDef RejectAction() => new(ErpActions.Reject, "Reject",
         "Records a rejection as the acting user. The ERP enforces who may act.",
         [new(ErpActions.InComment, "Comment", false)]);
+
+    /// <summary>One audit stamp for display: who plus when, with the unset
+    /// placeholder for either half. Stored actors never render as "system".</summary>
+    private static string Stamp(string? by, DateTimeOffset? at) =>
+        $"{ActorLabels.Display(by)} · {(at?.ToString("u") ?? ActorLabels.Unset)}";
+
+    /// <summary>Acting-user role for role-gated views (the AP clerk hides
+    /// quarantine-lot views plus vendor-block actions). Null when the user
+    /// or role cannot be read; the ERP still enforces every control.</summary>
+    public async Task<string?> GetUserRoleAsync(string userId, CancellationToken ct = default)
+    {
+        try
+        {
+            return (await _erp.GetUserAsync(userId, ct).ConfigureAwait(false))?.Role;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Role lookup failed for {User}.", userId);
+            return null;
+        }
+    }
 
     private async Task<ErpLineTable?> ApprovalsTableAsync(
         string docType, string docNumber, List<string> notes, CancellationToken ct)
@@ -290,10 +306,10 @@ public sealed class ErpViewService
              new("Amount / limit", true), new("Comment")],
             rows.Select(a => (IReadOnlyList<ErpCell>)
             [
-                new(a.RoutedTo), new(a.ActedBy ?? "—"),
+                new(a.RoutedTo), new(ActorLabels.Display(a.ActedBy)),
                 new(a.Approved ? "approved" : "rejected"),
                 new($"{ErpFormat.Amount(a.DocumentAmount)} / {ErpFormat.Amount(a.LimitChecked)}", true),
-                new(a.Comment ?? "—"),
+                new(CommentLabels.Display(a.Comment)),
             ]).ToList());
     }
 
@@ -322,13 +338,48 @@ public sealed class ErpViewService
             h.RuleId ?? h.ReasonCode)));
     }
 
+    /// <summary>Company header for PO documents: entity code plus legal
+    /// name plus bill-to/ship-to addresses from the ERP company info.
+    /// Missing company info surfaces as a note; nothing is guessed.</summary>
+    private async Task AddCompanyFactsAsync(
+        List<ErpFact> header, List<string> notes, CancellationToken ct)
+    {
+        CompanyInfoDto? company;
+        try
+        {
+            company = await _erp.GetCompanyInfoAsync(ct).ConfigureAwait(false);
+        }
+        catch (NotSupportedException ex)
+        {
+            _log.LogWarning(ex, "Company header is not implemented by the ERP layer yet.");
+            notes.Add("Company header is not implemented by the ERP layer yet.");
+            return;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Company info lookup failed.");
+            notes.Add($"Company header failed: {ex.Message}.");
+            return;
+        }
+
+        if (company is null)
+        {
+            notes.Add("ERP has no company info; the document header shows no company.");
+            return;
+        }
+
+        header.Add(new ErpFact("Company", $"{company.EntityCode} · {company.LegalName}"));
+        header.Add(new ErpFact("Bill to", company.BillToAddress));
+        header.Add(new ErpFact("Ship to", company.ShipToAddress));
+    }
+
     private async Task<ErpRecordVm> SoRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var so = await _erp.GetSalesOrderAsync(key, ct).ConfigureAwait(false);
         if (so is null)
         {
-            return Shell("so", key, $"Sales order {key} not found in ERP.", opening, notes);
+            return Shell("so", key, $"Sales order {key} not found in ERP.", notes);
         }
 
         var related = so.Lines.Select(l => l.ItemId).Distinct(StringComparer.Ordinal)
@@ -356,16 +407,16 @@ public sealed class ErpViewService
             [new(ErpActions.UpdateSoStatus, "Update status",
                 "Sets the sales-order status. The ERP enforces legal transitions.",
                 [new(ErpActions.InStatus, "New status", true, statuses)])],
-            [], [], notes, opening);
+            [], [], notes);
     }
 
     private async Task<ErpRecordVm> PrRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var pr = await _erp.GetPrAsync(key, ct).ConfigureAwait(false);
         if (pr is null)
         {
-            return Shell("pr", key, $"Purchase requisition {key} not found in ERP.", opening, notes);
+            return Shell("pr", key, $"Purchase requisition {key} not found in ERP.", notes);
         }
 
         var related = new List<ErpRelatedDoc>();
@@ -417,18 +468,19 @@ public sealed class ErpViewService
                 new("Status", pr.Status.ToString()),
                 new("Requester", pr.Requester),
                 new("Estimated amount", ErpFormat.Money(pr.EstimatedAmount, pr.Currency)),
-                new("Created by", pr.CreatedBy),
+                new("Created", Stamp(pr.CreatedBy, pr.CreatedAt)),
+                new("Approved", Stamp(pr.ApprovedBy, pr.ApprovedAt)),
             ],
-            tables, related, actions, [], [], notes, opening);
+            tables, related, actions, [], [], notes);
     }
 
     private async Task<ErpRecordVm> PoRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var po = await _erp.GetPurchaseOrderAsync(key, ct).ConfigureAwait(false);
         if (po is null)
         {
-            return Shell("po", key, $"Purchase order {key} not found in ERP.", opening, notes);
+            return Shell("po", key, $"Purchase order {key} not found in ERP.", notes);
         }
 
         // The vendor stays out of related documents: the header links it.
@@ -458,14 +510,19 @@ public sealed class ErpViewService
         var header = new List<ErpFact>
         {
             new("Purchase order", po.PoNumber),
+        };
+        await AddCompanyFactsAsync(header, notes, ct).ConfigureAwait(false);
+        header.AddRange(
+        [
             new("Purchase requisition", po.PrNumber, ErpRoutes.RecordHref("pr", po.PrNumber)),
             new("Vendor", po.VendorId, ErpRoutes.RecordHref("vendor", po.VendorId)),
             new("Payment terms", po.PaymentTermsId),
             new("Approval", po.ApprovalStatus.ToString()),
             new("Document status", po.DocStatus.ToString()),
             new("Total", ErpFormat.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)),
-            new("Created by", po.CreatedBy),
-        };
+            new("Created", Stamp(po.CreatedBy, po.CreatedAt)),
+            new("Approved", Stamp(po.ApprovedBy, po.ApprovedAt)),
+        ]);
         try
         {
             var confirm = await _erp.GetVendorConfirmationAsync(po.PoNumber, ct).ConfigureAwait(false);
@@ -527,16 +584,16 @@ public sealed class ErpViewService
 
         return new ErpRecordVm("po", key, $"Purchase order {po.PoNumber}",
             [$"Approval {po.ApprovalStatus}", $"Document {po.DocStatus}"],
-            po.Source, po.PoNumber, header, tables, related, actions, [], [], notes, opening);
+            po.Source, po.PoNumber, header, tables, related, actions, [], [], notes);
     }
 
     private async Task<ErpRecordVm> AsnRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var asn = await _erp.GetAsnAsync(key, ct).ConfigureAwait(false);
         if (asn is null)
         {
-            return Shell("asn", key, $"ASN {key} not found in ERP.", opening, notes);
+            return Shell("asn", key, $"ASN {key} not found in ERP.", notes);
         }
 
         var related = new List<ErpRelatedDoc>
@@ -557,7 +614,7 @@ public sealed class ErpViewService
             [
                 new("ASN", asn.AsnNumber),
                 new("Purchase order", asn.PoNumber, ErpRoutes.RecordHref("po", asn.PoNumber)),
-                new("Created by", asn.CreatedBy),
+                new("Created by", ActorLabels.Display(asn.CreatedBy)),
             ],
             [new ErpLineTable("Cartons",
                 [new("Carton"), new("Item"), new("Units / carton", true), new("Lot")],
@@ -566,16 +623,16 @@ public sealed class ErpViewService
                     new(c.CartonId), new(c.ItemId, Href: ErpRoutes.RecordHref("item", c.ItemId)),
                     new(ErpFormat.Count(c.UnitsPerCarton), true), new(c.LotRef),
                 ]).ToList())],
-            related, [], [], [], notes, opening);
+            related, [], [], [], notes);
     }
 
     private async Task<ErpRecordVm> ReceiptRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var receipt = await _erp.GetReceiptAsync(key, ct).ConfigureAwait(false);
         if (receipt is null)
         {
-            return Shell("receipt", key, $"Receipt {key} not found in ERP.", opening, notes);
+            return Shell("receipt", key, $"Receipt {key} not found in ERP.", notes);
         }
 
         var related = new List<ErpRelatedDoc>
@@ -601,7 +658,7 @@ public sealed class ErpViewService
                 i.Status.ToString())));
         await AddBlockingHoldsAsync(receipt.ReceiptNumber, related, notes, ct).ConfigureAwait(false);
 
-        var media = _views.GetReceiptMedia(receipt, asn);
+        var media = await _views.GetReceiptMediaAsync(receipt, asn, ct).ConfigureAwait(false);
         return new ErpRecordVm("receipt", key, $"Receipt {receipt.ReceiptNumber}",
             [$"Status {receipt.Status}"], receipt.Source, receipt.ReceiptNumber,
             [
@@ -609,7 +666,9 @@ public sealed class ErpViewService
                 new("Purchase order", receipt.PoNumber, ErpRoutes.RecordHref("po", receipt.PoNumber)),
                 new("Supplier packing slip", receipt.SupplierPackingSlipNumber),
                 new("Status", receipt.Status.ToString()),
-                new("Created by", receipt.CreatedBy),
+                new("Posting date", receipt.PostingDate?.ToString() ?? ActorLabels.Unset),
+                new("Created", Stamp(receipt.CreatedBy, receipt.CreatedAt)),
+                new("Posted", Stamp(receipt.PostedBy, receipt.PostedAt)),
             ],
             [new ErpLineTable("Lines",
                 [new("PO line"), new("Received", true), new("Quarantined", true),
@@ -620,11 +679,11 @@ public sealed class ErpViewService
                     new(ErpFormat.Qty(l.QtyQuarantined), true), new(ErpFormat.Qty(l.QtyRejected), true),
                     new(l.LotRef), new(l.ConditionNote ?? "—"),
                 ]).ToList())],
-            related, [], media.ImageFileNames, media.CachedReads, notes, opening);
+            related, [], media.ImageFileNames, media.CachedReads, notes);
     }
 
     private async Task<ErpRecordVm> StockRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         ItemDto? item = null;
         try
@@ -661,7 +720,7 @@ public sealed class ErpViewService
 
         if (item is null && txns.Count == 0)
         {
-            return Shell("stock", key, $"No stock or lots for item {key} in ERP.", opening, notes);
+            return Shell("stock", key, $"No stock or lots for item {key} in ERP.", notes);
         }
 
         var related = new List<ErpRelatedDoc>();
@@ -700,18 +759,17 @@ public sealed class ErpViewService
                     [new(ErpActions.InLotRef, "Lot", true), new(ErpActions.InSoNumber, "Sales order", true),
                      new(ErpActions.InQuantity, "Quantity", true)]),
             ],
-            [], [], notes, opening);
+            [], [], notes);
     }
 
     private async Task<ErpRecordVm> InvoiceRecordAsync(
-        string vendor, string number, IReadOnlySet<string> opening, List<string> notes,
-        CancellationToken ct)
+        string vendor, string number, List<string> notes, CancellationToken ct)
     {
         var inv = await _erp.GetInvoiceAsync(vendor, number, ct).ConfigureAwait(false);
         if (inv is null)
         {
             return Shell("invoice", ErpDocTypes.InvoiceDocNumber(vendor, number),
-                $"Invoice {vendor}/{number} not found in ERP.", opening, notes);
+                $"Invoice {vendor}/{number} not found in ERP.", notes);
         }
 
         var docNumber = ErpDocTypes.InvoiceDocNumber(inv.VendorId, inv.SupplierInvoiceNumber);
@@ -817,18 +875,21 @@ public sealed class ErpViewService
                 new("Status", inv.Status.ToString()),
                 new("Voucher", inv.Voucher ?? "none yet"),
                 new("Total", ErpFormat.Money(total, inv.Currency)),
-                new("Created by", inv.CreatedBy),
+                new("Due", inv.DueDate?.ToString() ?? ActorLabels.Unset),
+                new("Created", Stamp(inv.CreatedBy, inv.CreatedAt)),
+                new("Approved", Stamp(inv.ApprovedBy, inv.ApprovedAt)),
+                new("Posted", Stamp(inv.PostedBy, inv.PostedAt)),
             ],
-            tables, related, actions, [], [], notes, opening);
+            tables, related, actions, [], [], notes);
     }
 
     private async Task<ErpRecordVm> PaymentRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var pay = await _erp.GetPaymentAsync(key, ct).ConfigureAwait(false);
         if (pay is null)
         {
-            return Shell("payment", key, $"Payment {key} not found in ERP.", opening, notes);
+            return Shell("payment", key, $"Payment {key} not found in ERP.", notes);
         }
 
         var related = pay.Lines
@@ -884,14 +945,16 @@ public sealed class ErpViewService
                 new("Status", pay.Status.ToString()),
                 new("Total", ErpFormat.Money(pay.Lines.Sum(l => l.Amount), pay.Currency)),
                 new("Due", pay.DueDate.ToString()),
-                new("Payee bank", $"{pay.PayeeBank.AccountRef} (verified: {pay.PayeeBank.Verified})"),
-                new("Created by", pay.CreatedBy),
+                new("Payee bank", $"{pay.PayeeBank.AccountRef} ({(pay.PayeeBank.Verified ? "verified" : "not verified")})"),
+                new("Created", Stamp(pay.CreatedBy, pay.CreatedAt)),
+                new("Approved", Stamp(pay.ApprovedBy, pay.ApprovedAt)),
+                new("Posted", Stamp(pay.PostedBy, pay.PostedAt)),
             ],
-            tables, related, actions, [], [], notes, opening);
+            tables, related, actions, [], [], notes);
     }
 
     private async Task<ErpRecordVm> HoldRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var holds = await ListHoldsAsync(ct).ConfigureAwait(false);
         notes.AddRange(holds.Notes);
@@ -900,7 +963,7 @@ public sealed class ErpViewService
         if (hold is null)
         {
             return Shell("hold", key,
-                $"Hold {key} is not open (released holds leave the open list).", opening, notes);
+                $"Hold {key} is not open (released holds leave the open list).", notes);
         }
 
         var blocks = string.Join(" ", new[]
@@ -949,11 +1012,11 @@ public sealed class ErpViewService
             [new(ErpActions.ReleaseHold, "Release hold",
                 "Releases the hold. The ERP enforces who may release and what it unblocks.",
                 [new(ErpActions.InApprovalRef, "Approval ref", false)])],
-            [], [], notes, opening);
+            [], [], notes);
     }
 
     private async Task<ErpRecordVm> VendorRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         var vendors = await ListVendorsAsync(ct).ConfigureAwait(false);
         notes.AddRange(vendors.Notes);
@@ -961,7 +1024,7 @@ public sealed class ErpViewService
             string.Equals(v.VendorId, key, StringComparison.Ordinal));
         if (vendor is null)
         {
-            return Shell("vendor", key, $"Vendor {key} not found in ERP.", opening, notes);
+            return Shell("vendor", key, $"Vendor {key} not found in ERP.", notes);
         }
 
         var header = new List<ErpFact>
@@ -979,7 +1042,7 @@ public sealed class ErpViewService
             header.Add(new("Bank",
                 bank is null
                     ? "none on file"
-                    : $"{bank.AccountRef} (verified: {bank.Verified})"));
+                    : $"{bank.AccountRef} ({(bank.Verified ? "verified" : "not verified")})"));
         }
         catch (Exception ex)
         {
@@ -1044,11 +1107,11 @@ public sealed class ErpViewService
 
         return new ErpRecordVm("vendor", key, $"Vendor {vendor.VendorId}",
             [vendor.IsBlocked ? "blocked" : "active"], null, vendor.VendorId,
-            header, tables, related, actions, [], [], notes, opening);
+            header, tables, related, actions, [], [], notes);
     }
 
     private async Task<ErpRecordVm> ItemRecordAsync(
-        string key, IReadOnlySet<string> opening, List<string> notes, CancellationToken ct)
+        string key, List<string> notes, CancellationToken ct)
     {
         ItemDto? item;
         try
@@ -1059,12 +1122,12 @@ public sealed class ErpViewService
         {
             _log.LogWarning(ex, "Item {Item} lookup failed.", key);
             notes.Add($"Item {key} lookup failed: {ex.Message}.");
-            return Shell("item", key, null, opening, notes);
+            return Shell("item", key, null, notes);
         }
 
         if (item is null)
         {
-            return Shell("item", key, $"Item {key} not found in ERP.", opening, notes);
+            return Shell("item", key, $"Item {key} not found in ERP.", notes);
         }
 
         var related = new List<ErpRelatedDoc>
@@ -1104,6 +1167,6 @@ public sealed class ErpViewService
                 new("Critical", item.IsCritical ? "yes" : "no"),
                 new("Units per carton", ErpFormat.Count(item.UnitsPerCarton)),
             ],
-            tables, related, [], [], [], notes, opening);
+            tables, related, [], [], [], notes);
     }
 }

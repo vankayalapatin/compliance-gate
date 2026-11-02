@@ -27,16 +27,11 @@ else
                 </div>
                 <div>
                     <button class="gate-btn" disabled="@_busy" @onclick="ReloadAsync">Reload options</button>
-                    <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="PickupAsync">Pick up ERP work</button>
                 </div>
             </div>
             @foreach (var note in _options.Notes)
             {
                 <div class="gate-notice" role="alert">@note</div>
-            }
-            @if (_pickup is not null)
-            {
-                <OutcomeBox Outcome="@_pickup" />
             }
             @if (_selected == "shop")
             {
@@ -60,7 +55,6 @@ else
     private string? _loadError;
     private bool _busy;
     private string _selected = "shop";
-    private SimulationOutcome? _pickup;
 
     protected override async Task OnInitializedAsync()
     {
@@ -98,21 +92,4 @@ else
         }
     }
 
-    private async Task PickupAsync()
-    {
-        _busy = true;
-        try
-        {
-            _pickup = await Sim.PickUpErpWorkAsync(_options?.ScenarioName);
-            await ReloadAsync();
-        }
-        catch (Exception ex)
-        {
-            _pickup = new SimulationOutcome(false, $"ERP-work pickup failed: {ex.Message}.", [], []);
-        }
-        finally
-        {
-            _busy = false;
-        }
-    }
 }

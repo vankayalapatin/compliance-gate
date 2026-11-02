@@ -1,8 +1,6 @@
 // Batch-3 UI: vendor mail thread store plus case-detail surfacing, new
 // timeline event labels, vendor contact-email display, and proof that
-// mail files do not break case listing. No live calls. This class never
-// touches GATE_MANIFEST / GATE_SCENARIO (see RecordsViewTests) and its
-// assertions do not depend on the manifest either way.
+// mail files do not break case listing. No live calls.
 using System.Text.Json;
 using Gate.Contracts;
 using Gate.Erp;
@@ -17,7 +15,6 @@ public sealed class CaseMailUiTests
     private static CaseViewService Service(InMemoryErpAdapter erp, CaseCacheStore store) =>
         new(erp, store,
             new DockPhotoService(UiTestSupport.NewDir("gate-ui-dock"), UiTestSupport.NewDir("gate-ui-vision")),
-            new ConfigurationBuilder().Build(),
             UiTestLogger<CaseViewService>.Instance);
 
     private static CaseMail ThreadWith(string caseId) =>
@@ -119,6 +116,24 @@ public sealed class CaseMailUiTests
     }
 
     [Fact]
+    public async Task ListSkipsDockSidecars()
+    {
+        var dir = UiTestSupport.NewDir("gate-ui-cache");
+        var store = new CaseCacheStore(dir);
+        await store.WriteAsync(UiTestSupport.CaseFileWith("CASE-1", "SO-1", "ITEM-1"));
+        Gate.Agent.CaseStore.SaveDock(dir, new Gate.Agent.DockEvidence(
+            "CASE-1", [], new Dictionary<string, IReadOnlyList<Gate.Contracts.Verdict>>(),
+            DateTimeOffset.UtcNow));
+
+        var listed = await store.ListAsync();
+
+        var single = Assert.Single(listed);
+        Assert.Equal("CASE-1", single.Case.CaseId);
+        Assert.NotNull(await store.ReadDockAsync("CASE-1"));
+        Assert.Null(await store.ReadDockAsync("CASE-MISSING"));
+    }
+
+    [Fact]
     public void NewEventLabelsAreClear()
     {
         Assert.Equal("Vendor emailed", CaseEventLabels.Label(CaseEventKind.VendorEmailed));
@@ -142,18 +157,20 @@ public sealed class CaseMailUiTests
     }
 
     [Fact]
-    public async Task RecordsCarriesVendorsWithEmail()
+    public async Task VendorListCarriesVendorsWithEmail()
     {
         var erp = new InMemoryErpAdapter();
         erp.SeedVendor(new VendorDto("V-2", "No Mail Vendor", "US", false, null, "NET0"));
         erp.SeedVendor(new VendorDto("V-1", "Mail Vendor", "US", false, null, "NET0", "ap@test-vendor.test"));
-        var service = Service(erp, new CaseCacheStore(UiTestSupport.NewDir("gate-ui-cache")));
+        var views = new ErpViewService(
+            erp, Service(erp, new CaseCacheStore(UiTestSupport.NewDir("gate-ui-cache"))),
+            UiTestLogger<ErpViewService>.Instance);
 
-        var records = await service.GetRecordsAsync();
+        var vendors = await views.ListVendorsAsync();
 
-        Assert.Equal(2, records.Vendors.Count);
-        Assert.Equal("V-1", records.Vendors[0].VendorId);
-        Assert.Equal("ap@test-vendor.test", records.Vendors[0].Email);
-        Assert.Null(records.Vendors[1].Email);
+        Assert.Equal(2, vendors.Rows.Count);
+        Assert.Equal("V-1", vendors.Rows[0].VendorId);
+        Assert.Equal("ap@test-vendor.test", vendors.Rows[0].Email);
+        Assert.Null(vendors.Rows[1].Email);
     }
 }

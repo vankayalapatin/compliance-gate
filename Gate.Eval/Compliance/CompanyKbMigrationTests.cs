@@ -88,9 +88,10 @@ public sealed class CompanyKbMigrationTests
             .OrderBy(f => f, StringComparer.Ordinal)
             .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
             .ToList();
-        Assert.Equal("kbv2", CompanyKbLoader.LoadVersioned(inputs).Version);
+        Assert.Equal("kbv3", CompanyKbLoader.LoadVersioned(inputs).Version);
         Assert.Equal("kbv1", CompanyKbLoader.LoadVersionedAt(inputs, "kbv1").Version);
         Assert.Equal("kbv2", CompanyKbLoader.LoadVersionedAt(inputs, "kbv2").Version);
+        Assert.Equal("kbv3", CompanyKbLoader.LoadVersionedAt(inputs, "kbv3").Version);
     }
 
     [Fact]

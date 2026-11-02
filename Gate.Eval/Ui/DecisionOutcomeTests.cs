@@ -14,7 +14,25 @@ public sealed class DecisionOutcomeTests
 {
     private sealed record Harness(InMemoryErpAdapter Erp, CaseCacheStore Store, CaseRunner Runner);
 
-    private static Harness Create()
+    private sealed class FailCallsClient(IModelClient inner, params int[] failOn) : IModelClient
+    {
+        private int _calls;
+
+        public string ModelName => inner.ModelName;
+
+        public async Task<ModelResult> CompleteAsync(ModelRequest request, CancellationToken ct = default)
+        {
+            _calls++;
+            if (failOn.Contains(_calls))
+            {
+                throw new System.Net.Http.HttpRequestException($"Boom {_calls}.");
+            }
+
+            return await inner.CompleteAsync(request, ct);
+        }
+    }
+
+    private static Harness Create(IModelClient? models = null)
     {
         var erp = new InMemoryErpAdapter();
         erp.SeedBaseCurrency("TST");
@@ -27,7 +45,7 @@ public sealed class DecisionOutcomeTests
         erp.SeedUser(new UserDto("stranger", "clerk", 1_000_000m, "TST"));
         var dir = UiTestSupport.NewDir("gate-ui-cache");
         var store = new CaseCacheStore(dir);
-        var models = new FakeModelClient();
+        models ??= new FakeModelClient();
         var compliance = new RecordingComplianceEngine();
         var runner = new CaseRunner(
             erp, new P2pAgent(erp, models, compliance), models, compliance,
@@ -67,6 +85,39 @@ public sealed class DecisionOutcomeTests
         Assert.Equal("approver", decided.DecidedBy);
         Assert.NotNull(decided.DecidedAt);
         Assert.Equal("looks good", decided.Comment);
+        Assert.Contains(reread.Events, e => e.Kind == CaseEventKind.PrApproved);
+    }
+
+    [Fact]
+    public async Task RecordPageApproveSettlesLinkedCard()
+    {
+        // Approving on the ERP record page settles the linked case card
+        // through the same resolver the Decisions page uses: the card shows
+        // decided and no second approval row is recorded.
+        var h = Create();
+        var pr = await h.Erp.CreatePrAsync(
+            "requester", RecordSource.P2pAgent, "requester",
+            [new PurchaseRequisitionLine("ITEM-1", 5m, "EA")], Idem());
+        await h.Erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "requester", Idem());
+        await h.Store.WriteAsync(UiTestSupport.CaseFileWith("CASE-1", "SO-1", "ITEM-1", [
+            UiTestSupport.PendingDecision("D-1", "CASE-1", DecisionKind.PrApproval, "PR", pr.PrNumber),
+        ]));
+        var actions = new ErpActionService(
+            h.Erp, h.Runner, UiTestLogger<ErpActionService>.Instance);
+
+        var outcome = await actions.AttemptAsync(
+            "pr", pr.PrNumber, null, "approve",
+            new Dictionary<string, string> { ["comment"] = "record page ok" }, "approver");
+
+        Assert.True(outcome.Ok, outcome.Message);
+        Assert.Contains("Settled 1 linked case card", outcome.Message, StringComparison.Ordinal);
+        var approvals = await h.Erp.GetApprovalsAsync("PR", pr.PrNumber);
+        Assert.Single(approvals);
+        var reread = await h.Store.ReadAsync("CASE-1");
+        Assert.NotNull(reread);
+        var decided = reread.Decisions.Single(d => d.DecisionId == "D-1");
+        Assert.Equal(DecisionStatus.Approved, decided.Status);
+        Assert.Equal("approver", decided.DecidedBy);
         Assert.Contains(reread.Events, e => e.Kind == CaseEventKind.PrApproved);
     }
 
@@ -283,6 +334,57 @@ public sealed class DecisionOutcomeTests
         var reread = await h.Store.ReadAsync("CASE-1");
         Assert.NotNull(reread);
         Assert.Equal(DecisionStatus.Approved, reread.Decisions.Single().Status);
+    }
+
+    [Fact]
+    public async Task FailedAdvanceOffersExplicitRetry()
+    {
+        var h = Create(new FailCallsClient(new FakeModelClient(), 1, 2));
+        h.Erp.SeedSalesOrder(new SalesOrder(
+            "SO-1", SalesOrderStatus.Confirmed, "TST", [new SalesOrderLine("ITEM-1", 5m)]));
+        h.Erp.SeedItem(new ItemDto("ITEM-1", "Test item", false, 6, "EA"));
+        var pr = await h.Erp.CreatePrAsync(
+            "requester", RecordSource.P2pAgent, "requester",
+            [new PurchaseRequisitionLine("ITEM-1", 5m, "EA")], Idem());
+        await h.Erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "requester", Idem());
+        var file = UiTestSupport.CaseFileWith("CASE-1", "SO-1", "ITEM-1", [
+            UiTestSupport.PendingDecision("D-1", "CASE-1", DecisionKind.PrApproval, "PR", pr.PrNumber),
+        ]);
+        var staged = file with
+        {
+            Case = file.Case with { Stage = CaseStage.PrSubmitted, PrNumber = pr.PrNumber }
+        };
+        var events = staged.Events.ToList();
+        events.Add(new CaseEvent(
+            "CASE-1-e1", "CASE-1", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
+            CaseEventKind.Note, "V-TEST", null, "Candidates", "ITEM-1", null, null, null));
+        await h.Store.WriteAsync(staged with { Events = events });
+
+        var outcome = await Outcomes(h).ApplyAsync("CASE-1", "D-1", true, null, "approver");
+
+        Assert.True(outcome.Ok, outcome.Message);
+        Assert.True(outcome.AdvanceFailed);
+        Assert.Contains(outcome.Warnings, w => w.Contains("did not advance"));
+
+        var retry = await Outcomes(h).RetryAdvanceAsync("CASE-1");
+
+        Assert.True(retry.Ok, retry.Message);
+        Assert.False(retry.AdvanceFailed, retry.Message);
+        Assert.Contains("Case advanced to", retry.Message);
+        var pos = await h.Erp.GetPurchaseOrdersAsync();
+        var po = Assert.Single(pos);
+        Assert.Equal("V-TEST", po.VendorId);
+    }
+
+    [Fact]
+    public async Task RetryAdvanceOnMissingCaseFailsCleanly()
+    {
+        var h = Create();
+
+        var retry = await Outcomes(h).RetryAdvanceAsync("NOPE");
+
+        Assert.False(retry.Ok);
+        Assert.Contains("was not found", retry.Message);
     }
 
     private static async Task<PurchaseOrder> ApprovedPoAsync(Harness h)

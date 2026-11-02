@@ -45,9 +45,10 @@ tested proposals become versioned rules. See
 
 ## Boundaries
 
-- Sibling docs (`docs/DECISIONS.md`, `PRODUCT.md`, `SCENARIO.md`,
-  `ERP-DESIGN.md`, `ROADMAP.md`) plus `PROJECT.md`, `schema.md`,
-  `scenarios/`, and `Gate.Compliance/Packs/` are read-only for this work.
+- Sibling docs (`docs/DECISIONS.md`, `PRODUCT.md`,
+  `ERP-DESIGN.md`) plus `docs/DATA-MODEL.md`, `docs/COMPANY-DATA.md`,
+  `schema.md`, and `Gate.Compliance/Packs/` are read-only for this work.
+  (`docs/archive/` holds frozen early-demo history.)
 - The KB data itself (`company/company-kb.json`, `company/docs/`) is
   created only on implementation go, never as part of this design drop.
 - Nothing here is committed without explicit approval.

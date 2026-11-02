@@ -88,8 +88,10 @@ public sealed class PackVersioningTests
         Assert.All(RuleCatalog.Rules, r => Assert.Equal("v0.2", r.PackVersion));
         Assert.Equal(0.60m, RuleCatalog.Corp.OriginCap);
         Assert.Equal(0.50m, RuleCatalog.Corp.VendorCap);
-        var adopted = DateOnly.Parse("2026-03-16");
-        Assert.All(RuleCatalog.Rules, r => Assert.Equal(adopted, r.AdoptedDate));
+        var corpAdopted = DateOnly.Parse("2026-10-01");
+        var janAdopted = DateOnly.Parse("2026-01-01");
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "CORP"), r => Assert.Equal(corpAdopted, r.AdoptedDate));
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack != "CORP"), r => Assert.Equal(janAdopted, r.AdoptedDate));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "BAT-LI"), r => Assert.Equal("Maya Planner", r.Owner));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "ELEC"), r => Assert.Equal("Dana Director", r.Owner));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "SCR"), r => Assert.Equal("Finn Finance", r.Owner));
@@ -153,8 +155,10 @@ public sealed class PackVersioningTests
     public void EmbeddedPacksAllCarryAdoptionDate()
     {
         var set = RulePackLoader.LoadEmbedded();
-        var adopted = DateOnly.Parse("2026-03-16");
+        var corpAdopted = DateOnly.Parse("2026-10-01");
+        var janAdopted = DateOnly.Parse("2026-01-01");
         Assert.Equal(["BAT-LI", "CORP", "ELEC", "SCR"], set.Rules.Select(r => r.Pack).Distinct().OrderBy(p => p).ToList());
-        Assert.All(set.Rules, r => Assert.Equal(adopted, r.AdoptedDate));
+        Assert.All(set.Rules.Where(r => r.Pack == "CORP"), r => Assert.Equal(corpAdopted, r.AdoptedDate));
+        Assert.All(set.Rules.Where(r => r.Pack != "CORP"), r => Assert.Equal(janAdopted, r.AdoptedDate));
     }
 }

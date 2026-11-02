@@ -5,9 +5,10 @@ pack change is proposed here. If accepted, the build lands as its own
 roadmap task after the core Done-means items are met (same gating as
 the stretch list).
 
-Source of decisions: `PROJECT.md` (Final). Product view:
+Source of decisions: `docs/DATA-MODEL.md` plus `docs/COMPANY-DATA.md`.
+Early-demo history: `docs/archive/` (frozen). Product view:
 `docs/PRODUCT.md`. Decision log: `docs/DECISIONS.md`. ERP refusals:
-`docs/ERP-DESIGN.md` §8. Scenario mechanics: `docs/SCENARIO.md`.
+`docs/ERP-DESIGN.md` §8.
 
 ## 1. Why this doc exists
 

@@ -128,4 +128,19 @@ public sealed class VendorDocumentTests
                 Vendor(), CriticalCell(), DocsWithout(), new ProposedAward("SCR-9", 100, "MX"), History()));
         Assert.Contains("does not match", boom.Message);
     }
+
+    [Theory]
+    [InlineData("BAT-LI-01", true)]
+    [InlineData("BAT-LI-02", true)]
+    [InlineData("ELEC-01", true)]
+    [InlineData("ELEC-02", true)]
+    [InlineData("CORP-02", false)]
+    [InlineData("SCR-01", false)]
+    [InlineData("VENDOR-BLOCK", false)]
+    [InlineData("NO-SUCH-RULE", false)]
+    [InlineData("", false)]
+    public void DocumentRuleCheckFollowsPackDocumentKinds(string ruleId, bool expected)
+    {
+        Assert.Equal(expected, _engine.IsDocumentRule(ruleId));
+    }
 }

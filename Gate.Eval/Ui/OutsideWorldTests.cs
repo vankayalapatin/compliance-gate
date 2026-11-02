@@ -1,13 +1,11 @@
 // Outside-world service tests: document-driven portal lists (POs by
 // vendor, expected trucks), the ACK plus ASN posts wire to their endpoint
 // paths with the runner input shapes, the inbox prefill derives from the
-// runtime PO lines plus item pack sizes, the new shop order mints a shop
-// id and resolves the ERP-minted SO, outcome text sanitizes endpoint
-// paths to friendly flow names, and no .razor shows an endpoint name. All
-// sources are temp (scenario, manifest, fake ERP, temp cache, temp dock
-// dir — never the demo numbers). Paths arrive via in-memory
-// configuration, so these tests never touch GATE_MANIFEST /
-// GATE_SCENARIO. No live calls.
+// runtime PO lines plus item pack sizes with supplier-minted numbers left
+// blank, the new shop order mints a shop id and resolves the ERP-minted
+// SO, outcome text sanitizes endpoint paths to friendly flow names, and
+// no .razor shows an endpoint name. All sources are temp (fake ERP, temp
+// cache, temp dock dir — never company-data numbers). No live calls.
 using System.Net;
 using System.Text.Json;
 using Gate.Agent;
@@ -47,44 +45,10 @@ public sealed class OutsideWorldTests
     private sealed record Harness(
         SimulationUiService Service, StubHandler Http, string CacheDir, InMemoryErpAdapter Erp);
 
-    private const string ScenarioJson = """
-        {"name":"ui-outside","currency":"TST",
-         "salesOrder":{"item":"ITEM-1","quantity":12},
-         "items":[{"id":"ITEM-1","unit":"EA"}],
-         "vendors":[{"id":"V-1","item":"ITEM-1"}],
-         "cartons":[{"id":"CTN-A","part":"ITEM-1","units":6},{"id":"CTN-B"}]}
-        """;
-
-    private const string ManifestJson = """
-        {"scenario":"ui-outside","documents":[
-         {"event":"salesOrder","docType":"SO","number":"SO-7"},
-         {"event":"openPo.po","docType":"PO","number":"PO-7"}]}
-        """;
-
-    private static Harness Create(
-        string? scenarioJson = ScenarioJson, string? manifestJson = ManifestJson)
+    private static Harness Create()
     {
         var dir = UiTestSupport.NewDir("gate-ui-outside");
-        var scenarioPath = Path.Combine(dir, "scenario.json");
-        var manifestPath = Path.Combine(dir, "run-manifest.json");
         Directory.CreateDirectory(dir);
-        if (scenarioJson is not null)
-        {
-            File.WriteAllText(scenarioPath, scenarioJson);
-        }
-
-        if (manifestJson is not null)
-        {
-            File.WriteAllText(manifestPath, manifestJson);
-        }
-
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Scenario:File"] = scenarioPath,
-                ["Scenario:Manifest"] = manifestPath,
-            })
-            .Build();
         var erp = new InMemoryErpAdapter();
         erp.SeedBaseCurrency("TST");
         erp.SeedAutoApproveThreshold(10m);
@@ -103,7 +67,7 @@ public sealed class OutsideWorldTests
         var service = new SimulationUiService(
             http, erp, new CaseCacheStore(cacheDir),
             new DockPhotoService(dockDir, Path.Combine(dir, "vision")),
-            config, UiTestLogger<SimulationUiService>.Instance);
+            UiTestLogger<SimulationUiService>.Instance);
         return new Harness(service, stub, cacheDir, erp);
     }
 
@@ -133,24 +97,22 @@ public sealed class OutsideWorldTests
     {
         var now = DateTimeOffset.UtcNow;
         await new CaseCacheStore(h.CacheDir).WriteAsync(new CaseFile(
-            new Case("CASE-1", "SO-7", "ITEM-1", "ui-outside", CaseStage.PoPlaced, now, now,
+            new Case("CASE-1", "SO-7", "ITEM-1", "LE-T", CaseStage.PoPlaced, now, now,
                 "PR-1", poNumber, null, null, [], [], null, null),
             [], []));
     }
 
     [Fact]
-    public async Task OptionsCarryCartonDetailsAndOrderLine()
+    public async Task OptionsCarryErpItemsAndPricedVendorCandidates()
     {
         var h = Create();
 
         var options = await h.Service.GetOptionsAsync();
 
-        Assert.Equal(["CTN-A", "CTN-B"], options.CartonIds);
-        Assert.Equal(2, options.CartonDetails.Count);
-        Assert.Equal(new CartonOption("CTN-A", "ITEM-1", 6), options.CartonDetails[0]);
-        Assert.Equal(new CartonOption("CTN-B", string.Empty, 0), options.CartonDetails[1]);
-        Assert.Equal("ITEM-1", options.SalesOrderItem);
-        Assert.Equal(12m, options.SalesOrderQuantity);
+        var item = Assert.Single(options.Items);
+        Assert.Equal("ITEM-1", item.ItemId);
+        Assert.Equal("EA", item.Unit);
+        Assert.Equal(["V-1"], options.CandidateVendorsByItem["ITEM-1"]);
     }
 
     [Fact]
@@ -245,16 +207,16 @@ public sealed class OutsideWorldTests
         Assert.Equal(5m * 10m, inbox.Po.Total);
 
         Assert.NotNull(inbox.AsnPrefill);
-        Assert.Equal($"ASN-{poNumber}", inbox.AsnPrefill.AsnNumber);
-        Assert.Equal($"PACK-{poNumber}", inbox.AsnPrefill.PackingSlipNumber);
+        Assert.Equal(string.Empty, inbox.AsnPrefill.AsnNumber);
+        Assert.Equal(string.Empty, inbox.AsnPrefill.PackingSlipNumber);
         var carton = Assert.Single(inbox.AsnPrefill.Cartons!);
-        Assert.Equal($"{poNumber}-{poLineRef}-1", carton.CartonId);
+        Assert.Equal("CTN-01", carton.CartonId);
         Assert.Equal("ITEM-1", carton.ItemId);
         Assert.Equal(5, carton.UnitsPerCarton);
-        Assert.Equal($"{poNumber}-{poLineRef}-1-LOT", carton.LotRef);
+        Assert.Equal("LOT-001", carton.LotRef);
 
         Assert.NotNull(inbox.InvoicePrefill);
-        Assert.Equal($"INV-{poNumber}", inbox.InvoicePrefill.Number);
+        Assert.Equal(string.Empty, inbox.InvoicePrefill.Number);
         Assert.Equal("V-1", inbox.InvoicePrefill.VendorId);
         Assert.Equal(poNumber, inbox.InvoicePrefill.PoNumber);
         var invLine = Assert.Single(inbox.InvoicePrefill.Lines);
@@ -267,7 +229,7 @@ public sealed class OutsideWorldTests
     public async Task InboxForPoResolvesCaseAndShipPlan()
     {
         var h = Create();
-        var (poNumber, poLineRef) = await SeedPoAsync(h);
+        var (poNumber, _) = await SeedPoAsync(h);
         await WriteCaseAsync(h, poNumber);
 
         var inbox = await h.Service.GetSupplierInboxForPoAsync(poNumber);
@@ -277,7 +239,7 @@ public sealed class OutsideWorldTests
         Assert.NotNull(inbox.Po);
         Assert.Equal(poNumber, inbox.Po.PoNumber);
         Assert.NotNull(inbox.AsnPrefill);
-        Assert.Equal($"{poNumber}-{poLineRef}-1", inbox.AsnPrefill.Cartons!.Single().CartonId);
+        Assert.Equal("CTN-01", inbox.AsnPrefill.Cartons!.Single().CartonId);
         Assert.NotNull(inbox.InvoicePrefill);
     }
 
@@ -294,18 +256,18 @@ public sealed class OutsideWorldTests
     {
         var notes = new List<string>();
         var cartons = OutsideShipPlan.Build(
-            "PO-7",
             [new InboxPoLineVm("PO-L1", "ITEM-1", 12m, 10m, 120m)],
             _ => 5,
             notes);
 
         Assert.Equal(3, cartons.Count);
-        Assert.Equal("PO-7-PO-L1-1", cartons[0].CartonId);
+        Assert.Equal("CTN-01", cartons[0].CartonId);
         Assert.Equal(5, cartons[0].UnitsPerCarton);
-        Assert.Equal("PO-7-PO-L1-3", cartons[2].CartonId);
+        Assert.Equal("LOT-001", cartons[0].LotRef);
+        Assert.Equal("CTN-03", cartons[2].CartonId);
         Assert.Equal(2, cartons[2].UnitsPerCarton);
+        Assert.Equal("LOT-003", cartons[2].LotRef);
         Assert.Equal(12, cartons.Sum(c => c.UnitsPerCarton));
-        Assert.All(cartons, c => Assert.EndsWith("-LOT", c.LotRef));
         Assert.Empty(notes);
     }
 
@@ -314,7 +276,6 @@ public sealed class OutsideWorldTests
     {
         var notes = new List<string>();
         var cartons = OutsideShipPlan.Build(
-            "PO-7",
             [
                 new InboxPoLineVm("PO-L1", "ITEM-X", 4m, 10m, 40m),
                 new InboxPoLineVm("PO-L2", "ITEM-1", 0m, 10m, 0m),
@@ -323,7 +284,8 @@ public sealed class OutsideWorldTests
             notes);
 
         var fallback = Assert.Single(cartons);
-        Assert.Equal("PO-7-PO-L1-1", fallback.CartonId);
+        Assert.Equal("CTN-01", fallback.CartonId);
+        Assert.Equal("LOT-001", fallback.LotRef);
         Assert.Equal(0, fallback.UnitsPerCarton);
         Assert.Equal(2, notes.Count);
     }
@@ -399,7 +361,7 @@ public sealed class OutsideWorldTests
         await WriteCaseAsync(h, "PO-7");
 
         var placed = await h.Service.SendNewShopOrderAsync(new NewShopOrder(
-            "ui-outside", null, null, [new OrderLineForm("ITEM-1", 5m)], "TST"));
+            "LE-T", null, null, [new OrderLineForm("ITEM-1", 5m)], "TST"));
 
         Assert.True(placed.Outcome.Ok, placed.Outcome.Summary);
         Assert.StartsWith("SHOP-", placed.ShopOrderId);
@@ -415,7 +377,7 @@ public sealed class OutsideWorldTests
 
         var nullPlaced = await h.Service.SendNewShopOrderAsync(null);
         var emptyPlaced = await h.Service.SendNewShopOrderAsync(
-            new NewShopOrder("ui-outside", null, null, [], "TST"));
+            new NewShopOrder("LE-T", null, null, [], "TST"));
 
         Assert.False(nullPlaced.Outcome.Ok);
         Assert.False(emptyPlaced.Outcome.Ok);

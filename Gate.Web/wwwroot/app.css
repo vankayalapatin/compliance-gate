@@ -87,11 +87,28 @@ body {
     align-items: center;
 }
 
-/* Round 3: reset + replay lives in the top bar. Compact inline cluster. */
+.gate-entity {
+    font-size: 13px;
+    color: #374151;
+    white-space: nowrap;
+}
+
+.gate-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.gate-search-input {
+    width: 180px;
+}
+
+/* Admin page: restore + answers-mode controls. Compact inline cluster. */
 .gate-replay {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
 }
 
 .gate-replay .gate-meta {

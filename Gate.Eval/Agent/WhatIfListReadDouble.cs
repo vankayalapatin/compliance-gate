@@ -129,34 +129,34 @@ internal sealed class WhatIfListReadDouble : IErpAdapter
     public async Task<VendorInvoice> CreateInvoiceAsync(
         string supplierInvoiceNumber, string vendorId, string? poNumber,
         string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines,
-        string idempotencyKey, CancellationToken ct = default)
+        string idempotencyKey, DateOnly? invoiceDate = null, CancellationToken ct = default)
     {
         var invoice = await _inner.CreateInvoiceAsync(
-            supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, idempotencyKey, ct).ConfigureAwait(false);
+            supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, idempotencyKey, invoiceDate, ct: ct).ConfigureAwait(false);
         _invoices.Add((invoice.VendorId, invoice.SupplierInvoiceNumber));
         return invoice;
     }
 
     public async Task<Payment> CreatePaymentDraftAsync(
         IReadOnlyList<InvoiceKey> invoices, string source, string createdBy,
-        string idempotencyKey, CancellationToken ct = default)
+        string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default)
     {
-        var payment = await _inner.CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, ct).ConfigureAwait(false);
+        var payment = await _inner.CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, postingDate, ct: ct).ConfigureAwait(false);
         _payments.Add(payment.PaymentNumber);
         return payment;
     }
 
     public async Task<Payment> CreatePaymentDraftAsync(
         IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source,
-        string createdBy, string idempotencyKey, CancellationToken ct = default)
+        string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default)
     {
-        var payment = await _inner.CreatePaymentDraftAsync(invoices, payUpToDate, source, createdBy, idempotencyKey, ct).ConfigureAwait(false);
+        var payment = await _inner.CreatePaymentDraftAsync(invoices, payUpToDate, source, createdBy, idempotencyKey, postingDate, ct: ct).ConfigureAwait(false);
         _payments.Add(payment.PaymentNumber);
         return payment;
     }
 
     public async Task<AsnDto> CreateAsnAsync(
-        string asnNumber, string poNumber, string source, string createdBy,
+        string? asnNumber, string poNumber, string source, string createdBy,
         IReadOnlyList<AsnCarton> cartons, string idempotencyKey,
         CancellationToken ct = default)
     {
@@ -168,10 +168,10 @@ internal sealed class WhatIfListReadDouble : IErpAdapter
     public async Task<ShipmentReceipt> PostReceiptAsync(
         string poNumber, string supplierPackingSlipNumber, string source,
         string createdBy, IReadOnlyList<ReceiptLine> lines,
-        string idempotencyKey, CancellationToken ct = default)
+        string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default)
     {
         var receipt = await _inner.PostReceiptAsync(
-            poNumber, supplierPackingSlipNumber, source, createdBy, lines, idempotencyKey, ct).ConfigureAwait(false);
+            poNumber, supplierPackingSlipNumber, source, createdBy, lines, idempotencyKey, postingDate, ct: ct).ConfigureAwait(false);
         _posWithReceipts.Add(receipt.PoNumber);
         return receipt;
     }
@@ -305,14 +305,14 @@ internal sealed class WhatIfListReadDouble : IErpAdapter
     public Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, results, idempotencyKey, ct);
 
-    public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.PostInvoiceAsync(vendorId, supplierInvoiceNumber, postedBy, idempotencyKey, ct);
+    public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.PostInvoiceAsync(vendorId, supplierInvoiceNumber, postedBy, idempotencyKey, postingDate, ct: ct);
 
     public Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ReleaseHeldInvoiceLineAsync(vendorId, supplierInvoiceNumber, poLineRef, quantity, releasedBy, idempotencyKey, ct);
 
-    public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.PostPaymentAsync(draftPaymentNumber, postedBy, idempotencyKey, ct);
+    public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.PostPaymentAsync(draftPaymentNumber, postedBy, idempotencyKey, postingDate, ct: ct);
 
     public Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordVendorBankChangeAsync(vendorId, newAccountRef, source, changedBy, idempotencyKey, ct);
@@ -444,7 +444,7 @@ internal sealed class ListReadsMissingDouble : IErpAdapter
     public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordVendorConfirmationAsync(poNumber, confirmDate, source, createdBy, lines, idempotencyKey, ct);
 
-    public Task<AsnDto> CreateAsnAsync(string asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) =>
+    public Task<AsnDto> CreateAsnAsync(string? asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) =>
         _inner.CreateAsnAsync(asnNumber, poNumber, source, createdBy, cartons, idempotencyKey, ct);
 
     public Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
@@ -465,8 +465,8 @@ internal sealed class ListReadsMissingDouble : IErpAdapter
     public Task ClosePoAsync(string poNumber, string closedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ClosePoAsync(poNumber, closedBy, idempotencyKey, ct);
 
-    public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.PostReceiptAsync(poNumber, supplierPackingSlipNumber, source, createdBy, lines, idempotencyKey, ct);
+    public Task<ShipmentReceipt> PostReceiptAsync(string poNumber, string supplierPackingSlipNumber, string source, string createdBy, IReadOnlyList<ReceiptLine> lines, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.PostReceiptAsync(poNumber, supplierPackingSlipNumber, source, createdBy, lines, idempotencyKey, postingDate, ct: ct);
 
     public Task QuarantineLotAsync(string lotRef, string holdId, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.QuarantineLotAsync(lotRef, holdId, actedBy, idempotencyKey, ct);
@@ -483,26 +483,26 @@ internal sealed class ListReadsMissingDouble : IErpAdapter
     public Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ReleaseHoldAsync(holdId, releasedBy, approvalRef, idempotencyKey, ct);
 
-    public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, idempotencyKey, ct);
+    public Task<VendorInvoice> CreateInvoiceAsync(string supplierInvoiceNumber, string vendorId, string? poNumber, string source, string createdBy, IReadOnlyList<InvoiceLineInput> lines, string idempotencyKey, DateOnly? invoiceDate = null, CancellationToken ct = default) =>
+        _inner.CreateInvoiceAsync(supplierInvoiceNumber, vendorId, poNumber, source, createdBy, lines, idempotencyKey, invoiceDate, ct: ct);
 
     public Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordMatchResultAsync(vendorId, supplierInvoiceNumber, results, idempotencyKey, ct);
 
-    public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.PostInvoiceAsync(vendorId, supplierInvoiceNumber, postedBy, idempotencyKey, ct);
+    public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.PostInvoiceAsync(vendorId, supplierInvoiceNumber, postedBy, idempotencyKey, postingDate, ct: ct);
 
     public Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ReleaseHeldInvoiceLineAsync(vendorId, supplierInvoiceNumber, poLineRef, quantity, releasedBy, idempotencyKey, ct);
 
-    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, ct);
+    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.CreatePaymentDraftAsync(invoices, source, createdBy, idempotencyKey, postingDate, ct: ct);
 
-    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.CreatePaymentDraftAsync(invoices, payUpToDate, source, createdBy, idempotencyKey, ct);
+    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.CreatePaymentDraftAsync(invoices, payUpToDate, source, createdBy, idempotencyKey, postingDate, ct: ct);
 
-    public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.PostPaymentAsync(draftPaymentNumber, postedBy, idempotencyKey, ct);
+    public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
+        _inner.PostPaymentAsync(draftPaymentNumber, postedBy, idempotencyKey, postingDate, ct: ct);
 
     public Task<VendorBankDto> RecordVendorBankChangeAsync(string vendorId, string newAccountRef, string source, string changedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordVendorBankChangeAsync(vendorId, newAccountRef, source, changedBy, idempotencyKey, ct);

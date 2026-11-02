@@ -8,30 +8,30 @@
 <div class="gate-replay">
     @if (State.IsReplay)
     {
-        <span class="gate-badge gate-badge-dark" title="Replay mode on — zero live calls">Replay</span>
+        <span class="gate-badge gate-badge-dark" title="Offline answers on — zero live calls">Offline answers</span>
     }
     else
     {
-        <span class="gate-badge">Live</span>
+        <span class="gate-badge">Live answers</span>
     }
-    <span class="gate-badge" title="Model spend this run (live calls only; cached answers are free)">@Spend.Summary</span>
+    <span class="gate-badge" title="Model spend this session (live calls only; cached answers are free)">@Spend.Summary</span>
     @if (!_confirming)
     {
-        <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = true">Reset</button>
+        <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = true">Restore saved data</button>
     }
     else
     {
-        <span class="gate-meta">Reset to scenario start?</span>
-        <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="ResetAsync">Confirm reset</button>
+        <span class="gate-meta">Restore the saved opening data? Current changes are discarded.</span>
+        <button class="gate-btn gate-btn-primary" disabled="@_busy" @onclick="RestoreAsync">Confirm restore</button>
         <button class="gate-btn" disabled="@_busy" @onclick="() => _confirming = false">Cancel</button>
     }
     @if (State.IsReplay)
     {
-        <button class="gate-btn" disabled="@_busy" @onclick="ExitReplay">Exit replay</button>
+        <button class="gate-btn" disabled="@_busy" @onclick="ExitReplay">Use live answers</button>
     }
     else
     {
-        <button class="gate-btn" disabled="@_busy" @onclick="EnterReplay">Enter replay</button>
+        <button class="gate-btn" disabled="@_busy" @onclick="EnterReplay">Use offline answers</button>
     }
     @if (_busy)
     {
@@ -52,18 +52,18 @@
     private void EnterReplay()
     {
         Replay.EnterReplay();
-        _summary = "Replay on: Ask-why answers from the model cache only.";
+        _summary = "Offline answers on: Ask-why answers from the model cache only.";
         _full = _summary;
     }
 
     private void ExitReplay()
     {
         Replay.ExitReplay();
-        _summary = "Live: model calls allowed.";
+        _summary = "Live answers: model calls allowed.";
         _full = _summary;
     }
 
-    private async Task ResetAsync()
+    private async Task RestoreAsync()
     {
         _busy = true;
         _summary = null;
@@ -76,21 +76,26 @@
             {
                 _ = InvokeAsync(() =>
                 {
-                    _summary = step;
-                    StateHasChanged();
+                    // Late posts must not clobber the final report: only
+                    // movement while the restore is still busy applies.
+                    if (_busy)
+                    {
+                        _summary = step;
+                        StateHasChanged();
+                    }
                 });
             });
-            var report = await Replay.ResetAsync(progress);
+            var report = await Replay.RestoreAsync(progress);
             _confirming = false;
             _full = report.Error ?? string.Join(" | ", report.Steps.Concat(report.Warnings));
             _summary = report.Error is not null
-                ? "Reset failed."
-                : $"Reset done ({report.Steps.Count} steps).";
+                ? "Restore failed."
+                : $"Restore done ({report.Steps.Count} steps).";
         }
         catch (Exception ex)
         {
-            Log.LogWarning(ex, "Reset failed.");
-            _summary = "Reset failed.";
+            Log.LogWarning(ex, "Restore failed.");
+            _summary = "Restore failed.";
             _full = ex.Message;
             _confirming = false;
         }

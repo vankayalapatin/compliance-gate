@@ -11,7 +11,8 @@ namespace Gate.Web.Services;
 public sealed record DecisionOutcome(
     bool Ok,
     string Message,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    bool AdvanceFailed = false);
 
 public sealed class DecisionOutcomeService
 {
@@ -39,7 +40,7 @@ public sealed class DecisionOutcomeService
         var file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
         if (file is null)
         {
-            return new DecisionOutcome(false, $"Case {caseId} has no case file.", []);
+            return new DecisionOutcome(false, $"Case {caseId} was not found.", []);
         }
 
         var decision = file.Decisions.FirstOrDefault(d =>
@@ -68,6 +69,7 @@ public sealed class DecisionOutcomeService
         }
 
         var warnings = new List<string>();
+        var advanceFailed = false;
         try
         {
             var advanced = await _runner.AdvanceAsync(caseId, ct).ConfigureAwait(false);
@@ -77,11 +79,40 @@ public sealed class DecisionOutcomeService
         {
             _log.LogWarning(ex, "Advance after decision {DecisionId} failed; the outcome stands.", decisionId);
             warnings.Add($"Decision recorded but the case did not advance: {ex.Message}");
+            advanceFailed = true;
         }
 
         return new DecisionOutcome(
             true,
             $"{updated.Kind} {updated.DecisionId} {(approved ? "approved" : "rejected")} by {updated.DecidedBy}.",
-            warnings);
+            warnings,
+            advanceFailed);
+    }
+
+    /// <summary>Re-runs the agent advance for a case whose post-decision
+    /// advance failed (usually a transient model call). The person asks
+    /// explicitly; nothing retries on its own.</summary>
+    public async Task<DecisionOutcome> RetryAdvanceAsync(string caseId, CancellationToken ct = default)
+    {
+        var file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
+        if (file is null)
+        {
+            return new DecisionOutcome(false, $"Case {caseId} was not found.", []);
+        }
+
+        try
+        {
+            var advanced = await _runner.AdvanceAsync(caseId, ct).ConfigureAwait(false);
+            return new DecisionOutcome(true, $"Case advanced to {advanced.Stage} ({advanced.Step}).", []);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Retry advance for case {CaseId} failed.", caseId);
+            return new DecisionOutcome(
+                true,
+                $"Tried again but the case did not advance: {ex.Message}",
+                [],
+                true);
+        }
     }
 }

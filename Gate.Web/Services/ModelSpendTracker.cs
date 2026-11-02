@@ -108,8 +108,8 @@ public sealed class ModelSpendTracker
         return $"{_liveCalls} live call(s), spend unmetered";
     }
 
-    /// <summary>One-line spend readout for the top bar, reset steps, and
-    /// ask-why answers. Always honest about what is configured.</summary>
+    /// <summary>One-line spend readout for the Admin page and restore
+    /// steps. Always honest about what is configured.</summary>
     public string Summary
     {
         get { lock (_gate) { return SummaryLocked(); } }

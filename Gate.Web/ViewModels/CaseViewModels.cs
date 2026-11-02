@@ -1,6 +1,6 @@
-// View models for the Decisions, Cases, and Records surfaces. Display
-// shapes only; every value arrives from the case cache, the run manifest,
-// or the ERP adapter at runtime. No business values in code.
+// View models for the Decisions and Cases surfaces. Display shapes only;
+// every value arrives from the case files, the dock-evidence sidecars, or
+// the ERP adapter at runtime. No business values in code.
 using Gate.Contracts;
 
 namespace Gate.Web.ViewModels;
@@ -286,64 +286,43 @@ public static class VendorLabels
     public static string EmailOrPlaceholder(string? email) => email ?? EmailNotOnFile;
 }
 
-public sealed record ApprovalVm(
-    string DocumentType,
-    string DocumentNumber,
-    string RoutedTo,
-    string? ActedBy,
-    bool Approved,
-    string? Comment,
-    decimal DocumentAmount,
-    decimal LimitChecked);
-
-/// <summary>Plain ERP ledger snapshot. Every list is empty (never null) when
-/// its documents are absent, so pages render honest empty states.
-/// OpeningNumbers holds every run-manifest document number: rows matching
-/// it are seeded history ("opening data"), never agent work this run.</summary>
-public sealed record RecordsVm(
-    IReadOnlyList<SalesOrder> SalesOrders,
-    IReadOnlyList<PurchaseRequisition> PurchaseRequisitions,
-    IReadOnlyList<PurchaseOrder> PurchaseOrders,
-    IReadOnlyList<AsnDto> Asns,
-    IReadOnlyList<ReceiptVm> Receipts,
-    IReadOnlyList<VendorInvoice> Invoices,
-    IReadOnlyList<Payment> Payments,
-    IReadOnlyList<InventoryVm> Inventory,
-    IReadOnlyList<HoldDto> OpenHolds,
-    IReadOnlyList<ApprovalVm> Approvals,
-    IReadOnlyList<VendorDto> Vendors,
-    IReadOnlyList<string> Notes,
-    IReadOnlySet<string> OpeningNumbers);
-
-/// <summary>Ledger row-origin labels. The OPENING sentinel mirrors the ERP
-/// adapters (both stamp opening inventory with it); the manifest-number set
-/// arrives at runtime from the run manifest.</summary>
+/// <summary>Ledger row-origin labels: agent-made rows carry the banner
+/// driven by native Source; every other row stays plain.</summary>
 public static class RecordLabels
 {
-    public const string OpeningRef = "OPENING";
-
-    public const string OpeningData = "opening data";
-
-    public static bool IsOpeningDoc(string? number, IReadOnlySet<string> opening) =>
-        number is not null && opening.Contains(number);
-
-    public static bool IsOpeningTxn(InventoryTransaction txn) =>
-        string.Equals(txn.ReceiptNumber, OpeningRef, StringComparison.Ordinal)
-        || string.Equals(txn.LotRef, OpeningRef, StringComparison.Ordinal);
-
     public static bool IsAgentMade(string? source) =>
         string.Equals(source, RecordSource.P2pAgent, StringComparison.Ordinal);
+}
+
+/// <summary>Display names for stored actors. The loader-era "system" actor
+/// never renders as a person: it shows as the unset placeholder.</summary>
+public static class ActorLabels
+{
+    public const string Unset = "—";
+
+    public static string Display(string? actor) =>
+        string.IsNullOrWhiteSpace(actor)
+        || string.Equals(actor.Trim(), "system", StringComparison.OrdinalIgnoreCase)
+            ? Unset
+            : actor.Trim();
+}
+
+/// <summary>Stored approval comments for display. Loader-era "scenario
+/// seed" comments carry no human meaning and render as the unset
+/// placeholder.</summary>
+public static class CommentLabels
+{
+    public static string Display(string? comment) =>
+        string.IsNullOrWhiteSpace(comment)
+        || string.Equals(comment.Trim(), "scenario seed", StringComparison.OrdinalIgnoreCase)
+            ? ActorLabels.Unset
+            : comment.Trim();
 }
 
 public sealed record ReceiptVm(
     ShipmentReceipt Receipt,
     IReadOnlyList<string> ImageFileNames,
     IReadOnlyList<string> CachedReads);
-
-public sealed record InventoryVm(
-    string ItemId,
-    decimal Stock,
-    IReadOnlyList<InventoryTransaction> Transactions);
 
 /// <summary>Step-by-step reset/replay report rendered on Decisions.</summary>
 public sealed record ReplayReport(
