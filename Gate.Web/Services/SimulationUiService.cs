@@ -26,6 +26,7 @@ public sealed class SimulationUiService
     public const string AsnPath = "/simulation/supplier/asn";
     public const string DockPhotosPath = "/simulation/dock/photos";
     public const string ReshotPath = "/simulation/dock/reshot";
+    public const string ReshotImagePath = "/simulation/dock/reshot-image";
     public const string InvoicePath = "/simulation/supplier/invoice";
     public const string InvoicePhotoPath = "/simulation/supplier/invoice-photo";
     public const string EmailReplyPath = "/simulation/supplier/email-reply";
@@ -412,6 +413,45 @@ public sealed class SimulationUiService
             photos!.Select(p => new DockPhoto(p.ImageId, p.Jpeg, BlankToNull(p.CartonHint))).ToList());
         return await PostAsync(DockPhotosPath, request, body => ParseDock(body, "Dock photos"), ct)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>Mints the relabeled close-up for one carton: one AI labeling
+    /// attempt with verify-then-composite fallback. Returns the minted file
+    /// name to send through the reshot endpoint, plus how it was made.</summary>
+    public async Task<MintedReshotImageVm> MintReshotImageAsync(
+        string? caseId, string? cartonId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(caseId) || string.IsNullOrWhiteSpace(cartonId))
+        {
+            return new MintedReshotImageVm(false, null, "Case and carton are required to mint a close-up.");
+        }
+
+        try
+        {
+            var sent = JsonSerializer.Serialize(
+                new { caseId = caseId.Trim(), cartonId = cartonId.Trim() }, JsonOpts);
+            using var content = new StringContent(sent, System.Text.Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(ReshotImagePath, content, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new MintedReshotImageVm(false, null,
+                    $"Close-up minting refused: {ErrorText(body)}.");
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            var file = Text(doc.RootElement, "fileName");
+            var path = Text(doc.RootElement, "path") ?? "unknown";
+            var reason = Text(doc.RootElement, "fallbackReason");
+            return string.IsNullOrWhiteSpace(file)
+                ? new MintedReshotImageVm(false, null, "Close-up minting returned no file.")
+                : new MintedReshotImageVm(true, file,
+                    $"Minted {file} via {path}" + (reason is null ? "." : $" (fallback: {reason})."));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return new MintedReshotImageVm(false, null, $"Close-up minting failed: {ex.Message}.");
+        }
     }
 
     public async Task<SimulationOutcome> SendReshotAsync(
@@ -1415,6 +1455,19 @@ public sealed class SimulationUiService
 
     private static bool Bool(JsonElement root, string name) =>
         TryProp(root, name) is { ValueKind: JsonValueKind.True };
+
+    private static string ErrorText(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return Text(doc.RootElement, "error") ?? body;
+        }
+        catch (JsonException)
+        {
+            return body;
+        }
+    }
 
     private static IReadOnlyList<string> StringArray(JsonElement root, string name)
     {

@@ -22,24 +22,27 @@ public static class OriginCapMath
     public static string HistoryHref(string itemId) =>
         $"erp/purchase-history/{Uri.EscapeDataString(itemId)}";
 
-    /// <summary>Vendor id from a screening-block summary ("Vendor {id}
-    /// blocked: ..."), or null when the summary has no such shape.</summary>
+    /// <summary>Vendor id from an award-rejection summary ("Vendor {id}
+    /// rejected for the award: ...", legacy "Vendor {id} blocked: ..."),
+    /// or null when the summary has no such shape.</summary>
     public static string? TryParseBlockedVendor(string summary)
     {
         const string prefix = "Vendor ";
-        const string infix = " blocked:";
         if (!summary.StartsWith(prefix, StringComparison.Ordinal))
         {
             return null;
         }
 
-        var end = summary.IndexOf(infix, prefix.Length, StringComparison.Ordinal);
-        if (end <= prefix.Length)
+        foreach (var infix in new[] { " rejected for the award:", " blocked:" })
         {
-            return null;
+            var end = summary.IndexOf(infix, prefix.Length, StringComparison.Ordinal);
+            if (end > prefix.Length)
+            {
+                return summary.Substring(prefix.Length, end - prefix.Length);
+            }
         }
 
-        return summary.Substring(prefix.Length, end - prefix.Length);
+        return null;
     }
 
     /// <summary>Display name for a country code from the company-owned map,

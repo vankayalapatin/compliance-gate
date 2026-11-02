@@ -61,7 +61,7 @@ public sealed class CaseViewService
         // with no figures.
         if (decision.Kind is DecisionKind.DockReview or DecisionKind.DamageReview)
         {
-            figures.AddRange(BuildCartonFigures(kase.CaseId));
+            figures.AddRange(BuildCartonFigures(kase.CaseId, decision));
             if (figures.Count == 0)
             {
                 captions.AddRange(ReadDockEvidenceLines(kase.CaseId));
@@ -118,11 +118,12 @@ public sealed class CaseViewService
             decision, kase.SoNumber, kase.ItemId, kase.Stage, captions, images, summary, figures);
     }
 
-    /// <summary>One figure per held or reviewed carton: the full photo from
-    /// the carton's own read plus the carton id and verdict caption. Passed
-    /// cartons stay out; a carton without a readable photo still renders
-    /// its caption.</summary>
-    private IReadOnlyList<CartonFigureVm> BuildCartonFigures(string caseId)
+    /// <summary>One figure for this card's own carton only: the photo the
+    /// carton was judged from plus the carton id and verdict caption. A
+    /// damage card shows the photo whose read saw the damage; other cards
+    /// show the carton's first read photo. Passed cartons stay out; a
+    /// carton without a readable photo still renders its caption.</summary>
+    private IReadOnlyList<CartonFigureVm> BuildCartonFigures(string caseId, Decision decision)
     {
         var evidence = ReadDockEvidence(caseId);
         if (evidence is null)
@@ -130,9 +131,19 @@ public sealed class CaseViewService
             return [];
         }
 
+        var ownCarton = decision.EvidenceRefs
+            .Where(r => r.StartsWith("carton:", StringComparison.Ordinal))
+            .Select(r => r["carton:".Length..])
+            .FirstOrDefault();
         var figures = new List<CartonFigureVm>();
         foreach (var cartonId in evidence.Verdicts.Keys.Order(StringComparer.Ordinal))
         {
+            if (ownCarton is not null
+                && !string.Equals(cartonId, ownCarton, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             var verdicts = evidence.Verdicts[cartonId]
                 .Where(v => v.Kind != VerdictKind.Pass)
                 .ToList();
@@ -141,10 +152,15 @@ public sealed class CaseViewService
                 continue;
             }
 
-            var imageId = evidence.Reads
+            var cartonReads = evidence.Reads
                 .Where(r => string.Equals(r.CartonId, cartonId, StringComparison.Ordinal))
-                .Select(r => r.ImageId)
-                .FirstOrDefault();
+                .ToList();
+            // The judging photo: damage cards show the read that saw the
+            // damage, every other card the carton's first read.
+            var judging = decision.Kind == DecisionKind.DamageReview
+                ? cartonReads.FirstOrDefault(r => r.DamageVisible) ?? cartonReads.FirstOrDefault()
+                : cartonReads.FirstOrDefault();
+            var imageId = judging?.ImageId;
             var image = _photos.ResolveImageFileName(imageId);
             string? read = null;
             if (image is not null)
@@ -166,8 +182,8 @@ public sealed class CaseViewService
             figures.Add(new CartonFigureVm(
                 cartonId,
                 image,
-                $"Carton {cartonId}: " + string.Join("; ", verdicts
-                    .Select(v => $"{v.Kind} by {v.RuleId} — {v.Reason}")),
+                $"Carton {cartonId}" + (imageId is null ? string.Empty : $" judged from {imageId}") + ": "
+                + string.Join("; ", verdicts.Select(v => $"{v.Kind} by {v.RuleId} — {v.Reason}")),
                 read));
         }
 

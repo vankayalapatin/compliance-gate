@@ -57,9 +57,12 @@ public sealed class DockPhotoService
         fileName.EndsWith("-base.jpg", StringComparison.OrdinalIgnoreCase)
         || fileName.EndsWith("-base.jpeg", StringComparison.OrdinalIgnoreCase);
 
-    public static bool IsCloseUp(string fileName) =>
-        string.Equals(
-            Path.GetFileNameWithoutExtension(fileName), "IMG-04", StringComparison.OrdinalIgnoreCase);
+    public static bool IsCloseUp(string fileName)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        return string.Equals(name, "IMG-04", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("-IMG-04", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Counter images for one dock-camera mode: pallet views for a
     /// first check, close-ups for a reshot. Base originals never appear in

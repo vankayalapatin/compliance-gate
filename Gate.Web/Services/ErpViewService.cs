@@ -919,12 +919,12 @@ public sealed class ErpViewService
                 []));
         }
 
+        // No release-held-line form: held lines release only when the
+        // quarantine or review behind them closes (reshot photo, warehouse
+        // review), never from this page.
         if (inv.Lines.Any(l => l.Disposition == LineDisposition.Held))
         {
-            actions.Add(new(ErpActions.ReleaseInvoiceLine, "Release held line",
-                "Releases a held quantity back to payable. The ERP validates the hold.",
-                [new(ErpActions.InPoLineRef, "PO line", true),
-                 new(ErpActions.InQuantity, "Quantity", true)]));
+            notes.Add("Held lines release only when the quarantine or review behind them closes.");
         }
 
         var badges = new List<string> { $"Status {inv.Status}" };

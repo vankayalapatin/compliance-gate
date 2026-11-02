@@ -76,6 +76,13 @@ public sealed record SimulationOutcome(
     IReadOnlyList<string> Details,
     IReadOnlyList<string> CaseIds);
 
+/// <summary>Outcome of minting one relabeled close-up: the minted file name
+/// to send through the reshot endpoint, plus how it was made.</summary>
+public sealed record MintedReshotImageVm(
+    bool Ok,
+    string? FileName,
+    string Message);
+
 /// <summary>Reply-as-vendor prefill from the case mail thread (or the case PO
 /// vendor when no thread exists yet). Nulls mean no suggestion; the human
 /// types the value.</summary>

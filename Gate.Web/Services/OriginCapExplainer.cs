@@ -20,8 +20,9 @@ public static class OriginCapExplainer
         CancellationToken ct = default)
     {
         var blocked = file.Events
-            .Where(e => e.Kind == CaseEventKind.VendorBlocked
-                && string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal))
+            .Where(e => e.Kind is CaseEventKind.VendorBlocked or CaseEventKind.Note
+                && string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal)
+                && e.Summary.StartsWith("Vendor ", StringComparison.Ordinal))
             .OrderBy(e => e.Timestamp)
             .ToList();
         if (blocked.Count == 0 || file.Case.PrNumber is null)

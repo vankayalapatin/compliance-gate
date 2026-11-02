@@ -11,6 +11,8 @@ public sealed record DockPhotosRequest(string CaseId, List<DockPhoto> Photos);
 
 public sealed record ReshotPhotosRequest(string CaseId, List<string> CartonIds, List<DockPhoto> Photos);
 
+public sealed record ReshotImageRequest(string CaseId, string CartonId);
+
 public sealed record InvoicePhotosRequest(string CaseId, List<InvoicePhoto> Photos);
 
 public static class SimulationEndpoints
@@ -54,14 +56,40 @@ public static class SimulationEndpoints
             SupplierAsnInput input, CaseRunner runner, CancellationToken ct) =>
         {
             var (asn, receipt) = await runner.OnAsnAsync(input, ct).ConfigureAwait(false);
+            // The moment the supplier sends the ASN, the pallet views are
+            // labeled from it (minted PO plus ASN lots) and read live; the
+            // dock counter then offers this truck's own photos.
+            var images = await runner.BuildDockImagesAsync(input.CaseId, ct).ConfigureAwait(false);
             var advanced = await runner.AdvanceAsync(input.CaseId, ct).ConfigureAwait(false);
             return Results.Ok(new
             {
                 asn.AsnNumber,
                 receiptNumber = receipt?.ReceiptNumber,
+                dockImages = images?.Images.Select(i => System.IO.Path.GetFileName(i.FilePath)).ToList()
+                    ?? new List<string>(),
                 step = advanced.Step.ToString(),
                 advanced.Complete,
             });
+        });
+
+        app.MapPost("/simulation/dock/reshot-image", async (
+            ReshotImageRequest request, CaseRunner runner, CancellationToken ct) =>
+        {
+            try
+            {
+                var minted = await runner.MintReshotImageAsync(
+                    request.CaseId, request.CartonId, ct).ConfigureAwait(false);
+                return Results.Ok(new
+                {
+                    minted.FileName,
+                    path = minted.Path.ToString(),
+                    minted.FallbackReason,
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         });
 
         app.MapPost("/simulation/dock/photos", async (

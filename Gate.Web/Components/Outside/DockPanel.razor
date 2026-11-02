@@ -88,10 +88,17 @@
                             @carton.CartonId
                         </label>
                     }
+                    <div class="gate-actions">
+                        <button class="gate-btn" disabled="@_busy" @onclick="() => MintCloseUpsAsync(truck, state)">Mint close-up for picked cartons</button>
+                    </div>
+                    @if (state.MintNote is not null)
+                    {
+                        <p class="gate-meta">@state.MintNote</p>
+                    }
                 }
                 <p class="gate-row"><span class="gate-label">Counter images @(state.Reshot ? "(close-ups)" : "(pallet views)")</span></p>
                 @{
-                    var offered = DockPhotoService.OfferedCounterImages(Options.DockImages, state.Reshot);
+                    var offered = DockPhotoService.OfferedCounterImages(TruckImages(Options.DockImages, truck.AsnNumber, state), state.Reshot);
                 }
                 @if (offered.Count == 0)
                 {
@@ -172,9 +179,65 @@
         public string? CaseId;
         public SimulationOutcome? Outcome;
         public string? UploadError;
+        public string? MintNote;
         public readonly HashSet<string> ReshotCartons = new(StringComparer.Ordinal);
         public readonly Dictionary<string, string?> ServerPicks = new(StringComparer.Ordinal);
         public readonly List<UploadRow> Uploads = [];
+        public readonly List<string> MintedFiles = [];
+    }
+
+    private static IReadOnlyList<string> TruckImages(
+        IReadOnlyList<string> files, string asnNumber, TruckState state)
+    {
+        var all = files.Concat(state.MintedFiles).Distinct(StringComparer.Ordinal).ToList();
+        var own = all.Where(f => f.StartsWith(asnNumber + "-", StringComparison.Ordinal)).ToList();
+        // This truck's own ASN-labeled photos when they exist; otherwise the
+        // legacy unprefixed set (other trucks' photos never leak across).
+        return own.Count > 0
+            ? own
+            : all.Where(f => f.StartsWith("IMG-", StringComparison.Ordinal)).ToList();
+    }
+
+    private async Task MintCloseUpsAsync(ExpectedTruckVm truck, TruckState state)
+    {
+        state.MintNote = null;
+        if (truck.CaseId is null)
+        {
+            state.MintNote = "No case links this truck yet; close-ups wait for the case.";
+            return;
+        }
+
+        if (state.ReshotCartons.Count == 0)
+        {
+            state.MintNote = "Pick at least one carton the close-up covers.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var notes = new List<string>();
+            foreach (var carton in state.ReshotCartons.Order(StringComparer.Ordinal).ToList())
+            {
+                var minted = await Simulate.MintReshotImageAsync(truck.CaseId, carton);
+                notes.Add(minted.Message);
+                if (minted.Ok && minted.FileName is not null)
+                {
+                    if (!state.MintedFiles.Contains(minted.FileName, StringComparer.Ordinal))
+                    {
+                        state.MintedFiles.Add(minted.FileName);
+                    }
+
+                    state.ServerPicks[minted.FileName] = carton;
+                }
+            }
+
+            state.MintNote = string.Join(" ", notes);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private sealed class UploadRow

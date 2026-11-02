@@ -216,8 +216,9 @@ public sealed class AgentActivityService
                 }
 
                 var href = caseHref;
-                if (e.Kind == CaseEventKind.VendorBlocked
-                    && string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal))
+                if (e.Kind is CaseEventKind.VendorBlocked or CaseEventKind.Note
+                    && string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal)
+                    && e.Summary.StartsWith("Vendor ", StringComparison.Ordinal))
                 {
                     var math = await MathForAsync(file, mathByFile, ct).ConfigureAwait(false);
                     var vendorId = OriginCapMath.TryParseBlockedVendor(e.Summary);

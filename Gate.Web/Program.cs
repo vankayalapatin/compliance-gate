@@ -32,8 +32,14 @@ builder.Services.AddDbContextFactory<ErpDbContext>(options => options.UseSqlite(
 // Factory lambda, not the bare type: the adapter also carries a unit-test
 // options constructor, and DI refuses the ambiguous pair. Production
 // always resolves through the context factory.
+builder.Services.AddSingleton<IErpPolicy, ErpPolicy>();
+builder.Services.AddSingleton<IErpPolicyContext>(sp => new CasePolicyContext(
+    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddScoped<IErpAdapter>(sp =>
-    new EfCoreErpAdapter(sp.GetRequiredService<IDbContextFactory<ErpDbContext>>()));
+    new EfCoreErpAdapter(
+        sp.GetRequiredService<IDbContextFactory<ErpDbContext>>(),
+        sp.GetRequiredService<IErpPolicy>(),
+        sp.GetRequiredService<IErpPolicyContext>()));
 builder.Services.AddSingleton<IComplianceEngine, ComplianceEngine>();
 // Spend ledger: process-wide, config-driven (ModelSpend section). The
 // meter wraps the live client only, between the cache and Spark, so
@@ -56,6 +62,32 @@ builder.Services.AddScoped<P2pAgent>();
 builder.Services.AddSingleton<IDockEvaluator, DockEvaluatorService>();
 builder.Services.AddSingleton<PresentationPace>();
 builder.Services.AddSingleton(sp => CountryNames.FromConfig(sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddSingleton<IImageLabeler>(sp =>
+{
+    // Image-edit credentials come from config or the environment
+    // (MetaImages:BaseUrl/ImageModel/ApiKey), like the Spark key. Without
+    // them the pipeline composites labels and reads them live.
+    var section = sp.GetRequiredService<IConfiguration>().GetSection("MetaImages");
+    var baseUrl = section["BaseUrl"];
+    var model = section["ImageModel"];
+    var key = section["ApiKey"];
+    return string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(key)
+        ? new NullImageLabeler()
+        : new MetaImageLabeler(new HttpClient(), new MetaImageOptions(baseUrl, model, key));
+});
+builder.Services.AddSingleton(sp =>
+{
+    var dockDir = DockPhotoService.ResolveImageDir();
+    var assetsDir = Directory.GetParent(dockDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))?.FullName ?? dockDir;
+    var cacheDir = CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath);
+    return new DockImageOptions(
+        dockDir,
+        Path.Combine(assetsDir, "image-specs.json"),
+        Path.Combine(assetsDir, "cartons.json"),
+        dockDir,
+        Path.Combine(dockDir, ".image-cache"),
+        Path.Combine(cacheDir, "vision-reads"));
+});
 builder.Services.AddScoped(sp => new CaseRunner(
     sp.GetRequiredService<IErpAdapter>(),
     sp.GetRequiredService<P2pAgent>(),
@@ -64,7 +96,9 @@ builder.Services.AddScoped(sp => new CaseRunner(
     sp.GetRequiredService<IDockEvaluator>(),
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath),
     sp.GetRequiredService<ILogger<CaseRunner>>(),
-    pace: sp.GetRequiredService<PresentationPace>()));
+    pace: sp.GetRequiredService<PresentationPace>(),
+    imageLabeler: sp.GetRequiredService<IImageLabeler>(),
+    dockImageOptions: sp.GetRequiredService<DockImageOptions>()));
 builder.Services.AddSingleton(sp => new CaseCacheStore(
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddSingleton(sp => new MemoFileStore(
