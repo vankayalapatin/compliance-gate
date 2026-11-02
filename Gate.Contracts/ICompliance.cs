@@ -41,10 +41,22 @@ public interface IComplianceEngine
         CancellationToken ct = default);
 
     /// <summary>Pre-pay gate over holds plus quarantine plus open reviews
-    /// (ELEC-04). Blocks unless all three are empty.</summary>
+    /// (ELEC-04). Blocks unless all three are empty. Gates held-value
+    /// release: nothing tainted is releasable.</summary>
     Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
         PrePayState state,
         CancellationToken ct = default);
+
+    /// <summary>Whole-payment gate (ELEC-04): open reviews (damage, hand
+    /// check) block the whole payment until they close. Holds and
+    /// quarantine hold only their own value (the ERP excludes held lines
+    /// from every draft), so accepted value stays payable while held
+    /// value waits on its reshot. Defaults throw so existing fakes
+    /// compile; the engine overrides it.</summary>
+    Task<IReadOnlyList<Verdict>> EvaluatePayableAsync(
+        PrePayState state,
+        CancellationToken ct = default) =>
+        throw new NotSupportedException("EvaluatePayableAsync is implemented by the compliance engine.");
 
     /// <summary>True when the rule id names a document-presence rule (its
     /// pack entry carries a document kind). Screening failures on document
