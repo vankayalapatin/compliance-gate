@@ -20,6 +20,11 @@ public sealed class SparkOptions
     /// <summary>Default cap when the request does not set one. Reasoning models
     /// burn hundreds of tokens before answering; keep this at 2000 unless costs demand less.</summary>
     public int MaxTokens { get; set; } = 2000;
+
+    /// <summary>Per-attempt timeout for memo proposal calls, in seconds.
+    /// Memo prompts carry the full KB snapshot, so they get their own
+    /// budget instead of the 2-minute case default.</summary>
+    public int MemoTimeoutSeconds { get; set; } = 240;
 }
 
 public sealed class SparkModelClient : IModelClient
