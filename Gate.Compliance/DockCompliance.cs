@@ -29,12 +29,17 @@ public sealed class DockEvaluator
     public const string MarkRuleId = "BAT-LI-03";
     public const string Class9RuleId = "BAT-LI-04";
     public const string DamageRuleId = "BAT-LI-05";
+    public const string LabelRuleId = "BAT-LI-06";
 
     /// <summary>Evaluates every ASN carton in ASN order, then any read carton
-    /// missing from the ASN in sorted order (never silently dropped).</summary>
+    /// missing from the ASN in sorted order (never silently dropped). The
+    /// label check compares each read against the PO being received and the
+    /// ASN lots: a stale photo set held against a new PO holds every carton.</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<Verdict>> EvaluateDock(
         IReadOnlyList<string> asnCartonIds,
-        IReadOnlyList<CartonRead> reads)
+        IReadOnlyList<CartonRead> reads,
+        string expectedPoNumber,
+        IReadOnlyDictionary<string, string> cartonLots)
     {
         var byCarton = reads
             .GroupBy(r => r.CartonId, StringComparer.Ordinal)
@@ -48,19 +53,89 @@ public sealed class DockEvaluator
         foreach (var cartonId in ordered)
         {
             byCarton.TryGetValue(cartonId, out var cartonReads);
-            result[cartonId] = EvaluateCarton(cartonId, cartonReads ?? []);
+            result[cartonId] = EvaluateCarton(cartonId, cartonReads ?? [], expectedPoNumber, cartonLots);
         }
 
         return result;
     }
 
     /// <summary>One carton, one verdict per dock rule, in rule-id order.</summary>
-    public IReadOnlyList<Verdict> EvaluateCarton(string cartonId, IReadOnlyList<CartonRead> reads) =>
+    public IReadOnlyList<Verdict> EvaluateCarton(
+        string cartonId,
+        IReadOnlyList<CartonRead> reads,
+        string expectedPoNumber,
+        IReadOnlyDictionary<string, string> cartonLots) =>
     [
         EvaluateMark(cartonId, reads),
         EvaluateClass9(cartonId, reads),
-        EvaluateDamage(cartonId, reads)
+        EvaluateDamage(cartonId, reads),
+        EvaluateLabel(cartonId, reads, expectedPoNumber, cartonLots)
     ];
+
+    /// <summary>Label identity: the read PO must be the PO being received
+    /// and the read lot must be the carton's ASN lot. Mismatches hold for
+    /// reconciliation; an unreadable label goes to human review. Cartons
+    /// with no reads have nothing to check and pass this rule.</summary>
+    private static Verdict EvaluateLabel(
+        string cartonId,
+        IReadOnlyList<CartonRead> reads,
+        string expectedPoNumber,
+        IReadOnlyDictionary<string, string> cartonLots)
+    {
+        var source = RuleCatalog.Find(LabelRuleId).Source;
+        if (reads.Count == 0)
+        {
+            return new Verdict(LabelRuleId, VerdictKind.Pass,
+                $"{cartonId} has no label read to check.", source);
+        }
+
+        cartonLots.TryGetValue(cartonId, out var expectedLot);
+        var holds = new List<string>();
+        var reviews = new List<string>();
+        foreach (var read in reads)
+        {
+            if (string.IsNullOrWhiteSpace(read.PoNumber))
+            {
+                reviews.Add($"{read.ImageId} shows no readable PO");
+            }
+            else if (!string.Equals(read.PoNumber, expectedPoNumber, StringComparison.Ordinal))
+            {
+                holds.Add($"{read.ImageId} labels PO {read.PoNumber}, not {expectedPoNumber}");
+            }
+
+            if (string.IsNullOrWhiteSpace(read.LotCode))
+            {
+                reviews.Add($"{read.ImageId} shows no readable lot");
+            }
+            else if (expectedLot is not null
+                && !string.Equals(read.LotCode, expectedLot, StringComparison.Ordinal))
+            {
+                holds.Add($"{read.ImageId} labels lot {read.LotCode}, not ASN lot {expectedLot}");
+            }
+            else if (expectedLot is null
+                && !cartonLots.Values.Contains(read.LotCode, StringComparer.Ordinal))
+            {
+                holds.Add($"{read.ImageId} labels lot {read.LotCode}, which is not on the ASN");
+            }
+        }
+
+        if (holds.Count > 0)
+        {
+            return new Verdict(LabelRuleId, VerdictKind.Hold,
+                $"{cartonId} label identity mismatch: {string.Join("; ", holds)}; hold for reconciliation.",
+                source);
+        }
+
+        if (reviews.Count > 0)
+        {
+            return new Verdict(LabelRuleId, VerdictKind.HumanReview,
+                $"{cartonId} label identity unreadable: {string.Join("; ", reviews)}; route to human review.",
+                source);
+        }
+
+        return new Verdict(LabelRuleId, VerdictKind.Pass,
+            $"{cartonId} labels PO {expectedPoNumber} lot {expectedLot ?? "on the ASN"}.", source);
+    }
 
     private static Verdict EvaluateMark(string cartonId, IReadOnlyList<CartonRead> reads)
     {

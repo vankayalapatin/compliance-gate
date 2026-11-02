@@ -185,6 +185,25 @@ public sealed partial class ComplianceEngine : IComplianceEngine
             $"Awarding {award.Quantity} {award.ItemId} cells to {award.Country} puts its share at {share:P1} ({countryCells}+{award.Quantity} of {total}+{award.Quantity}), exceeding the {_corp.OriginCap:P0} country-of-origin cap.", _corp.PolicySource);
     }
 
+    public Task<IReadOnlyList<Verdict>> EvaluatePayableAsync(
+        PrePayState state,
+        CancellationToken ct = default)
+    {
+        _ = ct;
+        var source = RuleCatalog.Find(PrePayHoldId).Source;
+        if (state.OpenReviews.Count == 0)
+        {
+            IReadOnlyList<Verdict> pass =
+                [new Verdict(PrePayHoldId, VerdictKind.Pass,
+                    "No open reviews on lot or shipment; accepted value is payable while held value waits on its reshot.", source)];
+            return Task.FromResult(pass);
+        }
+
+        IReadOnlyList<Verdict> block =
+            [new Verdict(PrePayHoldId, VerdictKind.Block, DescribePayBlock([DescribeReviews(state)], "payment"), source)];
+        return Task.FromResult(block);
+    }
+
     public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
         PrePayState state,
         CancellationToken ct = default)
@@ -213,12 +232,19 @@ public sealed partial class ComplianceEngine : IComplianceEngine
 
         if (state.OpenReviews.Count > 0)
         {
-            parts.Add($"{state.OpenReviews.Count} open review(s): {string.Join(", ", state.OpenReviews.Select(r => $"{r.ReviewId} ({r.RuleId})"))}");
+            parts.Add(DescribeReviews(state));
         }
 
         IReadOnlyList<Verdict> verdicts =
             [new Verdict(PrePayHoldId, VerdictKind.Block,
-                $"{string.Join("; ", parts)}. Payment blocked.", source)];
+                DescribePayBlock(parts, "payment"), source)];
         return Task.FromResult(verdicts);
     }
+
+    private static string DescribeReviews(PrePayState state) =>
+        $"{state.OpenReviews.Count} open review(s): " +
+        string.Join(", ", state.OpenReviews.Select(r => $"{r.ReviewId} ({r.RuleId})"));
+
+    private static string DescribePayBlock(IReadOnlyList<string> parts, string what) =>
+        $"{string.Join("; ", parts)}. {char.ToUpper(what[0]) + what[1..]} blocked.";
 }

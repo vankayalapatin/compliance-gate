@@ -1,6 +1,7 @@
-// Versioned compliance rule catalog (PROJECT.md section 6, catalog v0.2).
+// Versioned compliance rule catalog (PROJECT.md section 6; each rule
+// carries its own pack version, e.g. BAT-LI v2, ELEC v0.2).
 // Rule records plus pack thresholds load from per-pack JSON (see
-// RulePacks.cs); C# holds the shape and the expected version only.
+// RulePacks.cs); C# holds the shape only. Versions live in the pack files.
 // C# decides pass/block/hold/human-review; the model only explains.
 // Tier 3 rules are documented here and never enforced in the demo.
 // RuleTier lives in Gate.Contracts; RuleDefinition.Tier is that enum.
@@ -37,10 +38,6 @@ public sealed record RuleDefinition(
 public static class RuleCatalog
 {
     public const string CatalogVersion = "v0.2";
-
-    /// <summary>Expected per-pack version. The loader refuses any pack file
-    /// carrying a different version instead of mixing catalog versions.</summary>
-    public const string PackVersion = "v0.2";
 
     private static readonly Lazy<RulePackSet> Loaded = new(RulePackLoader.LoadEmbedded);
 
