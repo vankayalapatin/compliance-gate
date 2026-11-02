@@ -1,8 +1,9 @@
 // Outside-world service tests: document-driven portal lists (POs by
 // vendor, expected trucks), the ACK plus ASN posts wire to their endpoint
 // paths with the runner input shapes, the inbox prefill derives from the
-// runtime PO lines plus item pack sizes with supplier-minted numbers left
-// blank, the new shop order mints a shop id and resolves the ERP-minted
+// runtime PO lines plus item pack sizes with supplier numbers suggested
+// from the vendor's own series (blank ASN mints from our sequence),
+// the new shop order mints a shop id and resolves the ERP-minted
 // SO, outcome text sanitizes endpoint paths to friendly flow names, and
 // no .razor shows an endpoint name. All sources are temp (fake ERP, temp
 // cache, temp dock dir — never company-data numbers). No live calls.
@@ -93,6 +94,12 @@ public sealed class OutsideWorldTests
         return (po.PoNumber, po.Lines.Single().PoLineRef);
     }
 
+    private static async Task ApprovePoAsync(Harness h, string poNumber)
+    {
+        await h.Erp.SubmitForApprovalAsync("PO", poNumber, "approver", "requester", Guid.NewGuid().ToString("N"));
+        await h.Erp.RecordApprovalAsync("PO", poNumber, "approver", true, "ok", Guid.NewGuid().ToString("N"));
+    }
+
     private static async Task WriteCaseAsync(Harness h, string? poNumber)
     {
         var now = DateTimeOffset.UtcNow;
@@ -143,9 +150,24 @@ public sealed class OutsideWorldTests
         Assert.Contains(outcome.Details, d => d.Contains("RCP-1"));
     }
 
+    [Fact]
+    public async Task SendAsnAcceptsBlankNumberForSequenceMint()
+    {
+        var h = Create();
+        Respond(h, """{"asnNumber":"ASN-9","receiptNumber":"RCP-9","step":"Docked","complete":false}""");
+
+        var outcome = await h.Service.SendAsnAsync(new AsnSubmission(
+            "CASE-1", string.Empty, "PACK-1",
+            [new AsnCartonForm("CTN-A", "ITEM-1", 6, "LOT-A")]));
+
+        Assert.Equal(1, h.Http.CallCount);
+        Assert.Equal(string.Empty, SentAs<SupplierAsnInput>(h).AsnNumber);
+        Assert.True(outcome.Ok, outcome.Summary);
+        Assert.Contains("ASN-9", outcome.Summary);
+    }
+
     [Theory]
     [InlineData(null, "ASN-1", "PACK-1", "Case")]
-    [InlineData("CASE-1", null, "PACK-1", "ASN number")]
     [InlineData("CASE-1", "ASN-1", null, "Packing-slip")]
     public async Task SendAsnRefusesBlanks(string? caseId, string? asn, string? slip, string fragment)
     {
@@ -302,6 +324,82 @@ public sealed class OutsideWorldTests
         Assert.Contains(listed.Pos, p => p.PoNumber == poNumber);
         Assert.Empty(listed.Notes);
         Assert.Empty(empty.Pos);
+    }
+
+    [Fact]
+    public async Task SupplierPosListNewestActionableFirst()
+    {
+        var h = Create();
+        var (poA, _) = await SeedPoAsync(h);
+        var (poB, _) = await SeedPoAsync(h);
+        var (poC, _) = await SeedPoAsync(h);
+        await ApprovePoAsync(h, poA);
+        await ApprovePoAsync(h, poB);
+        await ApprovePoAsync(h, poC);
+        await h.Erp.ClosePoAsync(poC, "requester", Guid.NewGuid().ToString("N"));
+
+        var listed = await h.Service.ListSupplierPosAsync("V-1");
+
+        Assert.Equal([poB, poA, poC], listed.Pos.Select(p => p.PoNumber));
+    }
+
+    [Fact]
+    public async Task SupplierPosListAwaitingApprovalAfterActionable()
+    {
+        var h = Create();
+        var (poA, _) = await SeedPoAsync(h);
+        var (poB, _) = await SeedPoAsync(h);
+        await ApprovePoAsync(h, poA);
+
+        var listed = await h.Service.ListSupplierPosAsync("V-1");
+
+        Assert.Equal([poA, poB], listed.Pos.Select(p => p.PoNumber));
+    }
+
+    [Fact]
+    public async Task InboxPrefillSuggestsVendorSeriesNumbers()
+    {
+        var h = Create();
+        var (poA, lineA) = await SeedPoAsync(h);
+        await ApprovePoAsync(h, poA);
+        await h.Erp.RecordVendorConfirmationAsync(poA, DateOnly.FromDateTime(DateTime.UtcNow),
+            RecordSource.Vendor, "vendor", [new VendorConfirmLine(lineA, 5m, null)],
+            Guid.NewGuid().ToString("N"));
+        await h.Erp.PostReceiptAsync(poA, "TS-PS-20240506", RecordSource.Vendor, "vendor",
+            [new ReceiptLine(lineA, 5m, 0m, 0m, "LOT-T", null)], Guid.NewGuid().ToString("N"));
+        await h.Erp.CreateInvoiceAsync("TS-2024-05-06", "V-1", poA, RecordSource.Vendor, "vendor",
+            [new InvoiceLineInput(lineA, 5m, 10m)], Guid.NewGuid().ToString("N"));
+        var (poB, _) = await SeedPoAsync(h);
+        await WriteCaseAsync(h, poB);
+
+        var inbox = await h.Service.GetSupplierInboxForPoAsync(poB);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        Assert.NotNull(inbox);
+        Assert.NotNull(inbox.AsnPrefill);
+        Assert.Equal(string.Empty, inbox.AsnPrefill.AsnNumber);
+        Assert.Equal($"TS-PS-{today:yyyyMMdd}", inbox.AsnPrefill.PackingSlipNumber);
+        Assert.NotNull(inbox.InvoicePrefill);
+        Assert.Equal($"TS-{today:yyyy-MM-dd}", inbox.InvoicePrefill.Number);
+    }
+
+    [Fact]
+    public async Task InboxPrefillLeavesUnknownSeriesBlank()
+    {
+        var h = Create();
+        var (poA, lineA) = await SeedPoAsync(h);
+        await h.Erp.CreateInvoiceAsync("NO-DATE-SERIES", "V-1", poA, RecordSource.Vendor, "vendor",
+            [new InvoiceLineInput(lineA, 5m, 10m)], Guid.NewGuid().ToString("N"));
+        var (poB, _) = await SeedPoAsync(h);
+        await WriteCaseAsync(h, poB);
+
+        var inbox = await h.Service.GetSupplierInboxForPoAsync(poB);
+
+        Assert.NotNull(inbox);
+        Assert.NotNull(inbox.InvoicePrefill);
+        Assert.Equal(string.Empty, inbox.InvoicePrefill.Number);
+        Assert.NotNull(inbox.AsnPrefill);
+        Assert.Equal(string.Empty, inbox.AsnPrefill.PackingSlipNumber);
     }
 
     [Fact]

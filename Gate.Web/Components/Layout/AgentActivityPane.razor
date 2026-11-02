@@ -1,0 +1,105 @@
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject AgentActivityService Activity
+@implements IDisposable
+
+@if (_collapsed)
+{
+    <aside class="gate-activity rail" aria-label="Agent activity, collapsed">
+        <button class="gate-btn gate-activity-expand" @onclick="() => _collapsed = false">Activity</button>
+    </aside>
+}
+else
+{
+    <aside class="gate-activity" aria-label="Agent activity">
+        <div class="gate-activity-head">
+            <span class="gate-activity-title">Agent activity</span>
+            <button class="gate-btn" @onclick="() => _collapsed = true">Hide</button>
+        </div>
+        @if (_model is null)
+        {
+            <p class="gate-meta">Loading activity…</p>
+        }
+        else
+        {
+            <p class="gate-activity-label">Now</p>
+            <p class="gate-activity-now">@_model.Now</p>
+            <p class="gate-activity-label">Waiting on</p>
+            @if (_model.Waiting.Count == 0)
+            {
+                <p class="gate-meta">No open orders.</p>
+            }
+            @foreach (var row in _model.Waiting)
+            {
+                <p class="gate-activity-row"><a href="@row.Href">@row.Text</a></p>
+            }
+            <p class="gate-activity-label">Recent</p>
+            @if (_model.Recent.Count == 0)
+            {
+                <p class="gate-meta">Nothing yet.</p>
+            }
+            @foreach (var line in _model.Recent)
+            {
+                <p class="gate-activity-row">@line.Text <span class="gate-meta">@line.Ago</span></p>
+            }
+        }
+    </aside>
+}
+
+@code {
+    private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(5);
+
+    private AgentActivityVm? _model;
+    private bool _collapsed;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+    private Task? _loop;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(RefreshEvery);
+        _loop = RefreshLoopAsync(_cts.Token);
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_timer is not null && await _timer.WaitForNextTickAsync(ct))
+            {
+                await ReloadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        try
+        {
+            _model = await Activity.BuildAsync();
+        }
+        catch (Exception)
+        {
+            // Keep the last good render; the service already degrades
+            // single failures to placeholder lines, so reaching here means
+            // something unexpected. Never break the page for the pane.
+            _model ??= new AgentActivityVm("Idle.", [], []);
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _timer?.Dispose();
+    }
+}

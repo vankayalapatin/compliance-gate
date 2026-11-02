@@ -74,6 +74,7 @@ builder.Services.AddScoped(sp => new MemoRunner(
 builder.Services.AddSingleton(sp => new DockPhotoService(
     DockPhotoService.ResolveImageDir(), DockPhotoService.ResolveVisionCacheDir()));
 builder.Services.AddSingleton<ReplayState>();
+builder.Services.AddScoped<AgentActivityService>();
 builder.Services.AddScoped<CaseViewService>();
 builder.Services.AddScoped<ErpViewService>();
 builder.Services.AddScoped<ErpActionService>();

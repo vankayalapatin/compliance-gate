@@ -273,23 +273,37 @@ public static class CasePicker
 
     /// <summary>True when the latest mail event is an outbound query with no
     /// vendor reply after it. Event order is time order (append-only).</summary>
+    /// <summary>True when a still-pending AP-review invoice problem was
+    /// emailed and its reply has not arrived. Answered, decided, or never
+    /// emailed problems never park the case: a stale mail about a problem
+    /// nobody owns anymore must not strand the case in AwaitVendorReply.</summary>
     public static bool HasUnansweredVendorEmail(CaseFile file)
     {
-        CaseEvent? latest = null;
-        foreach (var e in file.Events)
-        {
-            if (e.Kind is CaseEventKind.VendorEmailed or CaseEventKind.VendorReplied)
-            {
-                latest = e;
-            }
-        }
-
-        return latest is not null && latest.Kind == CaseEventKind.VendorEmailed;
+        var emailed = file.Events
+            .Where(e => e.Kind == CaseEventKind.VendorEmailed
+                && string.Equals(e.DocumentType, "Invoice", StringComparison.Ordinal)
+                && e.DocumentNumber is not null)
+            .Select(e => e.DocumentNumber!)
+            .ToHashSet(StringComparer.Ordinal);
+        var replied = file.Events
+            .Where(e => e.Kind == CaseEventKind.VendorReplied
+                && string.Equals(e.DocumentType, "Invoice", StringComparison.Ordinal)
+                && e.DocumentNumber is not null)
+            .Select(e => e.DocumentNumber!)
+            .ToHashSet(StringComparer.Ordinal);
+        return file.Decisions.Any(d => d.Kind == DecisionKind.ApReview
+            && d.Status == DecisionStatus.Pending
+            && string.Equals(d.DocumentType, "Invoice", StringComparison.Ordinal)
+            && d.DocumentNumber is not null
+            && emailed.Contains(d.DocumentNumber)
+            && !replied.Contains(d.DocumentNumber));
     }
 
     /// <summary>Held invoice problems the agent cannot resolve itself: pending
     /// AP reviews on invoice docs the vendor has not been queried about yet.
-    /// Each is a legal send_vendor_email target.</summary>
+    /// Each is a legal send_vendor_email target. Refs without a number are
+    /// clerk-only: no query can name them, so they never qualify. A blank
+    /// vendor half is fine: the query resolves the vendor from the PO.</summary>
     public static IReadOnlyList<Decision> UnemailedInvoiceProblems(CaseFile file)
     {
         var emailed = file.Events
@@ -303,13 +317,15 @@ public static class CasePicker
                 && d.Status == DecisionStatus.Pending
                 && string.Equals(d.DocumentType, "Invoice", StringComparison.Ordinal)
                 && d.DocumentNumber is not null
+                && AgentTools.IsEmailableInvoiceRef(d.DocumentNumber)
                 && !emailed.Contains(d.DocumentNumber))
             .ToList();
     }
 
     /// <summary>Every tool Spark may legally call in this state: the read
-    /// tools always, the picked step's action tool when runnable, and
-    /// send_vendor_email while an unemailed invoice problem stands. Waiting
+    /// tools always, plus exactly the picked step's action tool when
+    /// runnable. Each step offers only its own tool: email belongs to the
+    /// vendor-query step alone, never to payment or anything else. Waiting
     /// steps end the advance, so they contribute no action tool.</summary>
     public static IReadOnlySet<string> LegalTools(CaseFile file, CaseErpView view, DateOnly? runDate = null)
     {
@@ -324,11 +340,6 @@ public static class CasePicker
         if (action is not null)
         {
             legal.Add(action);
-        }
-
-        if (UnemailedInvoiceProblems(file).Count > 0)
-        {
-            legal.Add(AgentTools.SendVendorEmail);
         }
 
         return legal;

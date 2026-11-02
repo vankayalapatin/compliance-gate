@@ -273,6 +273,7 @@ public static class CaseEventLabels
         {
             CaseEventKind.VendorEmailed => "Vendor emailed",
             CaseEventKind.VendorReplied => "Vendor replied",
+            CaseEventKind.AgentRefused => "Agent refused",
             _ => kind.ToString(),
         };
 }

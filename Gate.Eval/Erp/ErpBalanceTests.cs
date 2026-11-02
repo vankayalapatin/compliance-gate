@@ -171,4 +171,77 @@ public sealed class ErpBalanceTests
         var billed = await erp.GetPurchaseOrderAsync(po.PoNumber);
         Assert.Equal(10m, billed!.Lines[0].QtyInvoiced);
     }
+
+    [Fact]
+    public async Task RemainderDraftSkipsFullyPaidInvoice_Fake()
+    {
+        await RunRemainderSkipsPaidAsync(SeededErp.Create());
+    }
+
+    [Fact]
+    public async Task RemainderDraftSkipsFullyPaidInvoice_EfCore()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        await RunRemainderSkipsPaidAsync(fx.Adapter);
+    }
+
+    private static async Task RunRemainderSkipsPaidAsync(IErpAdapter erp)
+    {
+        // The first invoice pays in full; a later draft over both keys must
+        // cover only the open remainder instead of refusing the paid
+        // invoice's terminal status.
+        var pr = await erp.CreatePrAsync("planner", RecordSource.P2pAgent, "planner",
+            [new PurchaseRequisitionLine("BAT-1", 10, "EA")], Idem());
+        if (pr.Status == PrStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PR", pr.PrNumber, "approver", true, "ok", Idem());
+        }
+        var po = await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.P2pAgent, "planner", Idem());
+        if (po.ApprovalStatus == PoApprovalStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PO", po.PoNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PO", po.PoNumber, "approver", true, "ok", Idem());
+        }
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        await erp.RecordVendorConfirmationAsync(po.PoNumber, today, RecordSource.Vendor, "V-B",
+            po.Lines.Select(l => new VendorConfirmLine(l.PoLineRef, l.QtyOrdered, null)).ToList(), Idem());
+        var lineRef = po.Lines[0].PoLineRef;
+        var unitPrice = po.Lines[0].UnitPrice;
+        await erp.PostReceiptAsync(po.PoNumber, "PACK-RS", RecordSource.P2pAgent, "planner",
+            [new ReceiptLine(lineRef, 10, 0, 0, "LOT-RS", "ok")], Idem());
+
+        await erp.CreateInvoiceAsync("INV-RS1", "V-B", po.PoNumber, "vendor", "planner",
+            [new InvoiceLineInput(lineRef, 4, unitPrice)], Idem());
+        await erp.RecordMatchResultAsync("V-B", "INV-RS1", [new LineMatchResult(lineRef, true, "Matched.")], Idem());
+        await erp.CreateInvoiceAsync("INV-RS2", "V-B", po.PoNumber, "vendor", "planner",
+            [new InvoiceLineInput(lineRef, 6, unitPrice)], Idem());
+        await erp.RecordMatchResultAsync("V-B", "INV-RS2", [new LineMatchResult(lineRef, true, "Matched.")], Idem());
+        foreach (var inv in new[] { "INV-RS1", "INV-RS2" })
+        {
+            var key = $"V-B/{inv}";
+            await erp.SubmitForApprovalAsync("Invoice", key, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("Invoice", key, "approver", true, "ok", Idem());
+            await erp.PostInvoiceAsync("V-B", inv, "planner", Idem());
+        }
+
+        var first = await erp.CreatePaymentDraftAsync(
+            [new InvoiceKey("V-B", "INV-RS1")], RecordSource.P2pAgent, "planner", Idem());
+        Assert.Equal(4 * unitPrice, first.Lines.Single().Amount);
+        await erp.SubmitForApprovalAsync("Payment", first.PaymentNumber, "finance", "planner", Idem());
+        await erp.RecordApprovalAsync("Payment", first.PaymentNumber, "finance", true, "ok", Idem());
+        await erp.PostPaymentAsync(first.PaymentNumber, "finance", Idem());
+        Assert.Equal(InvoiceStatus.Paid, (await erp.GetInvoiceAsync("V-B", "INV-RS1"))!.Status);
+
+        var remainder = await erp.CreatePaymentDraftAsync(
+            [new InvoiceKey("V-B", "INV-RS1"), new InvoiceKey("V-B", "INV-RS2")],
+            RecordSource.P2pAgent, "planner", Idem());
+        var line = Assert.Single(remainder.Lines);
+        Assert.Equal("INV-RS2", line.SupplierInvoiceNumber);
+        Assert.Equal(6 * unitPrice, line.Amount);
+        await erp.SubmitForApprovalAsync("Payment", remainder.PaymentNumber, "finance", "planner", Idem());
+        await erp.RecordApprovalAsync("Payment", remainder.PaymentNumber, "finance", true, "ok", Idem());
+        await erp.PostPaymentAsync(remainder.PaymentNumber, "finance", Idem());
+        Assert.Equal(InvoiceStatus.Paid, (await erp.GetInvoiceAsync("V-B", "INV-RS2"))!.Status);
+    }
 }

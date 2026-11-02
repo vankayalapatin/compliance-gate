@@ -990,6 +990,17 @@ public sealed partial class EfCoreErpAdapter
         {
             var inv = await db.VendorInvoices.FindAsync([key.VendorId, key.SupplierInvoiceNumber], ct).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Unknown invoice {key.SupplierInvoiceNumber}.");
+            // Fully settled invoices contribute no line: skip them before
+            // any per-line validation so a remainder draft over older
+            // paid invoices is not refused for their terminal status.
+            // Client-side sum: SQLite cannot aggregate decimals server-side.
+            var acceptedRows = await db.VendorInvoiceLines
+                .Where(l => l.VendorId == inv.VendorId && l.SupplierInvoiceNumber == inv.SupplierInvoiceNumber &&
+                    l.Disposition == nameof(LineDisposition.Accepted))
+                .ToListAsync(ct).ConfigureAwait(false);
+            var accepted = acceptedRows.Sum(l => l.Quantity * l.UnitPrice);
+            var paid = (await db.PaidAmounts.FindAsync([inv.VendorId, inv.SupplierInvoiceNumber], ct).ConfigureAwait(false))?.Amount ?? 0m;
+            if (accepted - paid <= 0) continue;
             if (Enum<InvoiceStatus>(inv.Status) is not InvoiceStatus.Posted and not InvoiceStatus.PartiallyPaid)
                 throw new InvalidOperationException($"Invoice {key.SupplierInvoiceNumber} must be posted before pay.");
             if (string.IsNullOrEmpty(currency)) currency = inv.Currency;
@@ -1002,13 +1013,6 @@ public sealed partial class EfCoreErpAdapter
             if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
             // Terms set the due date shown on the draft; like D365, the ERP
             // does not refuse early payment (PROJECT.md Done needs same-day pay runs).
-            // Client-side sum: SQLite cannot aggregate decimals server-side.
-            var acceptedRows = await db.VendorInvoiceLines
-                .Where(l => l.VendorId == inv.VendorId && l.SupplierInvoiceNumber == inv.SupplierInvoiceNumber &&
-                    l.Disposition == nameof(LineDisposition.Accepted))
-                .ToListAsync(ct).ConfigureAwait(false);
-            var accepted = acceptedRows.Sum(l => l.Quantity * l.UnitPrice);
-            var paid = (await db.PaidAmounts.FindAsync([inv.VendorId, inv.SupplierInvoiceNumber], ct).ConfigureAwait(false))?.Amount ?? 0m;
             var remaining = accepted - paid;
             if (remaining > 0)
             {

@@ -989,6 +989,12 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             {
                 if (!_invoices.TryGetValue((key.VendorId, key.SupplierInvoiceNumber), out var inv))
                     throw new InvalidOperationException($"Unknown invoice {key.SupplierInvoiceNumber}.");
+                // Fully settled invoices contribute no line: skip them before
+                // any per-line validation so a remainder draft over older
+                // paid invoices is not refused for their terminal status.
+                var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
+                var paid = _paidAmounts.GetValueOrDefault(PaidKey(inv.VendorId, inv.SupplierInvoiceNumber));
+                if (accepted - paid <= 0) continue;
                 if (inv.Status is not InvoiceStatus.Posted and not InvoiceStatus.PartiallyPaid)
                     throw new InvalidOperationException($"Invoice {key.SupplierInvoiceNumber} must be posted before pay.");
                 if (string.IsNullOrEmpty(currency)) currency = inv.Currency;
@@ -1001,8 +1007,6 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 if (due > dueDate || due == DateOnly.MinValue) due = dueDate;
                 // Terms set the due date shown on the draft; like D365, the ERP
                 // does not refuse early payment (PROJECT.md Done needs same-day pay runs).
-                var accepted = inv.Lines.Where(l => l.Disposition == LineDisposition.Accepted).Sum(l => l.Quantity * l.UnitPrice);
-                var paid = _paidAmounts.GetValueOrDefault(PaidKey(inv.VendorId, inv.SupplierInvoiceNumber));
                 var remaining = accepted - paid;
                 if (remaining > 0)
                 {

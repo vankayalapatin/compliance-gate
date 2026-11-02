@@ -472,6 +472,19 @@ public sealed class SimulationUiTests
     }
 
     [Fact]
+    public async Task SendInvoiceRefusesBlankNumber()
+    {
+        var h = Create();
+
+        var outcome = await h.Service.SendInvoiceAsync(
+            "CASE-1", "   ", "V-1", "PO-7", [new InvoiceLineForm("L1", 1m, 1m)], null);
+
+        Assert.False(outcome.Ok);
+        Assert.Contains("number", outcome.Summary);
+        Assert.Equal(0, h.Http.CallCount);
+    }
+
+    [Fact]
     public async Task SendInvoiceRefusesWithoutCase()
     {
         var h = Create();

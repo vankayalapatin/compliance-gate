@@ -145,6 +145,26 @@ public sealed class ToolLoopTests
     }
 
     [Fact]
+    public async Task TurnRequestCarriesOnlyStepTools()
+    {
+        var h = Create();
+        var caseId = await OpenBatteryCaseAsync(h);
+        h.Models.QueueToolCalls("shortfall", ("c1", AgentTools.ComputeShortfall, Args(caseId)));
+        h.Models.QueueToolCalls("raise", ("c2", AgentTools.RaisePr, Args(caseId)));
+
+        await h.Runner.AdvanceAsync(caseId);
+
+        var first = h.Models.Requests[0].Tools!.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(
+            new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail, AgentTools.CheckPrePay,
+                AgentTools.ComputeShortfall }.ToHashSet(StringComparer.Ordinal),
+            first);
+        var second = h.Models.Requests[1].Tools!.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.Contains(AgentTools.RaisePr, second);
+        Assert.DoesNotContain(AgentTools.ComputeShortfall, second);
+    }
+
+    [Fact]
     public async Task IllegalProposalIsBlockedAndFedBackToTheModel()
     {
         var h = Create();

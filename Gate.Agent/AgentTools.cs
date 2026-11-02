@@ -79,6 +79,39 @@ public static class AgentTools
 
     /// <summary>Maps a runnable picker step to its action tool. Waiting steps
     /// have no tool: they end the advance instead of executing.</summary>
+    /// <summary>Plain verb for a tool, for refusal timeline lines. Unknown
+    /// tools (including invented names) read as acting, never echoed.</summary>
+    public static string ToPlainVerb(string toolName) => toolName switch
+    {
+        ComputeShortfall => "check the shortfall",
+        RaisePr => "raise the request",
+        ScreenVendors => "screen vendors",
+        AwardSupplier => "award the supplier",
+        CreatePo => "place the order",
+        SubmitPoApproval => "submit the approval",
+        DraftPayment => "draft the payment",
+        NotifyCustomer => "notify the customer",
+        FinishCase => "close the case",
+        SendVendorEmail => "email the supplier",
+        _ => "act",
+    };
+
+    /// <summary>True for a vendor query target with an invoice number
+    /// (vendor/number; the vendor half may be blank because the query
+    /// resolves the vendor from the case PO). A blank number names no
+    /// invoice: it is refused, never emailed or carded.</summary>
+    public static bool IsEmailableInvoiceRef(string? invoiceRef)
+    {
+        if (string.IsNullOrWhiteSpace(invoiceRef))
+        {
+            return false;
+        }
+
+        var parts = invoiceRef.Split('/', 2);
+        return parts.Length == 2
+            && !string.IsNullOrWhiteSpace(parts[1]);
+    }
+
     public static string? ToToolName(CaseNextStep step) => step switch
     {
         CaseNextStep.ComputeShortfall => ComputeShortfall,
@@ -122,7 +155,8 @@ public static class AgentTools
 
     /// <summary>Builds one turn prompt: stable case JSON plus the ERP view.
     /// No timestamps anywhere, so replays reproduce the prompt byte for byte.
-    /// Names no step and no choice: every tool stays equally available.</summary>
+    /// Names no step and no choice; the request carries only the step's own
+    /// tools, so the prompt never needs to steer among them.</summary>
     public static string BuildTurnPrompt(CaseFile file, CaseErpView view)
     {
         var projection = new

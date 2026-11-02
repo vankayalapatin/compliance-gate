@@ -551,6 +551,15 @@ public partial class CaseRunner
     public async Task<InvoiceIntakeOutcome> OnInvoiceAsync(
         SupplierInvoiceInput input, CancellationToken ct = default, bool vendorIdentityCompletion = false)
     {
+        // A numberless invoice names nothing to match, pay, query, or card:
+        // refuse it with its reason instead of parking a blank AP review.
+        if (string.IsNullOrWhiteSpace(input.SupplierInvoiceNumber))
+        {
+            throw new InvalidOperationException(
+                "Supplier invoice number is missing: resend the invoice with its printed number. " +
+                "Blank numbers are refused, never held or carded.");
+        }
+
         var file = CaseStore.Load(_cacheDir, input.CaseId)
             ?? throw new InvalidOperationException($"Unknown case {input.CaseId}.");
         if (!vendorIdentityCompletion)

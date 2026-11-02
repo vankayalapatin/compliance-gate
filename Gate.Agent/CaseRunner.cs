@@ -59,6 +59,18 @@ public partial class CaseRunner
         string caseId, CancellationToken ct = default, DateOnly? payUpToDate = null) =>
         await AdvanceWithToolsAsync(caseId, payUpToDate, ct).ConfigureAwait(false);
 
+    /// <summary>Reads the case's current next step without acting: the same
+    /// pick the tool loop would advance. Undated (no payment-run cap).
+    /// Surfaces use it to say what each open case waits on.</summary>
+    public async Task<(CaseNextStep Step, string Reason)> NextStepAsync(
+        string caseId, CancellationToken ct = default)
+    {
+        var file = CaseStore.Load(_cacheDir, caseId)
+            ?? throw new InvalidOperationException($"Unknown case {caseId}.");
+        var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
+        return CasePicker.Pick(file, view);
+    }
+
     private void RecordFailureNote(string caseId, CaseNextStep step, Exception ex) =>
         RecordFailureNote(caseId, step.ToString(), ex);
 

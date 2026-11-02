@@ -209,4 +209,49 @@ public sealed class CasePickerTests
         Assert.Equal(CaseNextStep.AwaitDecision,
             CasePicker.Pick(reviewStuck, View(matched: 1, accepted: 100, paid: 100, notified: true)).Step);
     }
+
+    [Fact]
+    public void PaymentStepOffersOnlyThePaymentTool()
+    {
+        // Each step offers only its own tool: at DraftPayment the agent
+        // drafts, even while an unemailed invoice problem stands. Email
+        // belongs to the vendor-query step alone.
+        var file = File(CaseStage.InvoiceMatched, pr: "PR-1", po: "PO-1",
+            decisions: [Pending(DecisionKind.ApReview, "V-X/INV-9", "Invoice")]);
+        var view = View(matched: 1, accepted: 100, paid: 60, notified: true);
+
+        Assert.Equal(CaseNextStep.DraftPayment, CasePicker.Pick(file, view).Step);
+        var legal = CasePicker.LegalTools(file, view);
+        Assert.Contains(AgentTools.DraftPayment, legal);
+        Assert.DoesNotContain(AgentTools.SendVendorEmail, legal);
+        Assert.DoesNotContain(AgentTools.NotifyCustomer, legal);
+    }
+
+    [Fact]
+    public void BlankRefsAreClerkOnlyNeverEmailed()
+    {
+        // A problem ref without a number names no queryable invoice: it
+        // never qualifies for email and the clerk owns it.
+        var file = File(CaseStage.PaymentPartial, pr: "PR-1", po: "PO-1",
+            decisions: [Pending(DecisionKind.ApReview, "V-X/", "Invoice")]);
+        var view = View(matched: 1, accepted: 100, paid: 100, notified: true);
+
+        Assert.Empty(CasePicker.UnemailedInvoiceProblems(file));
+        Assert.Equal(CaseNextStep.AwaitDecision, CasePicker.Pick(file, view).Step);
+        Assert.DoesNotContain(AgentTools.SendVendorEmail, CasePicker.LegalTools(file, view));
+    }
+
+    [Fact]
+    public void VendorBlankRefsStayEmailableThroughThePo()
+    {
+        // A blank vendor half is fine: the query resolves the vendor from
+        // the case PO, so the problem still qualifies for email.
+        var file = File(CaseStage.PaymentPartial, pr: "PR-1", po: "PO-1",
+            decisions: [Pending(DecisionKind.ApReview, "/INV-9", "Invoice")]);
+        var view = View(matched: 1, accepted: 100, paid: 100, notified: true);
+
+        Assert.Equal("/INV-9", Assert.Single(CasePicker.UnemailedInvoiceProblems(file)).DocumentNumber);
+        Assert.Equal(CaseNextStep.QueryVendor, CasePicker.Pick(file, view).Step);
+        Assert.Contains(AgentTools.SendVendorEmail, CasePicker.LegalTools(file, view));
+    }
 }

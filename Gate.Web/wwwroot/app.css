@@ -132,9 +132,84 @@ body {
 }
 
 .gate-main {
-    max-width: 960px;
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    max-width: 1292px;
     margin: 0 auto;
     padding: 20px 16px 48px;
+}
+
+.gate-body {
+    flex: 1;
+    min-width: 0;
+    max-width: 960px;
+}
+
+/* Agent activity pane: docked right panel on every page, mirroring the
+   left sidebar skin (white, full height below the top bar, own scroll).
+   Fixed positioning keeps it in place while the page scrolls; .gate-main
+   carries a right margin of the same width (see below) so page content
+   keeps its normal layout in the remaining width. The collapsed state is
+   a thin rail with an expand button. Below 1100px the pane steps aside
+   entirely; the page keeps its full width. */
+.gate-activity {
+    position: fixed;
+    top: 52px;
+    right: 0;
+    bottom: 0;
+    width: 300px;
+    background: #fff;
+    border-left: 1px solid var(--gate-border);
+    padding: 12px;
+    overflow-y: auto;
+}
+
+.gate-activity.rail {
+    width: 40px;
+    padding: 8px 4px;
+}
+
+.gate-activity-expand {
+    writing-mode: vertical-rl;
+    width: 100%;
+}
+
+.gate-activity-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.gate-activity-title {
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.gate-activity-label {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--gate-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 12px 0 4px;
+}
+
+.gate-activity-now {
+    font-size: 13px;
+    margin: 0 0 4px;
+}
+
+.gate-activity-row {
+    font-size: 13px;
+    margin: 0 0 6px;
+}
+
+@media (max-width: 1100px) {
+    .gate-activity {
+        display: none;
+    }
 }
 
 .gate-main a {
@@ -594,6 +669,30 @@ body {
     max-width: none;
     margin: 0;
     padding: 0;
+    gap: 0;
+}
+
+.gate-main:has(.gate-erp) .gate-body {
+    max-width: none;
+}
+
+/* Docked-pane room: on wide screens the main column ends where the fixed
+   pane begins, so every page keeps its normal layout in the remaining
+   width. The collapsed rail needs only 40px. Below 1100px the pane hides
+   and these margins fall away with it. */
+@media (min-width: 1101px) {
+    .gate-main {
+        margin-right: 300px;
+    }
+
+    .gate-main:has(.gate-erp) {
+        margin-right: 300px;
+    }
+
+    .gate-main:has(> .gate-activity.rail),
+    .gate-main:has(.gate-erp):has(> .gate-activity.rail) {
+        margin-right: 40px;
+    }
 }
 
 .gate-erp {

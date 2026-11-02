@@ -347,10 +347,9 @@ public sealed class SimulationUiService
             return Refusal("Case is required for a shipment notice.");
         }
 
-        if (string.IsNullOrWhiteSpace(submission.AsnNumber))
-        {
-            return Refusal("ASN number is required; the supplier mints it when shipping.");
-        }
+        // A blank ASN number mints from our ASN sequence in the ERP: the
+        // ASN identity is ours, never typed by a person. An explicit
+        // number is honored for callers that already hold one.
 
         if (string.IsNullOrWhiteSpace(submission.PackingSlipNumber))
         {
@@ -392,7 +391,7 @@ public sealed class SimulationUiService
 
         var input = new SupplierAsnInput(
             submission.CaseId.Trim(),
-            submission.AsnNumber.Trim(),
+            submission.AsnNumber?.Trim() ?? string.Empty,
             submission.PackingSlipNumber.Trim(),
             cartons,
             FreshKey());
@@ -482,11 +481,17 @@ public sealed class SimulationUiService
             mapped.Add(new SupplierInvoiceLineInput(BlankToNull(line.PoLineRef), line.Quantity, line.UnitPrice));
         }
 
-        // Blank number, vendor, or PO is a valid missing-fields input: the
-        // runner holds it for the AP clerk instead of refusing it.
+        // A numberless invoice names nothing to match, pay, query, or card:
+        // refuse it here with its reason. Blank vendor or PO still flows to
+        // the runner, which holds it for the AP clerk under the real number.
+        if (string.IsNullOrWhiteSpace(supplierInvoiceNumber))
+        {
+            return Refusal("Supplier invoice number is required as printed; blank numbers are refused, never held or carded.");
+        }
+
         var input = new SupplierInvoiceInput(
             caseId.Trim(),
-            supplierInvoiceNumber?.Trim() ?? string.Empty,
+            supplierInvoiceNumber.Trim(),
             BlankToNull(vendorId),
             BlankToNull(poNumber),
             mapped,
@@ -605,7 +610,8 @@ public sealed class SimulationUiService
         try
         {
             orders = (await _erp.GetPurchaseOrdersByVendorAsync(vendorId, ct).ConfigureAwait(false))
-                .OrderBy(p => p.PoNumber, StringComparer.Ordinal)
+                .OrderBy(SupplierWorkBand)
+                .ThenByDescending(p => p.PoNumber, StringComparer.Ordinal)
                 .ToList();
         }
         catch (NotSupportedException ex)
@@ -624,6 +630,19 @@ public sealed class SimulationUiService
         return new SupplierPoList(
             orders.Select(ToInboxPo).ToList(), notes);
     }
+
+    /// <summary>Supplier work band for PO ordering. Band 0 is work the
+    /// supplier can do now (approved and still open); band 1 waits on
+    /// our approval; band 2 is done from the supplier's side
+    /// (invoiced, closed, cancelled). The portal opens on the newest
+    /// PO in band 0 and lists open POs first.</summary>
+    private static int SupplierWorkBand(PurchaseOrder p) =>
+        p.ApprovalStatus is PoApprovalStatus.Cancelled
+            || p.DocStatus is PoDocStatus.Invoiced or PoDocStatus.Closed or PoDocStatus.Cancelled ? 2
+        : p.ApprovalStatus is PoApprovalStatus.Approved or PoApprovalStatus.Confirmed
+            && p.DocStatus is PoDocStatus.Open or PoDocStatus.PartiallyReceived
+                or PoDocStatus.Received or PoDocStatus.PartiallyInvoiced ? 0
+        : 1;
 
     /// <summary>Case id behind a PO, read back from the case cache. Null when
     /// no case links the PO yet; the portal waits for the case.</summary>
@@ -691,10 +710,13 @@ public sealed class SimulationUiService
             : await SuggestReplyAsync(resolved, ct).ConfigureAwait(false);
 
         var asn = await BuildShipPrefillAsync(resolved, po, notes, ct).ConfigureAwait(false);
-        // The supplier invoice number arrives blank: the supplier types it
-        // as printed. Lines mirror ordered qty/price as editable rows.
+        // The supplier invoice number suggests the next in the vendor's
+        // own series (blank when they have no readable history), so the
+        // person only checks and clicks send. Lines mirror ordered
+        // qty/price as editable rows.
+        var invoiceNumber = await SuggestInvoiceNumberAsync(po.VendorId, notes, ct).ConfigureAwait(false);
         var invoice = new InvoicePrefill(
-            string.Empty,
+            invoiceNumber ?? string.Empty,
             po.VendorId,
             po.PoNumber,
             po.Lines.Select(l => new InvoiceLineForm(l.PoLineRef, l.QtyOrdered, l.UnitPrice)).ToList());
@@ -873,9 +895,86 @@ public sealed class SimulationUiService
             po.Lines,
             itemId => packs.TryGetValue(itemId, out var units) ? units : null,
             notes);
-        // The ASN number and packing-slip number arrive blank: the supplier
-        // types them as printed when shipping. Nothing derives from the PO.
-        return new AsnSubmission(caseId, string.Empty, string.Empty, cartons);
+        // The ASN number stays blank so the ERP mints it from our ASN
+        // sequence on send. The packing slip is the supplier's own
+        // number: suggest the next in their series, editable before
+        // sending. Nothing derives from the PO.
+        var slip = await SuggestPackingSlipAsync(po, notes, ct).ConfigureAwait(false);
+        return new AsnSubmission(caseId, string.Empty, slip ?? string.Empty, cartons);
+    }
+
+    /// <summary>Suggests the vendor's next number in their own series:
+    /// the learned prefix and date shape stay, only the date tag moves
+    /// to today. Unknown shapes return null (no guess): the supplier
+    /// types the number as printed. Pure logic over the vendor's own
+    /// history; no vendor data lives here.</summary>
+    private static string? SuggestVendorSeriesNumber(string? learned, DateOnly today)
+    {
+        if (string.IsNullOrWhiteSpace(learned) || string.IsNullOrWhiteSpace(learned.Trim().Split('-')[0]))
+        {
+            return null;
+        }
+
+        var parts = learned.Trim().Split('-');
+        if (parts.Length >= 4
+            && parts[^1].Length == 2 && IsDigits(parts[^1])
+            && parts[^2].Length == 2 && IsDigits(parts[^2])
+            && parts[^3].Length == 4 && IsDigits(parts[^3]))
+        {
+            return string.Join('-', parts[..^3]) + $"-{today:yyyy-MM-dd}";
+        }
+
+        if (parts.Length >= 2 && parts[^1].Length == 8 && IsDigits(parts[^1]))
+        {
+            return string.Join('-', parts[..^1]) + $"-{today:yyyyMMdd}";
+        }
+
+        return null;
+    }
+
+    private static bool IsDigits(string s) =>
+        s.Length > 0 && s.All(c => c is >= '0' and <= '9');
+
+    private async Task<string?> SuggestPackingSlipAsync(
+        InboxPoVm po, List<string> notes, CancellationToken ct)
+    {
+        try
+        {
+            var poNumbers = (await _erp.GetPurchaseOrdersByVendorAsync(po.VendorId, ct).ConfigureAwait(false))
+                .Select(p => p.PoNumber)
+                .ToHashSet(StringComparer.Ordinal);
+            var latest = (await _erp.GetShipmentReceiptsAsync(ct).ConfigureAwait(false))
+                .Where(r => poNumbers.Contains(r.PoNumber)
+                    && !string.IsNullOrWhiteSpace(r.SupplierPackingSlipNumber))
+                .MaxBy(r => r.ReceiptNumber, StringComparer.Ordinal)
+                ?.SupplierPackingSlipNumber;
+            return SuggestVendorSeriesNumber(latest, DateOnly.FromDateTime(DateTime.UtcNow));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Packing-slip suggestion lookup failed for vendor {Vendor}.", po.VendorId);
+            notes.Add($"Packing-slip suggestion failed: {ex.Message}.");
+            return null;
+        }
+    }
+
+    private async Task<string?> SuggestInvoiceNumberAsync(
+        string vendorId, List<string> notes, CancellationToken ct)
+    {
+        try
+        {
+            var latest = (await _erp.GetVendorInvoicesAsync(ct).ConfigureAwait(false))
+                .Where(i => string.Equals(i.VendorId, vendorId, StringComparison.Ordinal))
+                .MaxBy(i => i.SupplierInvoiceNumber, StringComparer.Ordinal)
+                ?.SupplierInvoiceNumber;
+            return SuggestVendorSeriesNumber(latest, DateOnly.FromDateTime(DateTime.UtcNow));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Invoice suggestion lookup failed for vendor {Vendor}.", vendorId);
+            notes.Add($"Invoice suggestion failed: {ex.Message}.");
+            return null;
+        }
     }
 
     /// <summary>Expected trucks at the dock: unreceived ASNs from the ERP

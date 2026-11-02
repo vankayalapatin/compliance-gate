@@ -18,7 +18,10 @@
 </header>
 
 <main class="gate-main">
-    @Body
+    <div class="gate-body">
+        @Body
+    </div>
+    <AgentActivityPane @rendermode="InteractiveServer" />
 </main>
 
 <div id="blazor-error-ui">

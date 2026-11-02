@@ -78,7 +78,11 @@ public enum CaseEventKind
     Note,
     VendorEmailed,
     VendorReplied,
-    SupplierAwarded
+    SupplierAwarded,
+    /// <summary>The agent tried a tool call the step refused. The summary is
+    /// plain words ("tried to ..., refused"); RuleId carries the tool name
+    /// and the transcript keeps the full reason.</summary>
+    AgentRefused
 }
 
 /// <summary>One append-only timeline entry. Actor is a user id, vendor id, or

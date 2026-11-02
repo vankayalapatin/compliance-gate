@@ -52,6 +52,47 @@ public sealed class VendorEmailTests
     private static CaseFile Load(Harness h, string caseId) =>
         CaseStore.Load(h.CaseDir, caseId) ?? throw new InvalidOperationException($"Case {caseId} vanished.");
 
+    /// <summary>Drives a battery case to the vendor-query step: received,
+    /// invoiced, notified, and paid in full, with a bad-PO invoice holding
+    /// an unemailed AP review. The next advance picks QueryVendor, so the
+    /// email tool executes under per-step tools.</summary>
+    private static async Task<string> SetupQueryVendorCaseAsync(Harness h)
+    {
+        var caseId = await OpenBatteryCaseAsync(h);
+        await h.Runner.AdvanceAsync(caseId);
+        var raised = Load(h, caseId);
+        var pr = raised.Decisions.Single(d => d.Kind == DecisionKind.PrApproval);
+        await h.Runner.ResolveDecisionAsync(caseId, pr.DecisionId, true, pr.RequestedTo, "ok");
+        await h.Runner.AdvanceAsync(caseId);
+        var ordered = Load(h, caseId);
+        var poApproval = ordered.Decisions.Single(d => d.Kind == DecisionKind.PoApproval);
+        await h.Runner.ResolveDecisionAsync(caseId, poApproval.DecisionId, true, poApproval.RequestedTo, "ok");
+        await h.Runner.AdvanceAsync(caseId);
+        await h.Runner.OnSupplierAckAsync(new SupplierAckInput(caseId));
+        await h.Runner.AdvanceAsync(caseId);
+        var poNumber = Load(h, caseId).Case.PoNumber!;
+        var poLine = (await h.Erp.GetPurchaseOrderAsync(poNumber))!.Lines
+            .Single(l => l.ItemId == SeededErp.Battery);
+        await h.Runner.OnAsnAsync(new SupplierAsnInput(caseId, "ASN-Q1", "PACK-Q1",
+            [new AsnCartonInput("CTN-Q1", SeededErp.Battery, (int)poLine.QtyOrdered, "LOT-Q1")]));
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "INV-Q1", "V-B", poNumber,
+            [new SupplierInvoiceLineInput(poLine.PoLineRef, poLine.QtyOrdered, poLine.UnitPrice)]));
+        var invoiced = Load(h, caseId);
+        var approval = invoiced.Decisions.Single(d =>
+            d.Kind == DecisionKind.InvoiceApproval && d.Status == DecisionStatus.Pending);
+        await h.Runner.ResolveDecisionAsync(caseId, approval.DecisionId, true, approval.RequestedTo, "ok");
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            caseId, "INV-BADPO", "V-C", "PO-404",
+            [new SupplierInvoiceLineInput("PO-L9", 5, 10)]));
+        await h.Runner.AdvanceAsync(caseId);
+        var drafted = Load(h, caseId);
+        var pay = drafted.Decisions.Single(d =>
+            d.Kind == DecisionKind.PaymentApproval && d.Status == DecisionStatus.Pending);
+        await h.Runner.ResolveDecisionAsync(caseId, pay.DecisionId, true, pay.RequestedTo, "ok");
+        return caseId;
+    }
+
     [Fact]
     public async Task SendVendorEmailComposesStoresAndEvents()
     {
@@ -119,31 +160,54 @@ public sealed class VendorEmailTests
     [Fact]
     public async Task SendViaToolLoopNotesTheGapOnTheTranscriptAndRethrows()
     {
-        var erp = SeededErp.Create();
-        var models = new RecordingModelClient();
-        var compliance = new RecordingComplianceEngine();
-        var dir = TempDir();
-        var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), dir);
-        var cases = await runner.OnOrderWebhookAsync(
-            new OrderWebhookInput("test", "SO-1001", "planner", Candidates()));
-        var caseId = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
-        await runner.OnInvoiceAsync(new SupplierInvoiceInput(
-            caseId, "INV-BADPO", "V-C", "PO-404",
-            [new SupplierInvoiceLineInput("PO-L9", 5, 10)]));
-        models.QueueToolCalls("email the vendor",
-            ("c1", AgentTools.SendVendorEmail,
-                $$"""{"case_id":"{{caseId}}","invoice_ref":"V-C/INV-BADPO"}"""));
+        // At the vendor-query step the email tool executes; the missing
+        // vendor-master address notes the gap on the transcript and rethrows.
+        var h = Create();
+        var caseId = await SetupQueryVendorCaseAsync(h);
+        h.Models.QueueResult(new ModelResult("email the vendor",
+            [new ModelToolCall("c1", AgentTools.SendVendorEmail,
+                $$"""{"case_id":"{{caseId}}","invoice_ref":"V-C/INV-BADPO"}""")]));
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.AdvanceAsync(caseId));
+        var before = CaseTranscript.ReadTurns(h.CaseDir, caseId).Count;
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.AdvanceAsync(caseId));
 
         Assert.Contains("no email in the vendor master", ex.Message, StringComparison.Ordinal);
-        var file = CaseStore.Load(dir, caseId)!;
+        var file = Load(h, caseId);
         Assert.Contains(file.Events, e =>
             e.Kind == CaseEventKind.Note && (e.Summary ?? string.Empty).Contains("send_vendor_email", StringComparison.Ordinal));
-        var turn = Assert.Single(CaseTranscript.ReadTurns(dir, caseId));
+        var turn = Assert.Single(CaseTranscript.ReadTurns(h.CaseDir, caseId).Skip(before));
         Assert.Equal(ToolCallVerdict.Failed, turn.Calls[0].Verdict);
         Assert.Contains("Turn aborted", turn.Note ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BlankInvoiceRefIsBlockedAndNeverMailed()
+    {
+        // A blank invoice number is refused back to Spark with a reason and
+        // never emailed; the corrected ref on the next turn sends, and the
+        // case then waits on the vendor reply.
+        var h = Create();
+        SeedEmail(h, "V-C", "sales@screws.example");
+        var caseId = await SetupQueryVendorCaseAsync(h);
+        h.Models.QueueResult(new ModelResult("blank ref",
+            [new ModelToolCall("c1", AgentTools.SendVendorEmail,
+                $$"""{"case_id":"{{caseId}}","invoice_ref":"V-C/"}""")]));
+        h.Models.QueueResult(new ModelResult("real ref",
+            [new ModelToolCall("c2", AgentTools.SendVendorEmail,
+                $$"""{"case_id":"{{caseId}}","invoice_ref":"V-C/INV-BADPO"}""")]));
+        h.Models.QueueResponse("""{"subject":"s","body":"b"}""");
+
+        var before = CaseTranscript.ReadTurns(h.CaseDir, caseId).Count;
+        var outcome = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitVendorReply, outcome.Step);
+        var turns = CaseTranscript.ReadTurns(h.CaseDir, caseId).Skip(before).ToList();
+        Assert.Equal(2, turns.Count);
+        Assert.Equal(ToolCallVerdict.Blocked, turns[0].Calls[0].Verdict);
+        Assert.Contains("blank number", turns[0].Calls[0].Detail, StringComparison.Ordinal);
+        Assert.Equal(ToolCallVerdict.Executed, turns[1].Calls[0].Verdict);
+        var mail = EmailStore.Load(h.CaseDir, caseId);
+        Assert.Equal("V-C/INV-BADPO", Assert.Single(mail.Messages).InvoiceRef);
     }
 
     [Fact]
@@ -420,10 +484,13 @@ public sealed class VendorEmailTests
         var now = DateTimeOffset.UtcNow;
         var emailed = new CaseEvent("e1", "case-1", now, RecordSource.P2pAgent,
             CaseEventKind.VendorEmailed, "Queried.", null, "Invoice", "V-B/INV-1", "mail:q", null, null);
+        var problem = new Decision("d1", "case-1", DecisionKind.ApReview, "AP review for V-B/INV-1",
+            DecisionStatus.Pending, "clerk", now, null, null, "Invoice", "V-B/INV-1",
+            null, null, null, null, [], null);
         var file = new CaseFile(
             new Case("case-1", "SO-1", "BAT-1", "test", CaseStage.InvoiceMatched, now, now,
                 "PR-1", "PO-1", "ASN-1", "RCT-1", [], [], null, null),
-            [emailed], []);
+            [emailed], [problem]);
         var view = new CaseErpView(true, PrStatus.Closed, PoApprovalStatus.Approved,
             true, true, true, 1, 100, 100, false, 0, true);
 
@@ -431,12 +498,37 @@ public sealed class VendorEmailTests
         Assert.Equal(CaseNextStep.AwaitVendorReply, CasePicker.Pick(file, view).Step);
         Assert.DoesNotContain(AgentTools.SendVendorEmail, CasePicker.LegalTools(file, view));
 
+        // The reply lands but the problem stays open: the case leaves the
+        // vendor wait and the open problem waits on its human owner instead.
         var replied = file with
         {
             Events = file.Events.Append(new CaseEvent("e2", "case-1", now, "V-B",
                 CaseEventKind.VendorReplied, "Replied.", null, "Invoice", "V-B/INV-1", "mail:r", null, null)).ToList(),
         };
-        Assert.Equal(CaseNextStep.FinishCase, CasePicker.Pick(replied, view).Step);
+        Assert.Equal(CaseNextStep.AwaitDecision, CasePicker.Pick(replied, view).Step);
+    }
+
+    [Fact]
+    public void DecidedProblemWithUnansweredMailDoesNotPark()
+    {
+        // A stale mail about a problem nobody owns anymore must not strand
+        // the case in AwaitVendorReply: with nothing pending, a payable
+        // case drafts its payment instead.
+        var now = DateTimeOffset.UtcNow;
+        var emailed = new CaseEvent("e1", "case-1", now, RecordSource.P2pAgent,
+            CaseEventKind.VendorEmailed, "Queried.", null, "Invoice", "V-B/INV-1", "mail:q", null, null);
+        var decided = new Decision("d1", "case-1", DecisionKind.ApReview, "AP review for V-B/INV-1",
+            DecisionStatus.Approved, "clerk", now, "clerk", now, "Invoice", "V-B/INV-1",
+            null, null, null, null, [], null);
+        var file = new CaseFile(
+            new Case("case-1", "SO-1", "BAT-1", "test", CaseStage.InvoiceMatched, now, now,
+                "PR-1", "PO-1", "ASN-1", "RCT-1", [], [], null, null),
+            [emailed], [decided]);
+        var view = new CaseErpView(true, PrStatus.Closed, PoApprovalStatus.Approved,
+            true, true, true, 1, 100, 0, false, 0, true);
+
+        Assert.False(CasePicker.HasUnansweredVendorEmail(file));
+        Assert.Equal(CaseNextStep.DraftPayment, CasePicker.Pick(file, view).Step);
     }
 
     [Fact]

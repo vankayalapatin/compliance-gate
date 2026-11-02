@@ -9,6 +9,12 @@
 // Model-deferred fallback: a text-only response (no tool calls) executes the
 // picked step directly and records the deferral in the transcript. Live Spark
 // returns tool calls; scripted and text-only clients keep the C# path.
+//
+// Per-step tools: each request carries only the read tools plus the picked
+// step's own tool, so Spark can only reach for what the step allows.
+// Two-strikes payment rule: two consecutive DraftPayment turns with no
+// executed action draft the payment from the ERP payable by rule instead,
+// logged on the timeline, so a flailing agent never strands a payable case.
 using Gate.Contracts;
 using Microsoft.Extensions.Logging;
 
@@ -22,6 +28,7 @@ public partial class CaseRunner
         string caseId, DateOnly? payUpToDate, CancellationToken ct)
     {
         var history = new List<ModelMessage>();
+        var refusedStreak = 0;
         for (var turn = 1; turn <= MaxToolTurns; turn++)
         {
             var file = CaseStore.Load(_cacheDir, caseId)
@@ -44,7 +51,7 @@ public partial class CaseRunner
                 AgentTools.BuildTurnPrompt(file, view),
                 AgentTools.SystemPrompt,
                 MaxTokens: 4000,
-                Tools: AgentTools.Catalog,
+                Tools: AgentTools.Catalog.Where(t => legal.Contains(t.Name)).ToList(),
                 History: history.Count == 0 ? null : history.ToList());
             ModelResult result;
             try
@@ -67,12 +74,19 @@ public partial class CaseRunner
             {
                 await ExecuteDeferredAsync(caseId, file, view, step, turn, result.Text, history, payUpToDate, ct)
                     .ConfigureAwait(false);
+                refusedStreak = 0;
                 continue;
             }
 
-            await ExecuteTurnCallsAsync(
+            var acted = await ExecuteTurnCallsAsync(
                 caseId, file, view, step, turn, result.Text, calls, legal, history, payUpToDate, ct)
                 .ConfigureAwait(false);
+            refusedStreak = step == CaseNextStep.DraftPayment && !acted ? refusedStreak + 1 : 0;
+            if (refusedStreak >= 2)
+            {
+                refusedStreak = 0;
+                await DraftPaymentByRuleAsync(caseId, payUpToDate, ct).ConfigureAwait(false);
+            }
         }
 
         throw new InvalidOperationException($"Case {caseId} did not settle within {MaxToolTurns} tool turns.");
@@ -114,7 +128,10 @@ public partial class CaseRunner
             "Call tools yourself on the next turn."));
     }
 
-    private async Task ExecuteTurnCallsAsync(
+    /// <summary>Runs one turn's calls, returning whether any call acted.
+    /// Refused turns return false so the caller can count consecutive agent
+    /// failures; execution errors still abort the advance.</summary>
+    private async Task<bool> ExecuteTurnCallsAsync(
         string caseId, CaseFile file, CaseErpView view, CaseNextStep step, int turn,
         string reasoning, IReadOnlyList<ModelToolCall> calls, IReadOnlySet<string> legal,
         List<ModelMessage> history, DateOnly? payUpToDate, CancellationToken ct)
@@ -134,6 +151,10 @@ public partial class CaseRunner
                 transcriptCalls.Add(new TranscriptToolCall(
                     call.Id, call.Name, call.ArgumentsJson, verdict, detail));
                 results.Add($"{call.Name}: {detail}");
+                if (verdict == ToolCallVerdict.Blocked)
+                {
+                    RecordRefusedAttempt(caseId, call.Name);
+                }
                 history.Add(new ModelMessage(
                     "tool",
                     (verdict == ToolCallVerdict.Executed ? "Executed. " : "Blocked. ") + detail,
@@ -171,6 +192,61 @@ public partial class CaseRunner
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(turnError).Throw();
         }
+
+        return acted;
+    }
+
+    /// <summary>Logs a refused tool call on the timeline in plain words so
+    /// the activity feed shows what the agent tried. The transcript keeps
+    /// the full reason; the tool name rides along for filtering.</summary>
+    private void RecordRefusedAttempt(string caseId, string toolName)
+    {
+        try
+        {
+            var file = CaseStore.Load(_cacheDir, caseId);
+            if (file is null)
+            {
+                return;
+            }
+
+            var work = new CaseWork(file);
+            work.AddEvent(
+                CaseEventKind.AgentRefused,
+                $"Tried to {AgentTools.ToPlainVerb(toolName)}; refused.",
+                ruleId: toolName);
+            work.Save(_cacheDir);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Case {CaseId} refused-attempt note failed.", caseId);
+        }
+    }
+
+    /// <summary>Two-strikes payment rule: drafts the payment from the ERP
+    /// payable through the C# step both agent and rule share, then logs the
+    /// rule draft on the timeline. An ERP refusal still aborts loudly: the
+    /// rule path only replaces a flailing agent, never a refusing ERP.</summary>
+    private async Task DraftPaymentByRuleAsync(string caseId, DateOnly? payUpToDate, CancellationToken ct)
+    {
+        var file = CaseStore.Load(_cacheDir, caseId)
+            ?? throw new InvalidOperationException($"Unknown case {caseId}.");
+        var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
+        try
+        {
+            await ExecuteStepAsync(file, view, CaseNextStep.DraftPayment, payUpToDate, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Case {CaseId} rule payment draft failed.", caseId);
+            RecordFailureNote(caseId, CaseNextStep.DraftPayment, ex);
+            throw;
+        }
+
+        var work = new CaseWork(CaseStore.Load(_cacheDir, caseId) ?? file);
+        work.AddEvent(CaseEventKind.Note, "Payment drafted by rule after two refused agent calls.");
+        work.Save(_cacheDir);
+        _logger.LogWarning(
+            "Case {CaseId}: payment drafted by rule after two refused agent calls.", caseId);
     }
 
     /// <summary>Validates one tool call against a freshly loaded case plus
@@ -223,9 +299,11 @@ public partial class CaseRunner
         if (string.Equals(call.Name, AgentTools.SendVendorEmail, StringComparison.Ordinal))
         {
             var invoiceRef = AgentTools.ReadStringArg(call.ArgumentsJson, "invoice_ref");
-            if (invoiceRef is null)
+            if (invoiceRef is null || !AgentTools.IsEmailableInvoiceRef(invoiceRef))
             {
-                return (ToolCallVerdict.Blocked, "send_vendor_email needs invoice_ref as vendor/number.", false);
+                return (ToolCallVerdict.Blocked,
+                    $"send_vendor_email needs invoice_ref with an invoice number; got '{invoiceRef ?? "missing"}'. " +
+                    "A blank number names no invoice: refused, never emailed or carded.", false);
             }
 
             if (CasePicker.UnemailedInvoiceProblems(file).All(d =>

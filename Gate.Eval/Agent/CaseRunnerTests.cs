@@ -574,27 +574,62 @@ public sealed class CaseRunnerTests
     }
 
     [Fact]
-    public async Task BlankInvoiceNumberWithValidVendorAndPoIsHeldWithAnApReview()
+    public async Task BlankInvoiceNumberIsRefusedWithReasonAndNeverCarded()
     {
         var h = Create();
         var caseId = await OpenCaseAsync(h);
         var small = await CreateReceivedSmallPoAsync(h.Erp, "V-B", SeededErp.Battery, 50, "LOT-BLANKNUM");
         var line = small.Lines.Single();
 
-        var outcome = await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
-            caseId, "   ", "V-B", small.PoNumber,
-            [new SupplierInvoiceLineInput(line.PoLineRef, 50, line.UnitPrice)]));
-        Assert.False(outcome.Persisted);
-        Assert.Equal(50 * line.UnitPrice, outcome.HeldValue);
-        Assert.Equal(0, outcome.AcceptedValue);
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.OnInvoiceAsync(
+            new SupplierInvoiceInput(
+                caseId, "   ", "V-B", small.PoNumber,
+                [new SupplierInvoiceLineInput(line.PoLineRef, 50, line.UnitPrice)])));
+        Assert.Contains("missing", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("never held or carded", ex.Message, StringComparison.Ordinal);
         var file = Load(h, caseId);
-        var decision = file.Decisions.Single(d => d.DecisionId == outcome.DecisionId);
-        Assert.Equal(DecisionKind.ApReview, decision.Kind);
-        Assert.Equal("clerk", decision.RequestedTo);
-        Assert.Contains(file.Events, e =>
-            e.Kind == CaseEventKind.Note && e.Summary.Contains("AP-C3", StringComparison.Ordinal));
+        Assert.DoesNotContain(file.Decisions, d => d.Kind == DecisionKind.ApReview);
         Assert.Null(await h.Erp.GetInvoiceAsync("V-B", "   "));
         Assert.Null(await h.Erp.GetInvoiceAsync("V-B", string.Empty));
+    }
+
+    [Fact]
+    public async Task TwoRefusedTurnsDraftThePaymentByRule()
+    {
+        // The agent flails at DraftPayment (an illegal proposal, then a
+        // read-only look): after the second refused turn the runner drafts
+        // from the ERP payable by rule and logs it on the timeline. The
+        // held carton keeps the customer notice away so the flailing
+        // happens at the payment step; the rule drafts the accepted part.
+        var h = Create();
+        var ctx = await SetupBatteryCaseAsync(h, [
+            new AsnCartonInput("CTN-R1", SeededErp.Battery, 80, "LOT-R1"),
+            new AsnCartonInput("CTN-R2", SeededErp.Battery, 10, "LOT-R2")]);
+        await h.Runner.AdvanceAsync(ctx.CaseId);
+        await h.Runner.OnDockReadsAsync(ctx.CaseId, [
+            Read("CTN-R1", "IMG-R1", mark: true, damage: false, ctx.Po.PoNumber, "LOT-R1", 80, SeededErp.Battery),
+            Read("CTN-R2", "IMG-R1", mark: false, damage: false, ctx.Po.PoNumber, "LOT-R2", 10, SeededErp.Battery),
+            Read("CTN-R2", "IMG-R2", mark: false, damage: false, ctx.Po.PoNumber, "LOT-R2", 10, SeededErp.Battery)]);
+        await h.Runner.AdvanceAsync(ctx.CaseId);
+        await h.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            ctx.CaseId, "INV-RULEPAY", "V-B", ctx.Po.PoNumber,
+            [new SupplierInvoiceLineInput(ctx.PoLineRef, 90, ctx.UnitPrice)]));
+        var invoiced = Load(h, ctx.CaseId);
+        var inv = PendingDecision(invoiced, DecisionKind.InvoiceApproval);
+        await h.Runner.ResolveDecisionAsync(ctx.CaseId, inv.DecisionId, true, inv.RequestedTo, "ok");
+        h.Models.QueueResult(new ModelResult("skip ahead",
+            [new ModelToolCall("c1", AgentTools.NotifyCustomer, $$"""{"case_id":"{{ctx.CaseId}}"}""")]));
+        h.Models.QueueResult(new ModelResult("looking",
+            [new ModelToolCall("c2", AgentTools.GetCase, $$"""{"case_id":"{{ctx.CaseId}}"}""")]));
+
+        var outcome = await h.Runner.AdvanceAsync(ctx.CaseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, outcome.Step);
+        var drafted = Load(h, ctx.CaseId);
+        var pay = PendingDecision(drafted, DecisionKind.PaymentApproval);
+        Assert.Equal(80 * ctx.UnitPrice, pay.Amount);
+        Assert.Contains(drafted.Events, e => e.Kind == CaseEventKind.Note
+            && e.Summary.Contains("drafted by rule after two refused agent calls", StringComparison.Ordinal));
     }
 
     [Fact]
