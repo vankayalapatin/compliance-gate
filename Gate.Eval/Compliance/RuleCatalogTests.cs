@@ -28,6 +28,17 @@ public sealed class RuleCatalogTests
     }
 
     [Fact]
+    public void BatLiV2CarriesAllSixRulesEnforced()
+    {
+        var batLi = RuleCatalog.Rules.Where(r => r.Pack == "BAT-LI").OrderBy(r => r.RuleId).ToList();
+        Assert.Equal(
+            ["BAT-LI-01", "BAT-LI-02", "BAT-LI-03", "BAT-LI-04", "BAT-LI-05", "BAT-LI-06"],
+            batLi.Select(r => r.RuleId).ToList());
+        Assert.All(batLi, r => Assert.True(r.Enforced));
+        Assert.All(batLi, r => Assert.Equal("v2", r.PackVersion));
+    }
+
+    [Fact]
     public void EveryEnforcedRuleHasSourceTitleAndPackVersion()
     {
         Assert.All(RuleCatalog.Rules.Where(r => r.Enforced), r =>

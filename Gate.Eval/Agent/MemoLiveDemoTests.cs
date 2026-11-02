@@ -8,6 +8,7 @@
 // the dump files. Single propose pass per memo; questions are never
 // answered and proposals never re-driven here. The key comes from user
 // secrets (MetaApi:ApiKey) or the environment — never from a file in the repo.
+using System.Diagnostics;
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -61,11 +62,25 @@ public sealed class MemoLiveDemoTests
     {
         public string ModelName => inner.ModelName;
 
-        public Task<ModelResult> CompleteAsync(ModelRequest request, CancellationToken ct = default)
+        public TimeSpan Elapsed { get; private set; }
+
+        public int InputTokens { get; private set; }
+
+        public int OutputTokens { get; private set; }
+
+        public async Task<ModelResult> CompleteAsync(ModelRequest request, CancellationToken ct = default)
         {
             var bumped = request.MaxTokens < maxTokens ? request with { MaxTokens = maxTokens } : request;
             emit($"[memo-demo] transport: live propose call MaxTokens {request.MaxTokens} -> {bumped.MaxTokens} (test-local wrapper; prompt, strict parse, hash, and validation unchanged).");
-            return inner.CompleteAsync(bumped, ct);
+            var watch = Stopwatch.StartNew();
+            var result = await inner.CompleteAsync(bumped, ct).ConfigureAwait(false);
+            watch.Stop();
+            Elapsed += watch.Elapsed;
+            InputTokens += result.Usage?.InputTokens ?? 0;
+            OutputTokens += result.Usage?.OutputTokens ?? 0;
+            emit($"[memo-demo] propose call: {watch.Elapsed.TotalSeconds:F1}s, " +
+                $"{result.Usage?.InputTokens ?? 0} in + {result.Usage?.OutputTokens ?? 0} out tokens.");
+            return result;
         }
     }
 
@@ -179,7 +194,7 @@ public sealed class MemoLiveDemoTests
         const string memoId = "MEMO-DEMO-ASIA";
 
         var secrets = Secrets();
-        using var http = new HttpClient();
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         // Larger per-attempt timeout: a 16000-token reasoning completion
         // takes longer than the 2-minute production default. Restored on
         // dispose so sibling live tests keep production behavior.
@@ -222,6 +237,7 @@ public sealed class MemoLiveDemoTests
         var file = await runner.ProposeAsync(memoId);
 
         var record = Assert.Single(file.Proposals);
+        Emit($"[memo-demo-ASIA] propose totals: {spark.Elapsed.TotalSeconds:F1}s, {spark.InputTokens} in + {spark.OutputTokens} out tokens.");
         LogProposal("ASIA", record, Emit);
         File.WriteAllText(DumpPath("ASIA"), string.Join("\n", dump) + "\n");
         Assert.Contains(record.Proposal.Questions, q => q.Blocking);
@@ -238,7 +254,7 @@ public sealed class MemoLiveDemoTests
         const string memoId = "MEMO-DEMO-SUSTAIN";
 
         var secrets = Secrets();
-        using var http = new HttpClient();
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         using var timeout = new ModelTimeoutScope(TimeSpan.FromMinutes(5));
         var dump = new List<string>();
         void Emit(string line)
@@ -267,6 +283,7 @@ public sealed class MemoLiveDemoTests
         var file = await runner.ProposeAsync(memoId);
 
         var record = Assert.Single(file.Proposals);
+        Emit($"[memo-demo-SUSTAIN] propose totals: {spark.Elapsed.TotalSeconds:F1}s, {spark.InputTokens} in + {spark.OutputTokens} out tokens.");
         LogProposal("SUSTAIN", record, Emit);
         File.WriteAllText(DumpPath("SUSTAIN"), string.Join("\n", dump) + "\n");
         Assert.NotNull(record.Proposal.NotMappable);
@@ -291,7 +308,7 @@ public sealed class MemoLiveDemoTests
         const string memoId = "MEMO-DEMO-UFLPA";
 
         var secrets = Secrets();
-        using var http = new HttpClient();
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         using var timeout = new ModelTimeoutScope(TimeSpan.FromMinutes(5));
         var dump = new List<string>();
         void Emit(string line)
@@ -320,6 +337,7 @@ public sealed class MemoLiveDemoTests
         var file = await runner.ProposeAsync(memoId);
 
         var record = Assert.Single(file.Proposals);
+        Emit($"[memo-demo-UFLPA] propose totals: {spark.Elapsed.TotalSeconds:F1}s, {spark.InputTokens} in + {spark.OutputTokens} out tokens.");
         LogProposal("UFLPA", record, Emit);
         Assert.NotNull(record.Validation);
         Assert.True(record.Validation.Ok || record.Validation.Errors.Count > 0,
