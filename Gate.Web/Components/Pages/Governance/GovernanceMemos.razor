@@ -53,7 +53,7 @@
         <button class="gate-btn gate-btn-primary" disabled="@_memoBusy" @onclick="SubmitMemoAsync">Submit memo</button>
         @if (_memoBusy)
         {
-            <span class="gate-meta">Running intake + proposal…</span>
+            <span class="gate-meta">Drafting the proposal…</span>
         }
     </div>
     @if (_memoError is not null)

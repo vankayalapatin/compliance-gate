@@ -52,8 +52,16 @@ builder.Services.AddSingleton<IModelClient>(sp =>
         return new CachedModelClient(new FakeModelClient(), ModelCachePaths.ResolveDir());
     }
 
+    // The transport timeout must clear the longest attempt timeout (the
+    // memo budget from config) with headroom, or HttpClient's 100-second
+    // default silently becomes every call's real timeout. Attempt timeouts
+    // still fire first; this is only the backstop for direct calls.
+    var sparkHttp = new HttpClient
+    {
+        Timeout = TimeSpan.FromSeconds(spark.MemoTimeoutSeconds + 60),
+    };
     var metered = new MeteredModelClient(
-        new SparkModelClient(new HttpClient(), spark),
+        new SparkModelClient(sparkHttp, spark),
         sp.GetRequiredService<ModelSpendTracker>(),
         sp.GetRequiredService<ILogger<MeteredModelClient>>());
     return new CachedModelClient(metered, ModelCachePaths.ResolveDir());
@@ -107,7 +115,8 @@ builder.Services.AddScoped(sp => new MemoRunner(
     sp.GetRequiredService<IErpAdapter>(),
     sp.GetRequiredService<IModelClient>(),
     sp.GetRequiredService<IComplianceEngine>(),
-    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
+    CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath),
+    memoTimeout: TimeSpan.FromSeconds(sp.GetRequiredService<SparkOptions>().MemoTimeoutSeconds)));
 builder.Services.AddSingleton(sp => new DockPhotoService(
     DockPhotoService.ResolveImageDir(), DockPhotoService.ResolveVisionCacheDir()));
 builder.Services.AddSingleton<ReplayState>();
