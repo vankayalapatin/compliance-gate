@@ -309,8 +309,9 @@ public sealed class NewOrderFullCycleLiveTests
             Assert.Equal(scenario.MainVendor, (await erp.GetPurchaseOrderAsync(batPo))!.VendorId);
             Assert.Equal(
                 ComplianceEngine.CorpOriginCapId,
-                Load().Events.Single(e => e.Kind == CaseEventKind.VendorBlocked).RuleId);
-            summary.Steps.Add("po-placed-vendor-blocked");
+                Load().Events.Single(e =>
+                    e.Kind == CaseEventKind.Note && e.Summary.Contains("rejected for the award")).RuleId);
+            summary.Steps.Add("po-placed-award-rejected");
 
             await runner.AdvanceAsync(bat);
             await runner.OnSupplierAckAsync(new SupplierAckInput(bat));
@@ -354,6 +355,7 @@ public sealed class NewOrderFullCycleLiveTests
             await runner.ResolveDecisionAsync(bat, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
             summary.Steps.Add("inv-approved");
 
+            // Quarantine holds only its own value: accepted value pays now.
             await runner.AdvanceAsync(bat);
             var pay1 = Pending(Load(), DecisionKind.PaymentApproval);
             Assert.Equal(scenario.Finance, pay1.RequestedTo);
@@ -665,6 +667,7 @@ public sealed class NewOrderFullCycleLiveTests
             await runner.ResolveDecisionAsync(bat, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
             summary.Steps.Add("inv-approved");
 
+            // Quarantine holds only its own value: accepted value pays now.
             await runner.AdvanceAsync(bat);
             var pay1 = Pending(Load(), DecisionKind.PaymentApproval);
             Assert.Equal(acceptedUnits * scenario.MainPrice, pay1.Amount);

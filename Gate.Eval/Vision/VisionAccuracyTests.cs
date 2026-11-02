@@ -93,7 +93,7 @@ public sealed class VisionAccuracyTests
             }
 
             var cartonReads = found.Select(pair => ToCartonRead(id, pair.Image, pair.Read)).ToList();
-            var verdicts = evaluator.EvaluateCarton(id, cartonReads);
+            var verdicts = evaluator.EvaluateCarton(id, cartonReads, goldenPo, goldenLots);
             var expected = ExpectedKinds(expectedMark, expectedDamage, hidden);
             var actual = verdicts.ToDictionary(v => v.RuleId, v => v.Kind, StringComparer.Ordinal);
             var verdictMatch = expected.All(pair =>

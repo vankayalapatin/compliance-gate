@@ -194,13 +194,15 @@ public sealed class VisionPipelineTests
             }
         }
 
-        var mark07 = evaluator.EvaluateCarton("CTN-07", byCarton["CTN-07"])
-            .Single(v => v.RuleId == "BAT-LI-03");
+        var pipeLots = byCarton.Keys.ToDictionary(id => id, _ => lot, StringComparer.Ordinal);
+        var carton07 = evaluator.EvaluateCarton("CTN-07", byCarton["CTN-07"], po.PoNumber, pipeLots);
+        var mark07 = carton07.Single(v => v.RuleId == "BAT-LI-03");
         Assert.Equal(VerdictKind.Hold, mark07.Kind);
-        var damage04 = evaluator.EvaluateCarton("CTN-04", byCarton["CTN-04"])
+        Assert.Equal(VerdictKind.Pass, carton07.Single(v => v.RuleId == "BAT-LI-06").Kind);
+        var damage04 = evaluator.EvaluateCarton("CTN-04", byCarton["CTN-04"], po.PoNumber, pipeLots)
             .Single(v => v.RuleId == "BAT-LI-05");
         Assert.Equal(VerdictKind.HumanReview, damage04.Kind);
-        var missing11 = evaluator.EvaluateCarton("CTN-11", []);
+        var missing11 = evaluator.EvaluateCarton("CTN-11", [], po.PoNumber, pipeLots);
         Assert.Equal(VerdictKind.HumanReview, missing11.Single(v => v.RuleId == "BAT-LI-03").Kind);
     }
 

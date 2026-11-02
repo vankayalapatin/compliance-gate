@@ -58,6 +58,13 @@ internal sealed class RecordingComplianceEngine : IComplianceEngine
         return _inner.EvaluatePaymentAsync(state, ct);
     }
 
+    public Task<IReadOnlyList<Verdict>> EvaluatePayableAsync(
+        PrePayState state, CancellationToken ct = default)
+    {
+        PrePayStates.Add(state);
+        return _inner.EvaluatePayableAsync(state, ct);
+    }
+
     public bool IsDocumentRule(string ruleId) => _inner.IsDocumentRule(ruleId);
 
     public Task<KbSnapshot> LoadKbSnapshotAsync(CancellationToken ct = default)

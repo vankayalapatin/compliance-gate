@@ -16,11 +16,16 @@ internal sealed class DockEvaluatorAdapter : IDockEvaluator
 
     public string DamageRuleId => DockEvaluator.DamageRuleId;
 
+    public string LabelRuleId => DockEvaluator.LabelRuleId;
+
     public IReadOnlyDictionary<string, IReadOnlyList<Verdict>> EvaluateDock(
-        IReadOnlyList<string> asnCartonIds, IReadOnlyList<DockCartonRead> reads) =>
+        IReadOnlyList<string> asnCartonIds,
+        IReadOnlyList<DockCartonRead> reads,
+        string expectedPoNumber,
+        IReadOnlyDictionary<string, string> cartonLots) =>
         _inner.EvaluateDock(asnCartonIds, reads.Select(r => new CartonRead(
             r.CartonId, r.Part, r.PoNumber, r.LotCode, r.UnitsPerCarton,
             r.MarkPresent, r.MarkLegible, r.UnNumber, r.Class9Required,
             r.Class9Visible, r.DamageVisible, r.DamageNote, r.ImageId,
-            r.ReadConfidence)).ToList());
+            r.ReadConfidence)).ToList(), expectedPoNumber, cartonLots);
 }

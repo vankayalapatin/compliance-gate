@@ -82,13 +82,18 @@ public sealed class ProbeDockAdapter : IDockEvaluator
 
     public string DamageRuleId => DockEvaluator.DamageRuleId;
 
+    public string LabelRuleId => DockEvaluator.LabelRuleId;
+
     public IReadOnlyDictionary<string, IReadOnlyList<Verdict>> EvaluateDock(
-        IReadOnlyList<string> asnCartonIds, IReadOnlyList<DockCartonRead> reads) =>
+        IReadOnlyList<string> asnCartonIds,
+        IReadOnlyList<DockCartonRead> reads,
+        string expectedPoNumber,
+        IReadOnlyDictionary<string, string> cartonLots) =>
         _inner.EvaluateDock(asnCartonIds, reads.Select(r => new CartonRead(
             r.CartonId, r.Part, r.PoNumber, r.LotCode, r.UnitsPerCarton,
             r.MarkPresent, r.MarkLegible, r.UnNumber, r.Class9Required,
             r.Class9Visible, r.DamageVisible, r.DamageNote, r.ImageId,
-            r.ReadConfidence)).ToList());
+            r.ReadConfidence)).ToList(), expectedPoNumber, cartonLots);
 }
 
 public sealed record ProbeHarness(
@@ -103,7 +108,9 @@ public static class VideoFlowFixture
 {
     public static InMemoryErpAdapter CreateProbeErp()
     {
-        var erp = new InMemoryErpAdapter();
+        // The probe ERP runs the real control-point policy, like production:
+        // agent and person paths get the same refusal.
+        var erp = new InMemoryErpAdapter(new ErpPolicy());
         erp.SeedBaseCurrency(VideoProbeData.Currency);
         erp.SeedAutoApproveThreshold(400m);
         erp.SeedPaymentTerms(new PaymentTermsDto(VideoProbeData.Terms, 0));

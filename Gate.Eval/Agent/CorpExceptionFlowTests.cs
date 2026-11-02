@@ -113,7 +113,7 @@ public sealed class CorpExceptionFlowTests
         Assert.Contains("V-T1", raised.Summary, StringComparison.Ordinal);
         Assert.Contains("Terry Owner", raised.Summary, StringComparison.Ordinal);
         var vendor = (await h.Erp.GetVendorsAsync()).Single(v => v.VendorId == "V-T1");
-        Assert.True(vendor.IsBlocked);
+        Assert.False(vendor.IsBlocked);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class CorpExceptionFlowTests
     }
 
     [Fact]
-    public async Task GrantUnblocksRescreensAndContinuesTheAward()
+    public async Task GrantRescreensAndContinuesTheAward()
     {
         var h = Create();
         var caseId = await OpenCaseAsync(h, ["V-T1"]);
@@ -184,7 +184,7 @@ public sealed class CorpExceptionFlowTests
 
         Assert.Equal(DecisionStatus.Rejected, denied.Status);
         var vendor = (await h.Erp.GetVendorsAsync()).Single(v => v.VendorId == "V-T1");
-        Assert.True(vendor.IsBlocked);
+        Assert.False(vendor.IsBlocked);
         var afterDeny = CaseStore.Load(h.CaseDir, caseId)!;
         Assert.Contains(afterDeny.Events, e =>
             e.Summary.Contains("denied by Terry Owner", StringComparison.Ordinal)
@@ -270,7 +270,7 @@ public sealed class CorpExceptionFlowTests
             DecisionStatus.Pending,
             CaseStore.Load(h.CaseDir, caseId)!.Decisions
                 .Single(d => d.DecisionId == card.DecisionId).Status);
-        Assert.True((await h.Erp.GetVendorsAsync()).Single(v => v.VendorId == "V-T3").IsBlocked);
+        Assert.False((await h.Erp.GetVendorsAsync()).Single(v => v.VendorId == "V-T3").IsBlocked);
     }
 
     [Fact]

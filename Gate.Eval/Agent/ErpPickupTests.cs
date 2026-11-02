@@ -94,7 +94,9 @@ public sealed class ErpPickupTests
         var advanced = Load(h, caseId);
         Assert.NotNull(advanced.Case.PoNumber);
         Assert.Contains(advanced.Events, e =>
-            e.Kind == CaseEventKind.VendorBlocked && e.RuleId == ComplianceEngine.CorpOriginCapId);
+            e.Kind == CaseEventKind.Note
+            && e.RuleId == ComplianceEngine.CorpOriginCapId
+            && e.Summary.Contains("rejected for the award", StringComparison.Ordinal));
         var award = advanced.Events.Single(e => e.Kind == CaseEventKind.SupplierAwarded);
         Assert.Contains("V-A", award.Summary, StringComparison.Ordinal);
         Assert.Contains(ComplianceEngine.CorpOriginCapId, award.Summary, StringComparison.Ordinal);

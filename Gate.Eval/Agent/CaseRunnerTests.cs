@@ -126,13 +126,14 @@ public sealed class CaseRunnerTests
         var failed = Load(h, battery);
         Assert.Contains(failed.Events,
             e => e.Kind == CaseEventKind.Note && e.Summary.Contains("No compliant vendor"));
+        // The award block never touches the vendor master: V-A stays buyable.
         var vendor = (await h.Erp.GetVendorsAsync()).Single(v => v.VendorId == "V-A");
-        Assert.True(vendor.IsBlocked);
-        Assert.Contains(ComplianceEngine.CorpOriginCapId, vendor.BlockReason);
+        Assert.False(vendor.IsBlocked);
+        Assert.Null(vendor.BlockReason);
     }
 
     [Fact]
-    public async Task DocumentOnlyScreeningFailureKeepsVendorBuyable()
+    public async Task ScreeningFailuresKeepEveryVendorBuyable()
     {
         var h = Create();
         var mixed = new Dictionary<string, IReadOnlyList<string>>
@@ -153,14 +154,17 @@ public sealed class CaseRunnerTests
         var screened = Load(h, battery);
         Assert.Equal("V-B", screened.Case.AwardedVendorId);
         var vendors = await h.Erp.GetVendorsAsync();
-        Assert.True(vendors.Single(v => v.VendorId == "V-A").IsBlocked);
+        Assert.False(vendors.Single(v => v.VendorId == "V-A").IsBlocked);
         Assert.False(vendors.Single(v => v.VendorId == "V-C").IsBlocked);
-        Assert.DoesNotContain(screened.Events,
-            e => e.Kind == CaseEventKind.VendorBlocked && e.Summary.Contains("V-C", StringComparison.Ordinal));
+        Assert.DoesNotContain(screened.Events, e => e.Kind == CaseEventKind.VendorBlocked);
         Assert.Contains(screened.Events,
             e => e.Kind == CaseEventKind.Note
                 && e.Summary.Contains("V-C", StringComparison.Ordinal)
-                && e.Summary.Contains("vendor master untouched", StringComparison.Ordinal));
+                && e.Summary.Contains("rejected for the award", StringComparison.Ordinal));
+        Assert.Contains(screened.Events,
+            e => e.Kind == CaseEventKind.Note
+                && e.Summary.Contains("V-A", StringComparison.Ordinal)
+                && e.Summary.Contains("rejected for the award", StringComparison.Ordinal));
     }
 
     private static void SeedPricelessVendor(InMemoryErpAdapter erp)
@@ -358,8 +362,9 @@ public sealed class CaseRunnerTests
             new AsnCartonInput("CTN-T1", SeededErp.Battery, 80, "LOT-T1"),
             new AsnCartonInput("CTN-T2", SeededErp.Battery, 10, "LOT-T2")]);
 
-        var blocked = Load(h, ctx.CaseId).Events.Single(e => e.Kind == CaseEventKind.VendorBlocked);
-        Assert.Equal(ComplianceEngine.CorpOriginCapId, blocked.RuleId);
+        var rejected = Load(h, ctx.CaseId).Events
+            .Single(e => e.Kind == CaseEventKind.Note && e.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Contains("rejected for the award", rejected.Summary);
         Assert.Equal("V-B", ctx.Po.VendorId);
 
         await h.Runner.AdvanceAsync(ctx.CaseId);
@@ -385,6 +390,7 @@ public sealed class CaseRunnerTests
         Assert.Equal("V-B/INV-T1", invDecision.DocumentNumber);
         await h.Runner.ResolveDecisionAsync(ctx.CaseId, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
 
+        // Quarantine holds only its own value: accepted value pays now.
         await h.Runner.AdvanceAsync(ctx.CaseId);
         var drafted = Load(h, ctx.CaseId);
         Assert.Equal(CaseStage.PaymentPartial, drafted.Case.Stage);
@@ -424,17 +430,20 @@ public sealed class CaseRunnerTests
         Assert.Equal(90 * 12m, settlements.Sum(s => s.SettledAmount));
         Assert.Equal(InvoiceStatus.Paid, (await h.Erp.GetInvoiceAsync("V-B", "INV-T1"))!.Status);
 
-        Assert.Single(final.Events, e => e.Kind == CaseEventKind.CustomerNotified);
+        // The screw sibling is still open, so the order-level customer
+        // message stays unsent on this case.
+        Assert.DoesNotContain(final.Events, e => e.Kind == CaseEventKind.CustomerNotified);
 
-        Assert.Equal(2, h.Compliance.PrePayStates.Count);
-        var firstGate = h.Compliance.PrePayStates[0];
-        Assert.Single(firstGate.OpenHolds);
-        Assert.Equal("BAT-LI-03", firstGate.OpenHolds[0].RuleId);
-        Assert.Equal("CTN-T2", firstGate.OpenHolds[0].CartonId);
-        Assert.Equal(["LOT-T2"], firstGate.QuarantinedLotRefs);
-        Assert.Empty(firstGate.OpenReviews);
-        Assert.Empty(h.Compliance.PrePayStates[1].OpenHolds);
-        Assert.Empty(h.Compliance.PrePayStates[1].QuarantinedLotRefs);
+        var held = h.Compliance.PrePayStates
+            .Where(s => s.OpenHolds.Count == 1 && s.QuarantinedLotRefs.Count == 1)
+            .ToList();
+        Assert.NotEmpty(held);
+        Assert.Equal("BAT-LI-03", held[0].OpenHolds[0].RuleId);
+        Assert.Equal("CTN-T2", held[0].OpenHolds[0].CartonId);
+        Assert.Equal(["LOT-T2"], held[0].QuarantinedLotRefs);
+        Assert.Empty(held[0].OpenReviews);
+        Assert.Empty(h.Compliance.PrePayStates[^1].OpenHolds);
+        Assert.Empty(h.Compliance.PrePayStates[^1].QuarantinedLotRefs);
 
         Assert.Equal(RecordSource.P2pAgent, (await h.Erp.GetPrAsync(final.Case.PrNumber!))!.Source);
         Assert.Equal(RecordSource.P2pAgent, (await h.Erp.GetPurchaseOrderAsync(final.Case.PoNumber!))!.Source);
@@ -720,7 +729,7 @@ public sealed class CaseRunnerTests
         await h.Runner.ResolveDecisionAsync(ctx.CaseId, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
 
         await h.Runner.AdvanceAsync(ctx.CaseId);
-        var state = Assert.Single(h.Compliance.PrePayStates);
+        var state = h.Compliance.PrePayStates[^1];
         var open = Assert.Single(state.OpenReviews);
         Assert.Equal(damage.DecisionId, open.ReviewId);
         Assert.Equal(DockEvaluator.DamageRuleId, open.RuleId);

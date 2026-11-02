@@ -1,6 +1,7 @@
 // Shared seeded fake used by every Eval test. Mirrors the demo dataset:
 // critical battery short plus a cheap non-critical short, three vendors,
 // people with limits and a delegate.
+using Gate.Compliance;
 using Gate.Contracts;
 using Gate.Erp;
 
@@ -15,6 +16,23 @@ internal static class SeededErp
     public static InMemoryErpAdapter Create()
     {
         var erp = new InMemoryErpAdapter();
+        Seed(erp);
+        return erp;
+    }
+
+    /// <summary>Seeded fake with the real control-point policy wired: agent
+    /// and person paths get the same refusal. The optional platform context
+    /// supplies exception grants and open reviews; without one, grants are
+    /// absent and reviews are empty.</summary>
+    public static InMemoryErpAdapter CreateWithPolicy(IErpPolicyContext? context = null)
+    {
+        var erp = new InMemoryErpAdapter(new ErpPolicy(), context);
+        Seed(erp);
+        return erp;
+    }
+
+    private static void Seed(InMemoryErpAdapter erp)
+    {
         erp.SeedBaseCurrency("USD");
         erp.SeedAutoApproveThreshold(500m);
         erp.SeedPaymentTerms(new PaymentTermsDto("NET0", 0));
@@ -53,6 +71,5 @@ internal static class SeededErp
         erp.SeedUser(new UserDto("finance", "payment-approver", 100_000m, "USD"));
         var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
         erp.SeedDelegation(new DelegationDto("approver", "delegate", today.AddDays(-30), today.AddDays(30)));
-        return erp;
     }
 }

@@ -60,7 +60,9 @@ public sealed class AgentSparkLiveTests
         Assert.NotNull(ordered.Case.PoNumber);
         Assert.Equal("V-B", (await erp.GetPurchaseOrderAsync(ordered.Case.PoNumber))!.VendorId);
         Assert.Contains(ordered.Events, e =>
-            e.Kind == CaseEventKind.VendorBlocked && e.RuleId == ComplianceEngine.CorpOriginCapId);
+            e.Kind == CaseEventKind.Note
+            && e.RuleId == ComplianceEngine.CorpOriginCapId
+            && e.Summary.Contains("rejected for the award", StringComparison.Ordinal));
 
         Assert.True(counter.Count >= 4, $"Expected at least the compute, raise, screen, and rationale calls, saw {counter.Count}.");
         Assert.Equal(counter.Count, Directory.GetFiles(cacheDir).Length);

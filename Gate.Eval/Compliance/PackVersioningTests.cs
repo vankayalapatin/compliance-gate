@@ -27,10 +27,19 @@ public sealed class PackVersioningTests
     }
 
     [Fact]
+    public void MajorOnlyVersionMeansMinorZero()
+    {
+        Assert.Equal((2, 0), PackVersions.Parse("v2"));
+        Assert.True(PackVersions.Compare("v2", "v0.2") > 0);
+        Assert.Equal("v2.1", PackVersions.Next("v2"));
+    }
+
+    [Fact]
     public void MalformedVersionRefusesLoudly()
     {
         Assert.Throws<InvalidOperationException>(() => PackVersions.Parse("0.2"));
-        Assert.Throws<InvalidOperationException>(() => PackVersions.Parse("v2"));
+        Assert.Throws<InvalidOperationException>(() => PackVersions.Parse("v2.x"));
+        Assert.Throws<InvalidOperationException>(() => PackVersions.Parse("version-2"));
         var inputs = MemoFixtures.FourPacks(corpVersion: "draft");
         var ex = Assert.Throws<InvalidOperationException>(() => RulePackLoader.LoadPacks(inputs));
         Assert.Contains("draft", ex.Message);
@@ -82,20 +91,27 @@ public sealed class PackVersioningTests
     }
 
     [Fact]
-    public void EmbeddedCatalogStillShipsV02()
+    public void EmbeddedCatalogShipsBatLiV2OverRetainedV02()
     {
-        Assert.Equal("v0.2", RuleCatalog.PackVersion);
-        Assert.All(RuleCatalog.Rules, r => Assert.Equal("v0.2", r.PackVersion));
+        // Each rule carries its own pack version: BAT-LI v2 wins over the
+        // retained v0.2 base; every other pack stays v0.2.
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "BAT-LI"), r => Assert.Equal("v2", r.PackVersion));
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack != "BAT-LI"), r => Assert.Equal("v0.2", r.PackVersion));
         Assert.Equal(0.60m, RuleCatalog.Corp.OriginCap);
         Assert.Equal(0.50m, RuleCatalog.Corp.VendorCap);
         var corpAdopted = DateOnly.Parse("2026-10-01");
         var janAdopted = DateOnly.Parse("2026-01-01");
+        var batLiAdopted = DateOnly.Parse("2026-11-02");
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "CORP"), r => Assert.Equal(corpAdopted, r.AdoptedDate));
-        Assert.All(RuleCatalog.Rules.Where(r => r.Pack != "CORP"), r => Assert.Equal(janAdopted, r.AdoptedDate));
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "BAT-LI"), r => Assert.Equal(batLiAdopted, r.AdoptedDate));
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack is "ELEC" or "SCR"), r => Assert.Equal(janAdopted, r.AdoptedDate));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "BAT-LI"), r => Assert.Equal("Maya Planner", r.Owner));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "ELEC"), r => Assert.Equal("Dana Director", r.Owner));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "SCR"), r => Assert.Equal("Finn Finance", r.Owner));
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "CORP"), r => Assert.Equal("Dana Director", r.Owner));
+        var label = RuleCatalog.Find("BAT-LI-06");
+        Assert.Equal("BAT-LI", label.Pack);
+        Assert.Equal("v2", label.PackVersion);
     }
 
     [Fact]
@@ -157,8 +173,10 @@ public sealed class PackVersioningTests
         var set = RulePackLoader.LoadEmbedded();
         var corpAdopted = DateOnly.Parse("2026-10-01");
         var janAdopted = DateOnly.Parse("2026-01-01");
+        var batLiAdopted = DateOnly.Parse("2026-11-02");
         Assert.Equal(["BAT-LI", "CORP", "ELEC", "SCR"], set.Rules.Select(r => r.Pack).Distinct().OrderBy(p => p).ToList());
         Assert.All(set.Rules.Where(r => r.Pack == "CORP"), r => Assert.Equal(corpAdopted, r.AdoptedDate));
-        Assert.All(set.Rules.Where(r => r.Pack != "CORP"), r => Assert.Equal(janAdopted, r.AdoptedDate));
+        Assert.All(set.Rules.Where(r => r.Pack == "BAT-LI"), r => Assert.Equal(batLiAdopted, r.AdoptedDate));
+        Assert.All(set.Rules.Where(r => r.Pack is "ELEC" or "SCR"), r => Assert.Equal(janAdopted, r.AdoptedDate));
     }
 }

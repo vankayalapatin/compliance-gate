@@ -82,6 +82,8 @@ public sealed class OriginCapMathTests
     {
         Assert.Equal("V-A", OriginCapMath.TryParseBlockedVendor(
             $"Vendor V-A blocked: {OriginCapMath.OriginCapRuleId}: share exceeded."));
+        Assert.Equal("V-A", OriginCapMath.TryParseBlockedVendor(
+            $"Vendor V-A rejected for the award: {OriginCapMath.OriginCapRuleId}: share exceeded."));
         Assert.Null(OriginCapMath.TryParseBlockedVendor("Something else happened."));
         Assert.Null(OriginCapMath.TryParseBlockedVendor("Vendor blocked: no id."));
     }

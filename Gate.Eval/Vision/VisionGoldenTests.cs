@@ -129,13 +129,16 @@ public sealed class VisionGoldenTests
             }
         }
 
-        Assert.Equal(VerdictKind.Hold,
-            evaluator.EvaluateCarton("CTN-07", byCarton["CTN-07"]).Single(v => v.RuleId == "BAT-LI-03").Kind);
-        Assert.Equal(VerdictKind.HumanReview,
-            evaluator.EvaluateCarton("CTN-04", byCarton["CTN-04"]).Single(v => v.RuleId == "BAT-LI-05").Kind);
+        var goldenLots = byCarton.Keys.ToDictionary(id => id, _ => lot, StringComparer.Ordinal);
+        var carton07 = evaluator.EvaluateCarton("CTN-07", byCarton["CTN-07"], poNumber, goldenLots);
+        Assert.Equal(VerdictKind.Hold, carton07.Single(v => v.RuleId == "BAT-LI-03").Kind);
+        Assert.Equal(VerdictKind.Pass, carton07.Single(v => v.RuleId == "BAT-LI-06").Kind);
+        var carton04 = evaluator.EvaluateCarton("CTN-04", byCarton["CTN-04"], poNumber, goldenLots);
+        Assert.Equal(VerdictKind.HumanReview, carton04.Single(v => v.RuleId == "BAT-LI-05").Kind);
+        Assert.Equal(VerdictKind.Pass, carton04.Single(v => v.RuleId == "BAT-LI-06").Kind);
         Assert.False(byCarton.ContainsKey("CTN-11"));
         Assert.Equal(VerdictKind.HumanReview,
-            evaluator.EvaluateCarton("CTN-11", []).Single(v => v.RuleId == "BAT-LI-03").Kind);
+            evaluator.EvaluateCarton("CTN-11", [], poNumber, goldenLots).Single(v => v.RuleId == "BAT-LI-03").Kind);
         var flip = readsByImage["IMG-04"];
         Assert.Single(flip);
         Assert.True(flip[0].GetProperty("mark_present").GetBoolean());

@@ -8,14 +8,14 @@ namespace Gate.Eval;
 public sealed class RuleCatalogTests
 {
     [Fact]
-    public void Tier1SetIsExactlyTheFourDemoBlockers()
+    public void Tier1SetIsExactlyTheFiveBlockers()
     {
         var tier1 = RuleCatalog.Rules
             .Where(r => r.Tier == RuleTier.Tier1)
             .Select(r => r.RuleId)
             .OrderBy(id => id)
             .ToList();
-        Assert.Equal(["BAT-LI-03", "BAT-LI-05", "CORP-02", "ELEC-04"], tier1);
+        Assert.Equal(["BAT-LI-03", "BAT-LI-05", "BAT-LI-06", "CORP-02", "ELEC-04"], tier1);
         Assert.All(RuleCatalog.Rules.Where(r => r.Tier == RuleTier.Tier1), r => Assert.True(r.Enforced));
     }
 
@@ -34,7 +34,7 @@ public sealed class RuleCatalogTests
         {
             Assert.False(string.IsNullOrWhiteSpace(r.Source));
             Assert.False(string.IsNullOrWhiteSpace(r.Title));
-            Assert.Equal(RuleCatalog.PackVersion, r.PackVersion);
+            Assert.Equal(r.Pack == "BAT-LI" ? "v2" : "v0.2", r.PackVersion);
         });
     }
 
@@ -45,7 +45,7 @@ public sealed class RuleCatalogTests
         var ids = RuleCatalog.Rules.Select(r => r.RuleId).ToList();
         Assert.Equal(
         [
-            "BAT-LI-01", "BAT-LI-02", "BAT-LI-03", "BAT-LI-04", "BAT-LI-05",
+            "BAT-LI-01", "BAT-LI-02", "BAT-LI-03", "BAT-LI-04", "BAT-LI-05", "BAT-LI-06",
             "ELEC-01", "ELEC-02", "ELEC-03", "ELEC-04",
             "SCR-01", "SCR-02",
             "CORP-01", "CORP-02"

@@ -477,7 +477,9 @@ public sealed class CompanyKbVersioningTests
         Assert.Contains(rules, r => r.RuleId == "ELEC-04" && r.Gate == MemoRuleGate.PrePay);
         var janAdopted = DateOnly.Parse("2026-01-01");
         var corpAdopted = DateOnly.Parse("2026-10-01");
-        Assert.Contains(rules, r => r.RuleId == "BAT-LI-01" && r.Owner == "Maya Planner" && r.AdoptedDate == janAdopted);
+        var batLiAdopted = DateOnly.Parse("2026-11-02");
+        Assert.Contains(rules, r => r.RuleId == "BAT-LI-06" && r.PackVersion == "v2");
+        Assert.Contains(rules, r => r.RuleId == "BAT-LI-01" && r.Owner == "Maya Planner" && r.AdoptedDate == batLiAdopted);
         Assert.Contains(rules, r => r.RuleId == "ELEC-01" && r.Owner == "Dana Director" && r.AdoptedDate == janAdopted);
         Assert.Contains(rules, r => r.RuleId == "SCR-01" && r.Owner == "Finn Finance" && r.AdoptedDate == janAdopted);
         Assert.Contains(rules, r => r.RuleId == "CORP-02" && r.Owner == "Dana Director" && r.AdoptedDate == corpAdopted);

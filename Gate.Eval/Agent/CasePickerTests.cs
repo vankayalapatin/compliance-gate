@@ -41,9 +41,13 @@ public sealed class CasePickerTests
         decimal paid = 0,
         bool held = false,
         int holds = 0,
-        bool notified = false) =>
+        bool notified = false,
+        bool prepayBlocked = false,
+        string? prepayReason = null,
+        bool orderReady = false) =>
         new(soExists, prStatus, poApproval, confirmation, asn, receipt,
-            matched, accepted, paid, held, holds, notified);
+            matched, accepted, paid, held, holds, notified,
+            prepayBlocked, prepayReason, orderReady);
 
     private static CaseEvent DueMarker() =>
         new("e9", "case-1", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
@@ -138,16 +142,38 @@ public sealed class CasePickerTests
     }
 
     [Fact]
-    public void NotifyFiresOnceMaterialsAreSecured()
+    public void NotifyFiresOnceEveryCaseForTheOrderIsResolved()
     {
         var file = File(CaseStage.DockChecked, pr: "PR-1", po: "PO-1", asn: "ASN-1", receipt: "RCT-1");
         Assert.Equal(CaseNextStep.NotifyCustomer,
-            CasePicker.Pick(file, View(prStatus: PrStatus.Closed, confirmation: true, asn: true, receipt: true)).Step);
+            CasePicker.Pick(file, View(
+                prStatus: PrStatus.Closed, confirmation: true, asn: true, receipt: true,
+                orderReady: true)).Step);
+
+        var siblingPending = File(CaseStage.DockChecked, pr: "PR-1", po: "PO-1", asn: "ASN-1", receipt: "RCT-1");
+        Assert.Equal(CaseNextStep.AwaitInvoices,
+            CasePicker.Pick(siblingPending,
+                View(prStatus: PrStatus.Closed, confirmation: true, asn: true, receipt: true)).Step);
 
         var held = File(CaseStage.DockChecked, pr: "PR-1", po: "PO-1", asn: "ASN-1", receipt: "RCT-1");
         Assert.Equal(CaseNextStep.AwaitInvoices,
             CasePicker.Pick(held,
-                View(prStatus: PrStatus.Closed, confirmation: true, asn: true, receipt: true, holds: 1)).Step);
+                View(prStatus: PrStatus.Closed, confirmation: true, asn: true, receipt: true,
+                    holds: 1, orderReady: true)).Step);
+    }
+
+    [Fact]
+    public void PrePayBlockParksPaymentUntilReviewsOrReshotClose()
+    {
+        var file = File(CaseStage.InvoiceMatched, pr: "PR-1", po: "PO-1");
+        var (step, reason) = CasePicker.Pick(
+            file, View(matched: 1, accepted: 100, paid: 0, notified: true,
+                prepayBlocked: true, prepayReason: "ELEC-04 test block"));
+        Assert.Equal(CaseNextStep.AwaitDecision, step);
+        Assert.Contains("ELEC-04 test block", reason);
+
+        Assert.Equal(CaseNextStep.DraftPayment,
+            CasePicker.Pick(file, View(matched: 1, accepted: 100, paid: 0, notified: true)).Step);
     }
 
     [Fact]

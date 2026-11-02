@@ -3,10 +3,12 @@
 // it: every executed action names its model-proposed tool, zero
 // model-deferred turns), then the identical runs replay from scratch with
 // zero live calls. Keys come from user secrets or the environment, never
-// from a file in the repo. The battery path runs on photos: dock posts real
-// JPEGs from assets/dock, the reshot posts its reshotIn photo, and the
-// invoice is rendered at runtime and transcribed before intake. The screw
-// path stays EDI/hand-reads as the non-photo variant.
+// from a file in the repo. The battery path runs on photos: the pallet
+// views are labeled from the ASN the moment the supplier sends it (minted
+// PO plus ASN lots on the base scenes) and read live, the reshot mints its
+// close-up the same way, and the invoice is rendered at runtime and
+// transcribed before intake. The screw path stays EDI/hand-reads as the
+// non-photo variant.
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -127,7 +129,6 @@ public sealed class ToolLoopLiveTests
             c.GetProperty("damage").GetString()!,
             c.GetProperty("visibleIn").EnumerateArray().Select(v => v.GetString()!).ToList(),
             c.TryGetProperty("reshotIn", out var reshot) ? reshot.GetString() : null)).ToList();
-        var images = root.GetProperty("images").EnumerateArray().Select(e => e.GetString()!).ToList();
         var main = root.GetProperty("invoiceIntents").GetProperty("main");
         var mainVendor = main.GetProperty("vendor").GetString()!;
         var mainQty = main.GetProperty("quantity").GetDecimal();
@@ -150,8 +151,18 @@ public sealed class ToolLoopLiveTests
         var soNumber = Doc("salesOrder");
 
         var compliance = new ComplianceEngine();
+        var dockOut = Path.Combine(Path.GetTempPath(), "gate-tooloop-live-dock", Guid.NewGuid().ToString("N"));
+        var dockDir = FindDockDir();
+        var assetsDir = Directory.GetParent(dockDir)!.FullName;
+        var dockOptions = new DockImageOptions(
+            dockDir,
+            Path.Combine(assetsDir, "image-specs.json"),
+            Path.Combine(assetsDir, "cartons.json"),
+            dockOut,
+            Path.Combine(dockOut, ".image-cache"),
+            Path.Combine(caseDir, "vision-reads"));
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), caseDir);
+            compliance, new DockEvaluatorAdapter(), caseDir, dockImageOptions: dockOptions);
 
         var caseIds = await runner.OnOrderWebhookAsync(
             new OrderWebhookInput(scenarioName, soNumber, requester, candidates));
@@ -160,21 +171,19 @@ public sealed class ToolLoopLiveTests
         var bat = caseIds.Single(c => c.EndsWith("-" + batItem, StringComparison.Ordinal));
         var screw = caseIds.Single(c => c != bat);
 
-        await RunBatteryAsync(runner, erp, caseDir, bat, cartons, images, mainVendor, mainQty, mainPrice, live);
+        await RunBatteryAsync(runner, erp, caseDir, bat, cartons, mainVendor, mainQty, mainPrice, live);
         await RunScrewAsync(runner, erp, caseDir, screw);
     }
 
     private async Task RunBatteryAsync(
         CaseRunner runner, InMemoryErpAdapter erp, string caseDir, string bat,
-        IReadOnlyList<ScenarioCarton> cartons, IReadOnlyList<string> images,
+        IReadOnlyList<ScenarioCarton> cartons,
         string mainVendor, decimal mainQty, decimal mainPrice,
         bool live)
     {
         CaseFile Load() => CaseStore.Load(caseDir, bat)!;
         static Decision Pending(CaseFile file, DecisionKind kind) =>
             file.Decisions.Single(d => d.Kind == kind && d.Status == DecisionStatus.Pending);
-
-        var photoReads = await TranscribeLivePhotosAsync(runner, bat, cartons, images);
 
         await runner.AdvanceAsync(bat);
         var prDecision = Pending(Load(), DecisionKind.PrApproval);
@@ -190,7 +199,8 @@ public sealed class ToolLoopLiveTests
             Assert.Equal(mainVendor, (await erp.GetPurchaseOrderAsync(batPo))!.VendorId);
             Assert.Equal(
                 ComplianceEngine.CorpOriginCapId,
-                Load().Events.Single(e => e.Kind == CaseEventKind.VendorBlocked).RuleId);
+                Load().Events.Single(e =>
+                    e.Kind == CaseEventKind.Note && e.Summary.Contains("rejected for the award")).RuleId);
         }
 
         await runner.AdvanceAsync(bat);
@@ -199,6 +209,8 @@ public sealed class ToolLoopLiveTests
         string LotOf(string cartonId) => $"{batPo}-{cartonId}";
         await runner.OnAsnAsync(new SupplierAsnInput(bat, $"ASN-{batPo}", $"PACK-{batPo}",
             cartons.Select(c => new AsnCartonInput(c.Id, c.Part, c.Units, LotOf(c.Id))).ToList()));
+
+        var photoReads = await TranscribeLivePhotosAsync(runner, bat, cartons);
 
         await runner.AdvanceAsync(bat);
         await runner.OnDockReadsAsync(bat, photoReads.DockReads);
@@ -229,6 +241,7 @@ public sealed class ToolLoopLiveTests
         var invDecision = Pending(Load(), DecisionKind.InvoiceApproval);
         await runner.ResolveDecisionAsync(bat, invDecision.DecisionId, true, invDecision.RequestedTo, "ok");
 
+        // Quarantine holds only its own value: accepted value pays now.
         await runner.AdvanceAsync(bat);
         var pay1 = Pending(Load(), DecisionKind.PaymentApproval);
         Assert.Equal(acceptedUnits * mainPrice, pay1.Amount);
@@ -385,28 +398,32 @@ public sealed class ToolLoopLiveTests
     /// views (any view showing damage counts, mirroring the BAT-LI-05
     /// any-view rule), since a crushed face may hide from one angle.</summary>
     private async Task<LivePhotoReads> TranscribeLivePhotosAsync(
-        CaseRunner runner, string bat, IReadOnlyList<ScenarioCarton> cartons,
-        IReadOnlyList<string> images)
+        CaseRunner runner, string bat, IReadOnlyList<ScenarioCarton> cartons)
     {
-        var dockDir = FindDockDir();
         var unmarked = cartons.Single(c => !c.MarkPresent);
         var palletIds = cartons.SelectMany(c => c.VisibleIn).Distinct(StringComparer.Ordinal).ToList();
         var reshotId = unmarked.ReshotIn
             ?? throw new InvalidOperationException("Scenario carton without markPresent has no reshotIn image.");
+        // The pallet views are labeled from the just-sent ASN (minted PO
+        // plus ASN lots) and read live; the committed PO-2 set would hold
+        // every carton under the label check, so it never stands in.
+        var set = await runner.BuildDockImagesAsync(bat);
+        Assert.NotNull(set);
         var perImage = new Dictionary<string, IReadOnlyList<DockCartonRead>>(StringComparer.Ordinal);
-        foreach (var imageId in images)
+        foreach (var image in set.Images)
         {
-            var file = Path.Combine(dockDir, imageId + ".jpg");
-            if (!File.Exists(file))
-            {
-                throw new InvalidOperationException(
-                    $"Live photo flow needs {file} but it is missing; run from the repo checkout with assets/dock intact.");
-            }
-
-            var jpeg = await File.ReadAllBytesAsync(file);
-            var reads = await runner.TranscribeDockPhotosAsync(bat, [new DockPhoto(imageId, jpeg, null)]);
-            perImage[imageId] = reads;
+            Assert.Equal(DockImagePath.Composited, image.Path);
+            Assert.False(string.IsNullOrWhiteSpace(image.FallbackReason));
+            var fileName = Path.GetFileName(image.FilePath);
+            var jpeg = await File.ReadAllBytesAsync(image.FilePath);
+            var reads = await runner.TranscribeDockPhotosAsync(bat, [new DockPhoto(fileName, jpeg, null)]);
+            perImage[image.ImageId] = reads;
         }
+
+        var minted = await runner.MintReshotImageAsync(bat, unmarked.Id);
+        var reshotJpeg = await File.ReadAllBytesAsync(minted.FilePath);
+        perImage[reshotId] = await runner.TranscribeDockPhotosAsync(
+            bat, [new DockPhoto(minted.FileName, reshotJpeg, null)]);
 
         var mismatches = new List<string>();
         var damageViews = cartons.ToDictionary(c => c.Id, _ => new List<string>(), StringComparer.Ordinal);

@@ -182,4 +182,36 @@ public sealed class ComplianceTests
         Assert.Contains("no quarantined lots", verdicts[0].Reason);
         Assert.Contains("no open reviews", verdicts[0].Reason);
     }
+
+    [Fact]
+    public async Task OpenReviewsBlockTheWholePayment()
+    {
+        var state = new PrePayState([], [], [MakeReview("REV-1", "BAT-LI-05")]);
+        var verdicts = await _engine.EvaluatePayableAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Block, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Equal(RuleCatalog.Find("ELEC-04").Source, verdicts[0].Source);
+        Assert.Contains("REV-1", verdicts[0].Reason);
+        Assert.Contains("BAT-LI-05", verdicts[0].Reason);
+    }
+
+    [Fact]
+    public async Task HoldsAndQuarantineLeaveAcceptedValuePayable()
+    {
+        var state = new PrePayState([MakeHold("HLD-1")], ["LOT-Q1"], []);
+        var verdicts = await _engine.EvaluatePayableAsync(state);
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Pass, verdicts[0].Kind);
+        Assert.Equal(ComplianceEngine.PrePayHoldId, verdicts[0].RuleId);
+        Assert.Contains("accepted value is payable", verdicts[0].Reason);
+    }
+
+    [Fact]
+    public async Task EmptyStatePassesPayable()
+    {
+        var verdicts = await _engine.EvaluatePayableAsync(new PrePayState([], [], []));
+        Assert.Single(verdicts);
+        Assert.Equal(VerdictKind.Pass, verdicts[0].Kind);
+    }
 }
