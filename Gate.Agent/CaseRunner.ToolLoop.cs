@@ -188,7 +188,12 @@ public partial class CaseRunner
 
         if (!acted && turnError is null)
         {
-            results.Add("No action executed this turn; read the refusals and call a legal tool.");
+            // A reads-only turn is not a refusal: say what to do next
+            // instead of pointing at refusals that never happened.
+            results.Add(transcriptCalls.Count > 0
+                && transcriptCalls.All(c => c.Verdict == ToolCallVerdict.Executed)
+                ? "Reads complete; now call the action tool to move the case forward."
+                : "No action executed this turn; read the refusals and call a legal tool.");
         }
 
         CaseTranscript.AppendTurn(_cacheDir, caseId, new TranscriptTurn(
@@ -436,7 +441,7 @@ public partial class CaseRunner
             var file = CaseStore.Load(_cacheDir, caseId)
                 ?? throw new InvalidOperationException($"Unknown case {caseId}.");
             var state = await BuildPrePayStateAsync(file, ct).ConfigureAwait(false);
-            var verdicts = await _compliance.EvaluatePaymentAsync(state, ct).ConfigureAwait(false);
+            var verdicts = await _compliance.EvaluatePayableAsync(state, ct).ConfigureAwait(false);
             return AgentTools.PrePayJson(state, verdicts);
         }
 

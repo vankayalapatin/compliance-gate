@@ -28,7 +28,9 @@ public sealed record DockImageOptions(
     string OutputDir,
     string ImageCacheDir,
     string ReadCacheDir,
-    string ReadPromptVersion = VisionReadCache.CartonReadV1);
+    string ReadPromptVersion = VisionReadCache.CartonReadV1,
+    string FilePrefix = "",
+    string? ViewKind = null);
 
 public sealed record DockImageResult(
     string ImageId,
@@ -48,7 +50,7 @@ public sealed record ViewLabelSpec(
 
 public sealed record ViewSpec(
     string Id, string BaseFile, IReadOnlyList<ViewLabelSpec> Labels,
-    CropSpec? Crop, IReadOnlySet<string> DamageVisible);
+    CropSpec? Crop, IReadOnlySet<string> DamageVisible, string Kind = "pallet");
 
 public sealed record CropSpec(double X, double Y, double W, double H, int Scale);
 
@@ -79,7 +81,16 @@ public sealed class DockImagePipeline(
             throw new InvalidOperationException("Dock images need the PO number the ERP minted; it cannot be blank.");
         }
 
-        var specs = LoadSpecs(options.ImageSpecsPath);
+        var specs = LoadSpecs(options.ImageSpecsPath)
+            .Where(v => options.ViewKind is null
+                || string.Equals(v.Kind, options.ViewKind, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (specs.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"No dock views of kind '{options.ViewKind}' in {options.ImageSpecsPath}.");
+        }
+
         var truth = LoadCartonTruth(options.CartonsPath);
         var asnCartons = asn.Cartons.ToDictionary(c => c.CartonId, c => c, StringComparer.Ordinal);
         var readCache = new VisionReadCache(options.ReadCacheDir);
@@ -112,7 +123,7 @@ public sealed class DockImagePipeline(
         var cacheKey = VisionReadCache.Sha256Hex(
             Encoding.UTF8.GetBytes(CanonicalKey(view, workBase, labels, poNumber)));
         var cachedFile = Path.Combine(options.ImageCacheDir, cacheKey + ".jpg");
-        var outFile = Path.Combine(options.OutputDir, view.Id + ".jpg");
+        var outFile = Path.Combine(options.OutputDir, options.FilePrefix + view.Id + ".jpg");
 
         byte[] finalBytes;
         DockImagePath path;
@@ -183,7 +194,7 @@ public sealed class DockImagePipeline(
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 attemptCts.CancelAfter(TimeSpan.FromMinutes(5));
                 result = await models.CompleteAsync(
-                    new ModelRequest(ReadPrompt, MaxTokens: 2000, ImageJpeg: finalBytes), attemptCts.Token).ConfigureAwait(false);
+                    new ModelRequest(ReadPrompt, MaxTokens: 4000, ImageJpeg: finalBytes), attemptCts.Token).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
@@ -248,7 +259,7 @@ public sealed class DockImagePipeline(
             using var verifyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             verifyCts.CancelAfter(TimeSpan.FromMinutes(5));
             var result = await models.CompleteAsync(
-                new ModelRequest(ReadPrompt, MaxTokens: 2000, ImageJpeg: labeled), verifyCts.Token).ConfigureAwait(false);
+                new ModelRequest(ReadPrompt, MaxTokens: 4000, ImageJpeg: labeled), verifyCts.Token).ConfigureAwait(false);
             readText = result.Text;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
@@ -483,11 +494,23 @@ public sealed class DockImagePipeline(
             views.Add(new ViewSpec(
                 spec.GetProperty("id").GetString()!,
                 spec.GetProperty("source").GetString()!,
-                labels, crop, damage));
+                labels, crop, damage,
+                spec.TryGetProperty("kind", out var kind) && !string.IsNullOrWhiteSpace(kind.GetString())
+                    ? kind.GetString()!
+                    : "pallet"));
         }
 
         return views;
     }
+
+    /// <summary>Reshot (close-up) views from the specs: view id plus the
+    /// cartons each covers. Data-driven: callers mint only cartons a close-up
+    /// view actually covers, and refuse anything else honestly.</summary>
+    public static IReadOnlyList<(string ViewId, IReadOnlyList<string> Cartons)> ReshotViews(string specsPath) =>
+        LoadSpecs(specsPath)
+            .Where(v => string.Equals(v.Kind, "reshot", StringComparison.OrdinalIgnoreCase))
+            .Select(v => (v.Id, (IReadOnlyList<string>)v.Labels.Select(l => l.CartonId).ToList()))
+            .ToList();
 
     private static IReadOnlyDictionary<string, CartonTruth> LoadCartonTruth(string path)
     {

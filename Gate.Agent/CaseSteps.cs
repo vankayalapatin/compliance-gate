@@ -47,7 +47,8 @@ public static class CaseNextStepExtensions
 }
 
 /// <summary>Small ERP view behind one pick: document states plus payable and
-/// held money plus open blocks. Built from adapter reads only.</summary>
+/// held money plus open blocks. Built from adapter reads only, plus the
+/// pre-pay gate state and the order-level readiness the notify gate needs.</summary>
 public sealed record CaseErpView(
     bool SoExists,
     PrStatus? PrStatus,
@@ -60,7 +61,10 @@ public sealed record CaseErpView(
     decimal PaidTotal,
     bool HasHeldLines,
     int OpenHoldCount,
-    bool CustomerNotified);
+    bool CustomerNotified,
+    bool PrePayBlocked = false,
+    string? PrePayBlockReason = null,
+    bool OrderReady = false);
 
 public static class CasePicker
 {
@@ -202,10 +206,12 @@ public static class CasePicker
             && view.ReceiptExists
             && current.Stage >= CaseStage.DockChecked
             && view.OpenHoldCount == 0
+            && !view.PrePayBlocked
             && !pendingKinds.Contains(DecisionKind.DockReview)
-            && !pendingKinds.Contains(DecisionKind.DamageReview))
+            && !pendingKinds.Contains(DecisionKind.DamageReview)
+            && view.OrderReady)
         {
-            return (CaseNextStep.NotifyCustomer, "Materials secured with no open holds or dock reviews.");
+            return (CaseNextStep.NotifyCustomer, "Order secured: every case for the order is resolved.");
         }
 
         if (pendingKinds.Contains(DecisionKind.InvoiceApproval)
@@ -227,6 +233,13 @@ public static class CasePicker
         if (pendingKinds.Contains(DecisionKind.BankVerification))
         {
             return (CaseNextStep.AwaitDecision, "Bank verification is pending; the ERP refuses drafts on unverified banks.");
+        }
+
+        if (view.PrePayBlocked)
+        {
+            return (CaseNextStep.AwaitDecision,
+                $"Pre-pay gate blocks payment ({view.PrePayBlockReason ?? "open reviews"}); " +
+                "open reviews must close before anything pays, and the ERP refuses the draft until they do.");
         }
 
         if (view.PaidTotal < view.AcceptedTotal)

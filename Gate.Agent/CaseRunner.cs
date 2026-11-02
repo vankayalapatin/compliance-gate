@@ -30,6 +30,8 @@ public partial class CaseRunner
     private readonly string _cacheDir;
     private readonly string _visionReadCacheDir;
     private readonly PresentationPace _pace;
+    private readonly IImageLabeler? _imageLabeler;
+    private readonly DockImageOptions? _dockImageOptions;
 
     public CaseRunner(
         IErpAdapter erp,
@@ -40,7 +42,9 @@ public partial class CaseRunner
         string cacheDir,
         ILogger<CaseRunner>? logger = null,
         string? visionReadCacheDir = null,
-        PresentationPace? pace = null)
+        PresentationPace? pace = null,
+        IImageLabeler? imageLabeler = null,
+        DockImageOptions? dockImageOptions = null)
     {
         _erp = erp;
         _core = core;
@@ -51,6 +55,8 @@ public partial class CaseRunner
         _logger = logger ?? NullLogger<CaseRunner>.Instance;
         _visionReadCacheDir = visionReadCacheDir ?? Path.Combine(cacheDir, "vision-reads");
         _pace = pace ?? new PresentationPace();
+        _imageLabeler = imageLabeler;
+        _dockImageOptions = dockImageOptions;
     }
 
     /// <summary>Advances the case through the Spark-driven tool loop until it
@@ -198,10 +204,44 @@ public partial class CaseRunner
         var holds = await _erp.GetOpenHoldsAsync(null, ct).ConfigureAwait(false);
         var openCaseHolds = holds.Count(h => string.Equals(h.CaseId, current.CaseId, StringComparison.Ordinal));
         var notified = file.Events.Any(e => e.Kind == CaseEventKind.CustomerNotified);
+        var prepay = await BuildPrePayStateAsync(file, ct).ConfigureAwait(false);
+        var prepayVerdicts = await _compliance.EvaluatePayableAsync(prepay, ct).ConfigureAwait(false);
+        var prepayBlock = prepayVerdicts.FirstOrDefault(v => v.Kind == VerdictKind.Block);
         return new CaseErpView(
             so is not null, prStatus, poApproval, confirmation is not null,
             asn is not null, receipt is not null, matched, accepted, paid,
-            held, openCaseHolds, notified);
+            held, openCaseHolds, notified,
+            prepayBlock is not null, prepayBlock?.Reason, OrderCasesResolved(file));
+    }
+
+    /// <summary>True when every other case for this case's order is terminal
+    /// (resolved, closed, or cancelled). The customer-secured message goes
+    /// out once per order, on the last case to finish.</summary>
+    private bool OrderCasesResolved(CaseFile file)
+    {
+        foreach (var caseId in CaseStore.ListCaseIds(_cacheDir))
+        {
+            if (string.Equals(caseId, file.Case.CaseId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var sibling = CaseStore.Load(_cacheDir, caseId);
+            if (sibling is null
+                || !string.Equals(sibling.Case.SoNumber, file.Case.SoNumber, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (sibling.Case.Stage is not CaseStage.Resolved
+                and not CaseStage.Closed
+                and not CaseStage.Cancelled)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private async Task ComputeShortfallStepAsync(CaseFile file, CancellationToken ct)
@@ -327,28 +367,16 @@ public partial class CaseRunner
                 ruleId: block?.RuleId);
             if (!screening.Passed && block is not null)
             {
-                var blocks = screening.Verdicts.Where(v => v.Kind == VerdictKind.Block).ToList();
-                if (blocks.Count > 0 && blocks.All(v => _compliance.IsDocumentRule(v.RuleId)))
-                {
-                    await _erp.AddPoNoteAsync(current.PrNumber,
-                        $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
-                        RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
-                    work.AddEvent(CaseEventKind.Note,
-                        $"Vendor {screening.VendorId} failed screening on documents only " +
-                        $"({string.Join(", ", blocks.Select(b => b.RuleId))}); loses the award, vendor master untouched.",
-                        ruleId: block.RuleId);
-                }
-                else
-                {
-                    await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}",
-                        RecordSource.P2pAgent, $"{current.CaseId}:screen:block:{screening.VendorId}", ct).ConfigureAwait(false);
-                    await _erp.AddPoNoteAsync(current.PrNumber,
-                        $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
-                        RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
-                    work.AddEvent(CaseEventKind.VendorBlocked,
-                        $"Vendor {screening.VendorId} blocked: {block.RuleId}: {block.Reason}",
-                        ruleId: block.RuleId);
-                }
+                // The block belongs to the award, not the vendor: CORP-02
+                // depends on the order quantity, so a losing vendor loses
+                // this award with the rule cited and stays buyable. Vendor
+                // master blocks stay manual (ERP vendor screen only).
+                await _erp.AddPoNoteAsync(current.PrNumber,
+                    $"Vendor {screening.VendorId} rejected for {current.CaseId}: {block.RuleId}.",
+                    RecordSource.P2pAgent, $"{current.CaseId}:screen:note:{screening.VendorId}", ct).ConfigureAwait(false);
+                work.AddEvent(CaseEventKind.Note,
+                    $"Vendor {screening.VendorId} rejected for the award: {block.RuleId}: {block.Reason}",
+                    ruleId: block.RuleId);
             }
         }
 
@@ -703,7 +731,7 @@ public partial class CaseRunner
     {
         var current = file.Case;
         var state = await BuildPrePayStateAsync(file, ct).ConfigureAwait(false);
-        var verdicts = await _compliance.EvaluatePaymentAsync(state, ct).ConfigureAwait(false);
+        var verdicts = await _compliance.EvaluatePayableAsync(state, ct).ConfigureAwait(false);
         var block = verdicts.FirstOrDefault(v => v.Kind == VerdictKind.Block);
         var work = new CaseWork(file);
         work.AddEvent(CaseEventKind.Note,
@@ -712,6 +740,15 @@ public partial class CaseRunner
             string.Join("; ", verdicts.Select(v => $"{v.RuleId} {v.Kind}: {v.Reason}")),
             ruleId: block?.RuleId ?? verdicts.FirstOrDefault()?.RuleId,
             documentType: "Payment");
+        if (block is not null)
+        {
+            // Open reviews block the whole payment: no draft until they
+            // close. The picker parks here, so reaching this turn means a
+            // review opened after the pick.
+            work.Patch(current with { BlockedByRuleId = block.RuleId, BlockedReason = block.Reason });
+            work.Save(_cacheDir);
+            return;
+        }
 
         var payable = new List<InvoiceKey>();
         foreach (var key in current.Invoices)
@@ -753,6 +790,18 @@ public partial class CaseRunner
         catch (InvalidOperationException ex)
         {
             _logger.LogWarning(ex, "Case {CaseId}: ERP refused the payment draft.", current.CaseId);
+            if (ex.Message.StartsWith("ELEC-04", StringComparison.Ordinal))
+            {
+                // Policy refusal, not a terms refusal: no not-due marker.
+                // The picker parks on the pre-pay block and re-picks the
+                // draft once the holds, quarantine, or reviews close.
+                work.AddEvent(CaseEventKind.Note,
+                    $"ERP refused the draft on policy: {ex.Message}",
+                    ruleId: "ELEC-04", documentType: "Payment");
+                work.Save(_cacheDir);
+                return;
+            }
+
             work.AddEvent(CaseEventKind.Note,
                 $"{CasePicker.PaymentNotDueMarkerFor(payUpToDate)}: ERP refused the draft: {ex.Message}",
                 documentType: "Payment");
@@ -830,7 +879,7 @@ public partial class CaseRunner
 
         var work = new CaseWork(file);
         work.AddEvent(CaseEventKind.CustomerNotified,
-            $"Customer notified: materials secured for {file.Case.SoNumber} / {file.Case.ItemId}.");
+            $"Customer notified: order {file.Case.SoNumber} is secured; every case for the order is resolved.");
         work.Save(_cacheDir);
         await Task.CompletedTask;
     }

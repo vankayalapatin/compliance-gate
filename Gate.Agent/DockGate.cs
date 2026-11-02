@@ -37,9 +37,17 @@ public interface IDockEvaluator
     /// <summary>Rule id of the damage gate (human review, never auto-hold).</summary>
     string DamageRuleId { get; }
 
+    /// <summary>Rule id of the label-identity gate (read PO and lot must
+    /// match the received PO and ASN lots).</summary>
+    string LabelRuleId { get; }
+
     /// <summary>Evaluates every listed carton in order, then any read carton
-    /// missing from the list in sorted order (never silently dropped).</summary>
+    /// missing from the list in sorted order (never silently dropped). The
+    /// label check compares each read against the PO being received and the
+    /// carton-to-lot map from the ASN.</summary>
     IReadOnlyDictionary<string, IReadOnlyList<Verdict>> EvaluateDock(
         IReadOnlyList<string> asnCartonIds,
-        IReadOnlyList<DockCartonRead> reads);
+        IReadOnlyList<DockCartonRead> reads,
+        string expectedPoNumber,
+        IReadOnlyDictionary<string, string> cartonLots);
 }

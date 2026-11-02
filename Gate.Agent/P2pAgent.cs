@@ -165,12 +165,9 @@ public sealed class P2pAgent
             else if (!screening.Passed)
             {
                 var block = screening.Verdicts.First(v => v.Kind is VerdictKind.Block);
-                var blocks = screening.Verdicts.Where(v => v.Kind is VerdictKind.Block).ToList();
-                if (!(blocks.Count > 0 && blocks.All(v => _compliance.IsDocumentRule(v.RuleId))))
-                {
-                    await _erp.BlockVendorAsync(screening.VendorId, $"{block.RuleId}: {block.Reason}", RecordSource.P2pAgent, Key($"block:{screening.VendorId}"), ct).ConfigureAwait(false);
-                }
-
+                // The block belongs to the award, not the vendor: a losing
+                // vendor loses this award with the rule cited and stays
+                // buyable. Vendor master blocks stay manual.
                 await _erp.AddPoNoteAsync(prNumber, $"Vendor {screening.VendorId} rejected for {caseId}: {block.RuleId}.", RecordSource.P2pAgent, Key($"note:{screening.VendorId}"), ct).ConfigureAwait(false);
             }
         }

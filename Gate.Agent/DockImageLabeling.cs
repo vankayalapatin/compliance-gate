@@ -20,6 +20,23 @@ public interface IImageLabeler
 
 public sealed record MetaImageOptions(string BaseUrl, string ImageModel, string ApiKey);
 
+/// <summary>No-op labeler for runs without image-edit credentials: every AI
+/// attempt fails fast, so the pipeline takes its verify-then-composite
+/// fallback and records the reason. Composited labels still read live.</summary>
+public sealed class NullImageLabeler : IImageLabeler
+{
+    public string LabelerName => "none";
+
+    public Task<byte[]> ApplyLabelsAsync(byte[] baseJpeg, byte[] maskPng, string prompt, CancellationToken ct = default)
+    {
+        _ = baseJpeg;
+        _ = maskPng;
+        _ = prompt;
+        _ = ct;
+        throw new InvalidOperationException("no image labeler is configured");
+    }
+}
+
 public sealed class MetaImageLabeler(HttpClient http, MetaImageOptions options) : IImageLabeler
 {
     public string LabelerName => "meta-images-edits";

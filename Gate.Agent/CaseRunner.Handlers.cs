@@ -270,13 +270,22 @@ public partial class CaseRunner
         if (file.Events.Any(e => e.Kind == CaseEventKind.DockEvaluated))
         {
             IReadOnlyList<string> asnIds = [];
+            var replayPo = file.Case.PoNumber ?? string.Empty;
+            IReadOnlyDictionary<string, string> replayLots =
+                new Dictionary<string, string>(StringComparer.Ordinal);
             if (file.Case.AsnNumber is not null)
             {
                 var replayAsn = await _erp.GetAsnAsync(file.Case.AsnNumber, ct).ConfigureAwait(false);
-                asnIds = replayAsn?.Cartons.Select(c => c.CartonId).ToList() ?? [];
+                if (replayAsn is not null)
+                {
+                    asnIds = replayAsn.Cartons.Select(c => c.CartonId).ToList();
+                    replayPo = replayAsn.PoNumber;
+                    replayLots = replayAsn.Cartons
+                        .ToDictionary(c => c.CartonId, c => c.LotRef, StringComparer.Ordinal);
+                }
             }
 
-            var replayed = _dock.EvaluateDock(asnIds, reads);
+            var replayed = _dock.EvaluateDock(asnIds, reads, replayPo, replayLots);
             CaseStore.SaveDock(_cacheDir, new DockEvidence(caseId, reads, replayed, DateTimeOffset.UtcNow));
             return replayed;
         }
@@ -362,7 +371,9 @@ public partial class CaseRunner
         var asn = await _erp.GetAsnAsync(current.AsnNumber, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"ASN {current.AsnNumber} vanished.");
         var cartonIds = cartonSubset ?? asn.Cartons.Select(c => c.CartonId).ToList();
-        var outcome = _dock.EvaluateDock(cartonIds, reads);
+        var outcome = _dock.EvaluateDock(
+            cartonIds, reads, asn.PoNumber,
+            asn.Cartons.ToDictionary(c => c.CartonId, c => c.LotRef, StringComparer.Ordinal));
         if (isReshot)
         {
             return outcome;
@@ -1224,13 +1235,10 @@ public partial class CaseRunner
                 $"(the exception excuses only {ruleId}).");
         }
 
-        await _erp.UnblockVendorAsync(
-            vendorId, decidedBy, $"{work.Current.CaseId}:{decision.DecisionId}:unblock", ct)
-            .ConfigureAwait(false);
         var granted = work.Decide(decision, true, decidedBy, comment);
         work.AddEvent(CaseEventKind.Note,
             $"{ruleId} exception for vendor {vendorId} granted by {decidedBy}: {comment}. " +
-            "Re-screen passed with exception; vendor unblocked.",
+            "Re-screen passed with exception; the award may proceed.",
             ruleId: ruleId,
             documentType: CorpExceptionFlow.VendorDocumentType,
             documentNumber: vendorId);
