@@ -183,6 +183,26 @@ public sealed partial class EfCoreErpAdapter
                 if (same) throw new InvalidOperationException("Invoice approver and payment approver must be different people.");
             }
         }
+        if (approved && documentType == "PO")
+        {
+            var po = await db.PurchaseOrders.FindAsync([documentNumber], ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Unknown PO {documentNumber}.");
+            var poLines = await db.PurchaseOrderLines
+                .Where(l => l.PoNumber == documentNumber).ToListAsync(ct).ConfigureAwait(false);
+            foreach (var line in poLines)
+            {
+                await RequireSourcingAsync(
+                    db, po.VendorId, line.ItemId, line.QtyOrdered, po.PrNumber, ct).ConfigureAwait(false);
+            }
+        }
+        if (approved && documentType == "Payment")
+        {
+            var keys = (await db.PaymentLines
+                .Where(l => l.PaymentNumber == documentNumber).ToListAsync(ct).ConfigureAwait(false))
+                .Select(l => new InvoiceKey(l.VendorId, l.SupplierInvoiceNumber))
+                .ToList();
+            await RequirePayableAsync(db, keys, ct).ConfigureAwait(false);
+        }
         var stored = new ApprovalDto(documentType, documentNumber, routed.RoutedTo, actedBy, isDelegate,
             DateTimeOffset.UtcNow, approved, comment, amount, actor.SigningLimit);
         db.Approvals.Add(new ApprovalRow
@@ -312,6 +332,10 @@ public sealed partial class EfCoreErpAdapter
         if (vendor.IsBlocked) throw new InvalidOperationException($"Vendor {vendorId} is blocked: {vendor.BlockReason}.");
         var prLines = await db.PurchaseRequisitionLines
             .Where(l => l.PrNumber == prNumber).OrderBy(l => l.LineNo).ToListAsync(ct).ConfigureAwait(false);
+        foreach (var l in prLines)
+        {
+            await RequireSourcingAsync(db, vendorId, l.ItemId, l.Quantity, prNumber, ct).ConfigureAwait(false);
+        }
         var poNumber = await NextAsync(db, "PO", ct).ConfigureAwait(false);
         var newLines = new List<PurchaseOrderLine>();
         var lineNo = 0;
@@ -939,6 +963,7 @@ public sealed partial class EfCoreErpAdapter
         var inv = await db.VendorInvoices.FindAsync([vendorId, supplierInvoiceNumber], ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Unknown invoice {supplierInvoiceNumber}.");
         if (Enum<InvoiceStatus>(inv.Status) is InvoiceStatus.Paid or InvoiceStatus.Closed) throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} is terminal.");
+        await RequireReleasableAsync(db, [new InvoiceKey(vendorId, supplierInvoiceNumber)], ct).ConfigureAwait(false);
         var held = await db.VendorInvoiceLines
             .Where(l => l.VendorId == vendorId && l.SupplierInvoiceNumber == supplierInvoiceNumber &&
                 l.PoLineRef == poLineRef && l.Disposition == nameof(LineDisposition.Held))
@@ -1021,6 +1046,9 @@ public sealed partial class EfCoreErpAdapter
             }
         }
         if (lines.Count == 0) throw new InvalidOperationException("Nothing due: held value excluded, remainder stays open.");
+        await RequirePayableAsync(db,
+            lines.Select(l => new InvoiceKey(l.VendorId, l.SupplierInvoiceNumber)).ToList(), ct)
+            .ConfigureAwait(false);
         var draftId = await NextAsync(db, "PAYDRAFT", ct).ConfigureAwait(false);
         var draftCreatedAt = BusinessStamp(postingDate);
         var firstPaying = lines.OrderBy(l => l.VendorId, StringComparer.Ordinal)
@@ -1069,6 +1097,9 @@ public sealed partial class EfCoreErpAdapter
             ?? throw new InvalidOperationException($"Unknown payment draft {draftPaymentNumber}.");
         if (Enum<PaymentStatus>(draft.Status) != PaymentStatus.Approved) throw new InvalidOperationException($"Payment {draftPaymentNumber} must be approved before posting.");
         var draftLines = await db.PaymentLines.Where(l => l.PaymentNumber == draftPaymentNumber).ToListAsync(ct).ConfigureAwait(false);
+        await RequirePayableAsync(db,
+            draftLines.Select(l => new InvoiceKey(l.VendorId, l.SupplierInvoiceNumber)).ToList(), ct)
+            .ConfigureAwait(false);
         var orderedLines = draftLines.OrderBy(l => l.VendorId, StringComparer.Ordinal)
             .ThenBy(l => l.SupplierInvoiceNumber, StringComparer.Ordinal).ToList();
         VendorBankRow? firstBank = null;

@@ -53,6 +53,17 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     private readonly Dictionary<string, object> _idem = new();
     private readonly Dictionary<string, decimal> _paidAmounts = new();
     private string _baseCurrency = string.Empty;
+    private readonly IErpPolicy? _policy;
+    private readonly IErpPolicyContext? _policyContext;
+
+    /// <summary>Fake with optional control-point policy. A null policy skips
+    /// checks (tests without a policy keep their old behavior); control-point
+    /// tests wire the real compliance policy plus a platform context.</summary>
+    public InMemoryErpAdapter(IErpPolicy? policy = null, IErpPolicyContext? policyContext = null)
+    {
+        _policy = policy;
+        _policyContext = policyContext;
+    }
 
     // Seed helpers (test and demo setup only).
     public void SeedSalesOrder(SalesOrder so) => _salesOrders[so.SoNumber] = so;
@@ -140,6 +151,137 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         var result = create();
         _idem[key] = result!;
         return result;
+    }
+
+    private bool TryIdem<T>(string key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out T? result)
+    {
+        if (_idem.TryGetValue(key, out var existing) && existing is T typed)
+        {
+            result = typed;
+            return true;
+        }
+
+        result = default!;
+        return false;
+    }
+
+    private T SetIdem<T>(string key, T result)
+    {
+        _idem[key] = result!;
+        return result;
+    }
+
+    private async Task RequireSourcingAsync(
+        string vendorId, string itemId, decimal awardQuantity, string? prNumber, CancellationToken ct)
+    {
+        if (_policy is null)
+        {
+            return;
+        }
+
+        if (!_vendors.TryGetValue(vendorId, out var vendor)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
+        if (!_items.TryGetValue(itemId, out var item)) throw new InvalidOperationException($"Unknown item {itemId}.");
+        var docs = _vendorDocs.GetValueOrDefault(vendorId, []);
+        var history = VolumeHistoryFor(itemId);
+        var grant = _policyContext is null
+            ? null
+            : await _policyContext.FindExceptionGrantAsync(
+                ErpPolicyRules.CorpOriginCap, vendorId, prNumber, ct).ConfigureAwait(false);
+        var result = await _policy.CheckSourcingAsync(new SourcingCheckInput(
+            vendor.VendorId, vendor.Name, vendor.CountryOfOrigin, vendor.PaymentTermsId,
+            item.ItemId, item.Description, item.IsCritical, awardQuantity,
+            docs, history, grant), ct).ConfigureAwait(false);
+        if (!result.Allowed)
+        {
+            throw new InvalidOperationException(result.Refusal!.Display);
+        }
+    }
+
+    private async Task RequirePayableAsync(IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
+    {
+        var input = await BuildPayableInputAsync(invoices, ct).ConfigureAwait(false);
+        if (input is null)
+        {
+            return;
+        }
+
+        var result = await _policy!.CheckPayableAsync(input, ct).ConfigureAwait(false);
+        if (!result.Allowed)
+        {
+            throw new InvalidOperationException(result.Refusal!.Display);
+        }
+    }
+
+    private async Task RequireReleasableAsync(IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
+    {
+        var input = await BuildPayableInputAsync(invoices, ct).ConfigureAwait(false);
+        if (input is null)
+        {
+            return;
+        }
+
+        var result = await _policy!.CheckReleasableAsync(input, ct).ConfigureAwait(false);
+        if (!result.Allowed)
+        {
+            throw new InvalidOperationException(result.Refusal!.Display);
+        }
+    }
+
+    private async Task<PayableCheckInput?> BuildPayableInputAsync(
+        IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
+    {
+        if (_policy is null || invoices.Count == 0)
+        {
+            return null;
+        }
+
+        var invDocs = invoices
+            .Select(k => InvoiceDoc(k.VendorId, k.SupplierInvoiceNumber))
+            .ToHashSet(StringComparer.Ordinal);
+        var poNumbers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var key in invoices)
+        {
+            if (_invoices.TryGetValue((key.VendorId, key.SupplierInvoiceNumber), out var inv)
+                && inv.PoNumber is not null)
+            {
+                poNumbers.Add(inv.PoNumber);
+            }
+        }
+
+        var receiptNumbers = _receipts.Values
+            .Where(r => poNumbers.Contains(r.PoNumber))
+            .Select(r => r.ReceiptNumber)
+            .ToHashSet(StringComparer.Ordinal);
+        var lots = _receipts.Values
+            .Where(r => poNumbers.Contains(r.PoNumber))
+            .SelectMany(r => r.Lines.Select(l => l.LotRef))
+            .Concat(_lotMap.Where(m => poNumbers.Contains(m.Value.PoNumber)).Select(m => m.Key))
+            .ToHashSet(StringComparer.Ordinal);
+        var cartonIds = _asns.Values
+            .Where(a => poNumbers.Contains(a.PoNumber))
+            .SelectMany(a => a.Cartons.Select(c => c.CartonId))
+            .ToHashSet(StringComparer.Ordinal);
+        var holds = _holds.Values
+            .Where(h => h.Status == HoldStatus.Set)
+            .Where(h => (h.DocumentNumber is not null
+                    && (invDocs.Contains(h.DocumentNumber)
+                        || poNumbers.Contains(h.DocumentNumber)
+                        || receiptNumbers.Contains(h.DocumentNumber)))
+                || (h.LotRef is not null && lots.Contains(h.LotRef))
+                || (h.CartonId is not null && cartonIds.Contains(h.CartonId)))
+            .OrderBy(h => h.HoldId, StringComparer.Ordinal)
+            .ToList();
+        var quarantined = _inventory.Values.SelectMany(v => v)
+            .Where(t => t.Status == InventoryStatus.Quarantined && lots.Contains(t.LotRef))
+            .GroupBy(t => t.LotRef, StringComparer.Ordinal)
+            .Where(g => g.Sum(t => t.Quantity) > 0)
+            .Select(g => g.Key)
+            .OrderBy(l => l, StringComparer.Ordinal)
+            .ToList();
+        var reviews = _policyContext is null
+            ? (IReadOnlyList<OpenReview>)[]
+            : await _policyContext.FindOpenReviewsAsync(invoices, ct).ConfigureAwait(false);
+        return new PayableCheckInput(invoices, holds, quarantined, reviews);
     }
 
     private static string InvoiceDoc(string vendorId, string supplierNumber) => $"{vendorId}/{supplierNumber}";
@@ -303,7 +445,10 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     public Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default) =>
         Task.FromResult(_volumeShares.GetValueOrDefault(vendorId));
 
-    public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default)
+    public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default) =>
+        Task.FromResult(VolumeHistoryFor(itemId));
+
+    private IReadOnlyList<VolumeHistory> VolumeHistoryFor(string itemId)
     {
         // Same trailing-12-month contract as the real adapter: posted
         // receipts older than the window stay out. Seeded openings carry
@@ -321,7 +466,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 return (Item: lineItem, Row: new VolumeHistory($"Receipt {r.ReceiptNumber}", country, l.QtyReceived));
             }).Where(x => x.Item == itemId).Select(x => x.Row);
         }).ToList();
-        return Task.FromResult<IReadOnlyList<VolumeHistory>>(seeded.Concat(posted).ToList());
+        return seeded.Concat(posted).ToList();
     }
 
     public Task<ItemDto?> GetItemAsync(string itemId, CancellationToken ct = default) =>
@@ -449,9 +594,13 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         return Task.CompletedTask;
     }
 
-    public Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default) =>
-        Task.FromResult(Idem($"approval:{idempotencyKey}", () =>
+    public async Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default)
+    {
+        if (TryIdem($"approval:{idempotencyKey}", out ApprovalDto? replay))
         {
+            return replay;
+        }
+
             // Same-actor idempotency beyond the idempotency key, mirroring
             // the real adapter: a repeated click mints a fresh key.
             var prior = _approvals.FirstOrDefault(a =>
@@ -493,12 +642,27 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                         throw new InvalidOperationException("Invoice approver and payment approver must be different people.");
                 }
             }
+            if (approved && documentType == "PO")
+            {
+                var po = _pos.GetValueOrDefault(documentNumber) ?? throw new InvalidOperationException($"Unknown PO {documentNumber}.");
+                foreach (var line in po.Lines)
+                {
+                    await RequireSourcingAsync(po.VendorId, line.ItemId, line.QtyOrdered, po.PrNumber, ct).ConfigureAwait(false);
+                }
+            }
+            if (approved && documentType == "Payment")
+            {
+                var keys = _payments.GetValueOrDefault(documentNumber)?.Lines
+                    .Select(l => new InvoiceKey(l.VendorId, l.SupplierInvoiceNumber))
+                    .ToList() ?? [];
+                await RequirePayableAsync(keys, ct).ConfigureAwait(false);
+            }
             var stored = new ApprovalDto(documentType, documentNumber, routedTo, actedBy, isDelegate, DateTimeOffset.UtcNow, approved, comment, amount, actor.SigningLimit);
             _approvals.Add(stored);
             ApplyApprovalOutcome(documentType, documentNumber, approved);
             if (approved) StampApproved(documentType, documentNumber, actedBy, stored.Timestamp);
-            return stored;
-        }));
+            return SetIdem($"approval:{idempotencyKey}", stored);
+    }
 
     private string ResolveDocKey(string documentType, string documentNumber)
     {
@@ -563,14 +727,22 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         }
     }
 
-    public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-        Task.FromResult(Idem($"po:{idempotencyKey}", () =>
+    public async Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    {
+        if (TryIdem($"po:{idempotencyKey}", out PurchaseOrder? replay))
         {
-            if (!_prs.TryGetValue(prNumber, out var pr) || pr.Status != PrStatus.Approved)
-                throw new InvalidOperationException($"No valid approved PR {prNumber}: PO refused.");
-            if (!_vendors.TryGetValue(vendorId, out var vendor)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
-            if (vendor.IsBlocked) throw new InvalidOperationException($"Vendor {vendorId} is blocked: {vendor.BlockReason}.");
-            var lines = pr.Lines.Select((l, i) =>
+            return replay;
+        }
+
+        if (!_prs.TryGetValue(prNumber, out var pr) || pr.Status != PrStatus.Approved)
+            throw new InvalidOperationException($"No valid approved PR {prNumber}: PO refused.");
+        if (!_vendors.TryGetValue(vendorId, out var vendor)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
+        if (vendor.IsBlocked) throw new InvalidOperationException($"Vendor {vendorId} is blocked: {vendor.BlockReason}.");
+        foreach (var l in pr.Lines)
+        {
+            await RequireSourcingAsync(vendorId, l.ItemId, l.Quantity, prNumber, ct).ConfigureAwait(false);
+        }
+        var lines = pr.Lines.Select((l, i) =>
             {
                 if (!_prices.TryGetValue((vendorId, l.ItemId), out var price))
                     throw new InvalidOperationException($"No price for vendor {vendorId} item {l.ItemId}: PO refused.");
@@ -595,8 +767,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             _pos[po.PoNumber] = po;
             _requesters[("PO", po.PoNumber)] = pr.Requester;
             _prs[prNumber] = pr with { Status = PrStatus.Closed };
-            return po;
-        }));
+            return SetIdem($"po:{idempotencyKey}", po);
+    }
 
     public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) =>
         Task.FromResult(Idem($"confirm:{idempotencyKey}", () =>
@@ -945,13 +1117,17 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             return posted;
         }));
 
-    public Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default)
+    public async Task ReleaseHeldInvoiceLineAsync(string vendorId, string supplierInvoiceNumber, string? poLineRef, decimal quantity, string releasedBy, string idempotencyKey, CancellationToken ct = default)
     {
-        Idem<object?>($"releaseline:{idempotencyKey}", () =>
+        if (TryIdem<object?>($"releaseline:{idempotencyKey}", out _))
         {
+            return;
+        }
+
             if (!_invoices.TryGetValue((vendorId, supplierInvoiceNumber), out var inv))
                 throw new InvalidOperationException($"Unknown invoice {supplierInvoiceNumber}.");
             if (inv.Status is InvoiceStatus.Paid or InvoiceStatus.Closed) throw new InvalidOperationException($"Invoice {supplierInvoiceNumber} is terminal.");
+            await RequireReleasableAsync([new InvoiceKey(vendorId, supplierInvoiceNumber)], ct).ConfigureAwait(false);
             var held = inv.Lines.Where(l => l.PoLineRef == poLineRef && l.Disposition == LineDisposition.Held).Sum(l => l.Quantity);
             if (quantity <= 0 || quantity > held) throw new InvalidOperationException($"Cannot release {quantity} (held {held}).");
             var lines = new List<VendorInvoiceLine>();
@@ -966,17 +1142,19 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             }
             _invoices[(vendorId, supplierInvoiceNumber)] = inv with { Lines = lines };
             _heldReleases.Add(new HeldRelease(vendorId, supplierInvoiceNumber, poLineRef, quantity, releasedBy, DateTimeOffset.UtcNow));
-            return null;
-        });
-        return Task.CompletedTask;
+            SetIdem<object?>($"releaseline:{idempotencyKey}", null);
     }
 
     public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
         CreatePaymentDraftAsync(invoices, null, source, createdBy, idempotencyKey, postingDate, ct);
 
-    public Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
-        Task.FromResult(Idem($"paydraft:{idempotencyKey}", () =>
+    public async Task<Payment> CreatePaymentDraftAsync(IReadOnlyList<InvoiceKey> invoices, DateOnly? payUpToDate, string source, string createdBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default)
+    {
+        if (TryIdem($"paydraft:{idempotencyKey}", out Payment? replay))
         {
+            return replay;
+        }
+
             if (invoices.Count == 0) throw new InvalidOperationException("Payment needs at least one invoice.");
             // One draft may pay many vendors (a payment run); every line vendor
             // needs verified bank details, and the header snapshots the bank of
@@ -1015,6 +1193,9 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 }
             }
             if (lines.Count == 0) throw new InvalidOperationException("Nothing due: held value excluded, remainder stays open.");
+            await RequirePayableAsync(
+                lines.Select(l => new InvoiceKey(l.VendorId, l.SupplierInvoiceNumber)).ToList(), ct)
+                .ConfigureAwait(false);
             var draftId = Next("PAYDRAFT");
             var firstPaying = lines.OrderBy(l => l.VendorId, StringComparer.Ordinal)
                 .ThenBy(l => l.SupplierInvoiceNumber, StringComparer.Ordinal).First();
@@ -1024,8 +1205,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 CreatedAt: BusinessStamp(postingDate));
             _payments[draftId] = draft;
             _requesters[("Payment", draftId)] = createdBy;
-            return draft;
-        }));
+            return SetIdem($"paydraft:{idempotencyKey}", draft);
+    }
 
     private DateOnly FallbackDueDate(VendorInvoice inv)
     {
@@ -1035,11 +1216,18 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         return DateOnly.FromDateTime(postedAt.DateTime).AddDays(terms.NetDays);
     }
 
-    public Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>
-        Task.FromResult(Idem($"paypost:{idempotencyKey}", () =>
+    public async Task<Payment> PostPaymentAsync(string draftPaymentNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default)
+    {
+        if (TryIdem($"paypost:{idempotencyKey}", out Payment? replay))
         {
+            return replay;
+        }
+
             if (!_payments.TryGetValue(draftPaymentNumber, out var draft)) throw new InvalidOperationException($"Unknown payment draft {draftPaymentNumber}.");
             if (draft.Status != PaymentStatus.Approved) throw new InvalidOperationException($"Payment {draftPaymentNumber} must be approved before posting.");
+            await RequirePayableAsync(
+                draft.Lines.Select(l => new InvoiceKey(l.VendorId, l.SupplierInvoiceNumber)).ToList(), ct)
+                .ConfigureAwait(false);
             VendorBankDto? firstBank = null;
             var orderedVendors = draft.Lines
                 .OrderBy(l => l.VendorId, StringComparer.Ordinal)
@@ -1081,8 +1269,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             }
             _payments[posted.PaymentNumber] = posted;
             _payments.Remove(draftPaymentNumber);
-            return posted;
-        }));
+            return SetIdem($"paypost:{idempotencyKey}", posted);
+    }
 
     public Task<VendorDto> CreateVendorAsync(string? vendorId, string name, string countryOfOrigin, string paymentTermsId, string? email, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
         Task.FromResult(Idem($"vendor:{idempotencyKey}", () =>

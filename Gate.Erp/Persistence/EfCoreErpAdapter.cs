@@ -29,17 +29,27 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
     // handlers independent and every read fresh.
     private readonly IDbContextFactory<ErpDbContext> _factory;
 
-    public EfCoreErpAdapter(IDbContextFactory<ErpDbContext> factory)
+    public EfCoreErpAdapter(
+        IDbContextFactory<ErpDbContext> factory,
+        IErpPolicy? policy = null,
+        IErpPolicyContext? policyContext = null)
     {
         _factory = factory;
+        _policy = policy;
+        _policyContext = policyContext;
     }
 
     /// <summary>Unit-test-only: mints a fresh context per call from the
     /// given options, same as the factory constructor. Production always
     /// uses the factory constructor.</summary>
-    public EfCoreErpAdapter(DbContextOptions<ErpDbContext> options)
+    public EfCoreErpAdapter(
+        DbContextOptions<ErpDbContext> options,
+        IErpPolicy? policy = null,
+        IErpPolicyContext? policyContext = null)
     {
         _factory = new OptionsContextFactory(options);
+        _policy = policy;
+        _policyContext = policyContext;
     }
 
     private sealed class OptionsContextFactory(DbContextOptions<ErpDbContext> options)
@@ -553,6 +563,12 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
     public async Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default)
     {
         using var db = _factory.CreateDbContext();
+        return await VolumeHistoryForAsync(db, itemId, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<VolumeHistory>> VolumeHistoryForAsync(
+        ErpDbContext db, string itemId, CancellationToken ct)
+    {
         // Posted receipt lines only: history is real documents, never seeds.
         // Trailing 12 months per the CORP-02 contract: receipts posted before
         // the window (e.g. opening chains) stay out of the denominator.
