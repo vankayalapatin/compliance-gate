@@ -1,8 +1,11 @@
 // Agent activity view models: the right-side pane on every page. Three
 // parts from existing case events and decisions only: Now (one plain line
 // or Idle), Waiting On (each open case's next step plus owner plus link),
-// Recent (newest-first feed). Every line stays under 25 plain words with
-// no internal ids, stage codes, or step codes.
+// Recent (newest-first feed grouped under one header per case). Every line
+// names its item and order so sibling cases on one order never mix; people
+// actions (approvals, rejections) render on the right, agent entries on
+// the left, refused attempts with an amber edge. Lines stay under 25 plain
+// words with no internal ids, stage codes, or step codes.
 using System.Globalization;
 using Gate.Agent;
 using Gate.Contracts;
@@ -11,12 +14,38 @@ namespace Gate.Web.ViewModels;
 
 public sealed record ActivityWaitingRow(string Text, string Href);
 
-public sealed record ActivityRecentLine(string Text, string Ago);
+public enum ActivitySide
+{
+    Agent,
+    Person,
+}
+
+public sealed record ActivityRecentLine(
+    string Text,
+    string Ago,
+    DateTimeOffset At,
+    ActivitySide Side,
+    bool Refused,
+    string Href);
+
+public sealed record ActivityRecentGroup(
+    string HeaderText,
+    string CaseHref,
+    IReadOnlyList<ActivityRecentLine> Lines);
 
 public sealed record AgentActivityVm(
     string Now,
     IReadOnlyList<ActivityWaitingRow> Waiting,
-    IReadOnlyList<ActivityRecentLine> Recent);
+    IReadOnlyList<ActivityRecentGroup> Recent);
+
+/// <summary>Display lookups the service feeds the pure render rules: vendor
+/// names, item descriptions, and the auto-approve threshold (null when the
+/// ERP read failed, so policy lines stay honest about what is unknown).
+/// No reads here: the service feeds these data.</summary>
+public sealed record ActivityLookups(
+    IReadOnlyDictionary<string, string> Vendors,
+    IReadOnlyDictionary<string, string> Items,
+    decimal? AutoApproveThreshold);
 
 /// <summary>Pure render rules for the activity pane: step and kind words,
 /// document phrases and links, event and decision lines, the waiting row
@@ -52,8 +81,21 @@ public static class ActivityLines
         return at.ToLocalTime().ToString("MMM d");
     }
 
-    public static string VendorName(IReadOnlyDictionary<string, string> vendors, string vendorId) =>
-        vendors.TryGetValue(vendorId, out var name) ? name : vendorId;
+    /// <summary>Short absolute stamp under each bubble. Invariant culture so
+    /// every operator sees the same shape.</summary>
+    public static string Stamp(DateTimeOffset at) =>
+        at.ToLocalTime().ToString("MMM d, HH:mm", CultureInfo.InvariantCulture);
+
+    public static string VendorName(ActivityLookups lookups, string vendorId) =>
+        lookups.Vendors.TryGetValue(vendorId, out var name) ? name : vendorId;
+
+    public static string ItemLabel(ActivityLookups lookups, string itemId) =>
+        lookups.Items.TryGetValue(itemId, out var description) ? description : itemId;
+
+    /// <summary>Case header for waiting rows, the Now line, and recent
+    /// groups: item plus order, never the internal case id.</summary>
+    public static string CaseHeader(CaseFile file, ActivityLookups lookups) =>
+        $"{ItemLabel(lookups, file.Case.ItemId)} for {file.Case.SoNumber}";
 
     /// <summary>Pane money: $ with thousands separators, since the pane
     /// speaks to operators, not ledgers. Unknown currencies keep the
@@ -103,7 +145,7 @@ public static class ActivityLines
     };
 
     public static string DocPhrase(
-        IReadOnlyDictionary<string, string> vendors, string? documentType, string? documentNumber)
+        ActivityLookups lookups, string? documentType, string? documentNumber)
     {
         if (documentType is null || documentNumber is null)
         {
@@ -114,7 +156,7 @@ public static class ActivityLines
         {
             var parts = documentNumber.Split('/', 2);
             return parts.Length == 2
-                ? $"invoice {parts[1]} from {VendorName(vendors, parts[0])}"
+                ? $"invoice {parts[1]} from {VendorName(lookups, parts[0])}"
                 : $"invoice {documentNumber}";
         }
 
@@ -125,7 +167,7 @@ public static class ActivityLines
             "Payment" => $"payment {documentNumber}",
             "Receipt" => $"receipt {documentNumber}",
             "ASN" => $"shipment {documentNumber}",
-            "Vendor" or "VendorBank" => $"vendor {VendorName(vendors, documentNumber)}",
+            "Vendor" or "VendorBank" => $"vendor {VendorName(lookups, documentNumber)}",
             "SO" or "SalesOrder" => $"order {documentNumber}",
             _ => $"{documentType} {documentNumber}",
         };
@@ -190,9 +232,14 @@ public static class ActivityLines
         _ => "Working",
     };
 
+    /// <summary>One waiting row: the case header plus its next step, owner,
+    /// and link. poHint carries the latest purchase-order approval outcome
+    /// for supplier-acknowledgement waits (auto-approved under the threshold
+    /// or approved by a named person); every other wait passes null.</summary>
     public static ActivityWaitingRow WaitingRow(
-        CaseFile file, CaseNextStep step, IReadOnlyDictionary<string, string> vendors, bool nowIdle)
+        CaseFile file, CaseNextStep step, ActivityLookups lookups, bool nowIdle, string? poHint = null)
     {
+        var header = CaseHeader(file, lookups);
         var caseHref = $"cases/{file.Case.CaseId}";
         if (step == CaseNextStep.AwaitDecision)
         {
@@ -201,16 +248,16 @@ public static class ActivityLines
                 .MinBy(d => d.RequestedAt);
             if (pending is not null)
             {
-                var doc = DocPhrase(vendors, pending.DocumentType, pending.DocumentNumber);
+                var doc = DocPhrase(lookups, pending.DocumentType, pending.DocumentNumber);
                 var what = doc.Length == 0
                     ? KindWords(pending.Kind)
                     : $"{KindWords(pending.Kind)} {doc}";
                 return new ActivityWaitingRow(
-                    Cap($"{what} waits on {ActorLabels.Display(pending.RequestedTo)}."),
+                    Cap($"{header}: {what} waits on {ActorLabels.Display(pending.RequestedTo)}."),
                     DocHref(pending.DocumentType, pending.DocumentNumber));
             }
 
-            return new ActivityWaitingRow(Cap("Held goods wait on the warehouse."), caseHref);
+            return new ActivityWaitingRow(Cap($"{header}: held goods wait on the warehouse."), caseHref);
         }
 
         if (!step.IsWaiting())
@@ -218,8 +265,8 @@ public static class ActivityLines
             // While idle the agent waits on nobody: a case parked on an
             // agent step reads as stopped, with a link back to the case.
             return nowIdle
-                ? new ActivityWaitingRow(Cap($"Agent step stopped: {StepWords(step)}. Try again."), caseHref)
-                : new ActivityWaitingRow(Cap($"{StepWords(step)} for order {file.Case.SoNumber}: agent."), caseHref);
+                ? new ActivityWaitingRow(Cap($"{header}: agent step stopped: {StepWords(step)}. Try again."), caseHref)
+                : new ActivityWaitingRow(Cap($"{header}: {StepWords(step)}: agent."), caseHref);
         }
 
         var owner = step switch
@@ -231,17 +278,18 @@ public static class ActivityLines
         if (step is CaseNextStep.AwaitSupplierAck or CaseNextStep.AwaitAsn
             or CaseNextStep.AwaitInvoices or CaseNextStep.AwaitVendorReply)
         {
-            var vendor = VendorFor(file, vendors);
+            var vendor = VendorFor(file, lookups);
             if (vendor is not null)
             {
                 owner = vendor;
             }
         }
 
-        return new ActivityWaitingRow(Cap($"{StepWords(step)} for order {file.Case.SoNumber} waits on {owner}."), caseHref);
+        var prefix = poHint is null ? string.Empty : poHint + " ";
+        return new ActivityWaitingRow(Cap($"{header}: {prefix}{StepWords(step)} waits on {owner}."), caseHref);
     }
 
-    public static string? VendorFor(CaseFile file, IReadOnlyDictionary<string, string> vendors)
+    public static string? VendorFor(CaseFile file, ActivityLookups lookups)
     {
         // Prefer the vendor on the newest emailed invoice problem; fall back
         // to the awarded vendor. No reads: names resolve from the map.
@@ -252,15 +300,15 @@ public static class ActivityLines
             .MaxBy(e => e.Timestamp)?.DocumentNumber?.Split('/', 2).FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(emailed))
         {
-            return VendorName(vendors, emailed);
+            return VendorName(lookups, emailed);
         }
 
         return file.Case.AwardedVendorId is null
             ? null
-            : VendorName(vendors, file.Case.AwardedVendorId);
+            : VendorName(lookups, file.Case.AwardedVendorId);
     }
 
-    public static string? EventLine(CaseFile file, CaseEvent e, IReadOnlyDictionary<string, string> vendors)
+    public static string? EventLine(CaseFile file, CaseEvent e, ActivityLookups lookups)
     {
         var so = file.Case.SoNumber;
         var doc = e.DocumentNumber ?? string.Empty;
@@ -276,8 +324,10 @@ public static class ActivityLines
             CaseEventKind.VendorBlocked => $"A vendor failed screening for order {so}: {e.RuleId ?? "blocked"}.",
             CaseEventKind.SupplierAwarded => file.Case.AwardedVendorId is null
                 ? $"Order {so} buying awarded to a supplier."
-                : $"Order {so} buying awarded to {VendorName(vendors, file.Case.AwardedVendorId)}.",
+                : $"Order {so} buying awarded to {VendorName(lookups, file.Case.AwardedVendorId)}.",
             CaseEventKind.PoCreated => $"Purchase order {doc} placed for order {so}.",
+            CaseEventKind.PrApproved => PolicyApprovalLine(file, e, "Request", lookups),
+            CaseEventKind.PoApproved => PolicyApprovalLine(file, e, "Purchase order", lookups),
             CaseEventKind.VendorAcknowledged => $"Supplier confirmed purchase order {doc}.",
             CaseEventKind.AsnRecorded => $"Shipment notice {doc} recorded for order {so}.",
             CaseEventKind.ReceiptPosted => $"Receipt {doc} posted for order {so}.",
@@ -285,25 +335,48 @@ public static class ActivityLines
             CaseEventKind.HoldSet => $"Quarantine hold set on receipt {doc} for order {so}.",
             CaseEventKind.HoldReleased => $"Quarantine hold on receipt {doc} released.",
             CaseEventKind.ReviewOpened => $"Human review opened for receipt {doc}.",
-            CaseEventKind.InvoiceCreated => $"Invoice {InvoiceShort(vendors, doc)} recorded.",
+            CaseEventKind.InvoiceCreated => $"Invoice {InvoiceShort(lookups, doc)} recorded.",
             CaseEventKind.InvoiceMatched => e.Amount is null
-                ? $"Invoice {InvoiceShort(vendors, doc)} matched."
-                : $"Invoice {InvoiceShort(vendors, doc)} matched: accepted {Money(e.Amount.Value, e.Currency)}.",
+                ? $"Invoice {InvoiceShort(lookups, doc)} matched."
+                : $"Invoice {InvoiceShort(lookups, doc)} matched: accepted {Money(e.Amount.Value, e.Currency)}.",
             CaseEventKind.PaymentRequested => e.Amount is null
                 ? $"Payment {doc} drafted."
                 : $"Payment {doc} drafted for {Money(e.Amount.Value, e.Currency)}.",
             CaseEventKind.PaymentPosted => $"Payment {doc} posted.",
             CaseEventKind.CustomerNotified => $"Customer told order {so} is secured.",
-            CaseEventKind.VendorEmailed => $"Emailed about invoice {InvoiceShort(vendors, doc)}.",
-            CaseEventKind.VendorReplied => $"Supplier replied about invoice {InvoiceShort(vendors, doc)}.",
+            CaseEventKind.VendorEmailed => $"Emailed about invoice {InvoiceShort(lookups, doc)}.",
+            CaseEventKind.VendorReplied => $"Supplier replied about invoice {InvoiceShort(lookups, doc)}.",
             CaseEventKind.AgentRefused => e.Summary,
             CaseEventKind.Note => NoteLine(e),
-            // Approval and review outcomes render from the decisions
+            // Human approval and review outcomes render from the decisions
             // themselves, which carry who decided and when.
-            CaseEventKind.PrApproved or CaseEventKind.PrRejected or CaseEventKind.PoApproved
-                or CaseEventKind.ReviewClosed => null,
+            CaseEventKind.PrRejected or CaseEventKind.ReviewClosed => null,
             _ => null,
         };
+    }
+
+    /// <summary>Approval-event line: human approvals defer to their decision
+    /// row; an approval with no decision behind it is a policy
+    /// auto-approval and reads as one, with the threshold when known.</summary>
+    public static string? PolicyApprovalLine(
+        CaseFile file, CaseEvent e, string docWords, ActivityLookups lookups)
+    {
+        if (e.DocumentNumber is null)
+        {
+            return null;
+        }
+
+        var covered = file.Decisions.Any(d =>
+            string.Equals(d.DocumentType, e.DocumentType, StringComparison.Ordinal)
+            && string.Equals(d.DocumentNumber, e.DocumentNumber, StringComparison.Ordinal));
+        if (covered)
+        {
+            return null;
+        }
+
+        return lookups.AutoApproveThreshold is { } threshold
+            ? $"{docWords} {e.DocumentNumber} auto-approved (under {Money(threshold, null)})."
+            : $"{docWords} {e.DocumentNumber} auto-approved by policy.";
     }
 
     public static string? NoteLine(CaseEvent e)
@@ -321,15 +394,15 @@ public static class ActivityLines
         return e.Summary;
     }
 
-    public static string InvoiceShort(IReadOnlyDictionary<string, string> vendors, string doc)
+    public static string InvoiceShort(ActivityLookups lookups, string doc)
     {
         var parts = doc.Split('/', 2);
         return parts.Length == 2
-            ? $"{parts[1]} from {VendorName(vendors, parts[0])}"
+            ? $"{parts[1]} from {VendorName(lookups, parts[0])}"
             : doc;
     }
 
-    public static string? DecidedLine(IReadOnlyDictionary<string, string> vendors, Decision d)
+    public static string? DecidedLine(ActivityLookups lookups, Decision d)
     {
         if (d.Status == DecisionStatus.Pending || d.DecidedBy is null)
         {
@@ -337,10 +410,9 @@ public static class ActivityLines
         }
 
         var verdict = d.Status == DecisionStatus.Approved ? "approved" : "rejected";
-        var doc = DocPhrase(vendors, d.DocumentType, d.DocumentNumber);
+        var doc = DocPhrase(lookups, d.DocumentType, d.DocumentNumber);
         var what = doc.Length == 0 ? KindWords(d.Kind).ToLowerInvariant() : doc;
         var amount = d.Amount is null ? string.Empty : $" for {Money(d.Amount.Value, d.Currency)}";
         return $"{ActorLabels.Display(d.DecidedBy)} {verdict} {what}{amount}.";
     }
 }
-

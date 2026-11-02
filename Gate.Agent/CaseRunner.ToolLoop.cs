@@ -31,6 +31,14 @@ public partial class CaseRunner
         var refusedStreak = 0;
         for (var turn = 1; turn <= MaxToolTurns; turn++)
         {
+            // Presentation pace only: while the Admin toggle is on, pause
+            // between turns so the activity pane shows each step as it
+            // happens. No logic reads this flag; it only adds delay.
+            if (turn > 1 && _pace.IsOn)
+            {
+                await Task.Delay(_pace.StepDelay, ct).ConfigureAwait(false);
+            }
+
             var file = CaseStore.Load(_cacheDir, caseId)
                 ?? throw new InvalidOperationException($"Unknown case {caseId}.");
             var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
@@ -65,21 +73,22 @@ public partial class CaseRunner
                 RecordFailureNote(caseId, step, ex);
                 CaseTranscript.AppendTurn(_cacheDir, caseId, new TranscriptTurn(
                     turn, DateTimeOffset.UtcNow, file.Case.Stage.ToString(), step.ToString(),
-                    string.Empty, [], [], $"Model call failed: {ex.Message}"));
+                    string.Empty, [], [], $"Model call failed: {ex.Message}",
+                    Model: _models.ModelName));
                 throw;
             }
 
             var calls = result.ToolCalls ?? [];
             if (calls.Count == 0)
             {
-                await ExecuteDeferredAsync(caseId, file, view, step, turn, result.Text, history, payUpToDate, ct)
+                await ExecuteDeferredAsync(caseId, file, view, step, turn, result, history, payUpToDate, ct)
                     .ConfigureAwait(false);
                 refusedStreak = 0;
                 continue;
             }
 
             var acted = await ExecuteTurnCallsAsync(
-                caseId, file, view, step, turn, result.Text, calls, legal, history, payUpToDate, ct)
+                caseId, file, view, step, turn, result, calls, legal, history, payUpToDate, ct)
                 .ConfigureAwait(false);
             refusedStreak = step == CaseNextStep.DraftPayment && !acted ? refusedStreak + 1 : 0;
             if (refusedStreak >= 2)
@@ -94,8 +103,9 @@ public partial class CaseRunner
 
     private async Task ExecuteDeferredAsync(
         string caseId, CaseFile file, CaseErpView view, CaseNextStep step, int turn,
-        string reasoning, List<ModelMessage> history, DateOnly? payUpToDate, CancellationToken ct)
+        ModelResult result, List<ModelMessage> history, DateOnly? payUpToDate, CancellationToken ct)
     {
+        var reasoning = result.Text;
         var before = file.Case.Stage;
         try
         {
@@ -109,7 +119,8 @@ public partial class CaseRunner
                 turn, DateTimeOffset.UtcNow, before.ToString(), step.ToString(), reasoning,
                 [new TranscriptToolCall("-", AgentTools.ToToolName(step) ?? step.ToString(), "{}",
                     ToolCallVerdict.ModelDeferred, $"C# executed the pick; it failed: {ex.Message}")],
-                [], "Model returned no tool calls."));
+                [], "Model returned no tool calls.",
+                _models.ModelName, result.Usage?.InputTokens, result.Usage?.OutputTokens, result.FromCache));
             throw;
         }
 
@@ -121,7 +132,8 @@ public partial class CaseRunner
             turn, DateTimeOffset.UtcNow, before.ToString(), step.ToString(), reasoning,
             [new TranscriptToolCall("-", tool, $"{{\"case_id\":\"{caseId}\"}}",
                 ToolCallVerdict.ModelDeferred, "Model returned no tool calls; C# executed the pick.")],
-            [summary], "Model-deferred turn."));
+            [summary], "Model-deferred turn.",
+            _models.ModelName, result.Usage?.InputTokens, result.Usage?.OutputTokens, result.FromCache));
         history.Add(new ModelMessage("assistant", reasoning));
         history.Add(new ModelMessage("user",
             $"You returned no tool calls, so C# executed the picked step on your behalf: {summary} " +
@@ -133,9 +145,10 @@ public partial class CaseRunner
     /// failures; execution errors still abort the advance.</summary>
     private async Task<bool> ExecuteTurnCallsAsync(
         string caseId, CaseFile file, CaseErpView view, CaseNextStep step, int turn,
-        string reasoning, IReadOnlyList<ModelToolCall> calls, IReadOnlySet<string> legal,
+        ModelResult result, IReadOnlyList<ModelToolCall> calls, IReadOnlySet<string> legal,
         List<ModelMessage> history, DateOnly? payUpToDate, CancellationToken ct)
     {
+        var reasoning = result.Text;
         var transcriptCalls = new List<TranscriptToolCall>();
         var results = new List<string>();
         var acted = false;
@@ -181,7 +194,8 @@ public partial class CaseRunner
         CaseTranscript.AppendTurn(_cacheDir, caseId, new TranscriptTurn(
             turn, DateTimeOffset.UtcNow, file.Case.Stage.ToString(), step.ToString(),
             reasoning, transcriptCalls, results,
-            turnError is null ? null : $"Turn aborted: {turnError.Message}"));
+            turnError is null ? null : $"Turn aborted: {turnError.Message}",
+            _models.ModelName, result.Usage?.InputTokens, result.Usage?.OutputTokens, result.FromCache));
         history.Insert(
             history.Count - toolMsgs,
             new ModelMessage("assistant", reasoning, calls.ToList()));

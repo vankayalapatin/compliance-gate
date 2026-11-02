@@ -1,6 +1,8 @@
+@using Gate.Agent
 @using Gate.Web.Services
 @using Gate.Web.ViewModels
 @inject AgentActivityService Activity
+@inject PresentationPace Pace
 @implements IDisposable
 
 @if (_collapsed)
@@ -23,7 +25,9 @@ else
         else
         {
             <p class="gate-activity-label">Now</p>
-            <p class="gate-activity-now">@_model.Now</p>
+            <div class="gate-bubble-row agent">
+                <div class="gate-bubble">@_model.Now</div>
+            </div>
             <p class="gate-activity-label">Waiting on</p>
             @if (_model.Waiting.Count == 0)
             {
@@ -31,16 +35,34 @@ else
             }
             @foreach (var row in _model.Waiting)
             {
-                <p class="gate-activity-row"><a href="@row.Href">@row.Text</a></p>
+                <div class="gate-bubble-row agent">
+                    <div class="gate-bubble"><a href="@row.Href">@row.Text</a></div>
+                </div>
             }
             <p class="gate-activity-label">Recent</p>
             @if (_model.Recent.Count == 0)
             {
                 <p class="gate-meta">Nothing yet.</p>
             }
-            @foreach (var line in _model.Recent)
+            @foreach (var group in _model.Recent)
             {
-                <p class="gate-activity-row">@line.Text <span class="gate-meta">@line.Ago</span></p>
+                <p class="gate-case-group"><a href="@group.CaseHref">@group.HeaderText</a></p>
+                @foreach (var line in group.Lines)
+                {
+                    <div class="gate-bubble-row @(line.Side == ActivitySide.Person ? "person" : "agent")">
+                        <div class="gate-bubble @(line.Refused ? "refused" : "")">
+                            @if (!string.Equals(line.Href, group.CaseHref, StringComparison.Ordinal))
+                            {
+                                <a href="@line.Href">@line.Text</a>
+                            }
+                            else
+                            {
+                                @line.Text
+                            }
+                        </div>
+                        <p class="gate-bubble-time">@ActivityLines.Stamp(line.At)</p>
+                    </div>
+                }
             }
         }
     </aside>
@@ -48,10 +70,12 @@ else
 
 @code {
     private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PaceRefreshEvery = TimeSpan.FromSeconds(1);
 
     private AgentActivityVm? _model;
     private bool _collapsed;
     private PeriodicTimer? _timer;
+    private TimeSpan _interval = RefreshEvery;
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
@@ -59,7 +83,8 @@ else
     {
         await ReloadAsync();
         _cts = new CancellationTokenSource();
-        _timer = new PeriodicTimer(RefreshEvery);
+        _interval = Pace.IsOn ? PaceRefreshEvery : RefreshEvery;
+        _timer = new PeriodicTimer(_interval);
         _loop = RefreshLoopAsync(_cts.Token);
     }
 
@@ -71,6 +96,16 @@ else
             {
                 await ReloadAsync();
                 await InvokeAsync(StateHasChanged);
+                // Presentation pace only: poll every second while the Admin
+                // toggle is on so each step appears as it happens; off is
+                // the usual five seconds. Timing only, nothing else.
+                var want = Pace.IsOn ? PaceRefreshEvery : RefreshEvery;
+                if (want != _interval)
+                {
+                    _interval = want;
+                    _timer.Dispose();
+                    _timer = new PeriodicTimer(want);
+                }
             }
         }
         catch (OperationCanceledException)

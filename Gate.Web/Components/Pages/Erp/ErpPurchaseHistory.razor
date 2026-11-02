@@ -1,0 +1,123 @@
+@page "/erp/purchase-history/{ItemId}"
+@rendermode InteractiveServer
+@using Gate.Web.Components.Erp
+@using Gate.Web.Services
+@using Gate.Web.ViewModels
+@inject ErpViewService Views
+@inject ILogger<ErpPurchaseHistory> Log
+
+<PageTitle>ERP — Purchase history @ItemId</PageTitle>
+
+<div class="gate-erp">
+    <ErpSidebar CurrentSlug="item" />
+    <div class="gate-erp-body">
+        <div class="gate-page-head">
+            <div>
+                <p class="gate-page-title">Purchase history @ItemId</p>
+                <p class="gate-page-sub"><a href="@(_history?.ItemHref ?? $"erp/record/item/{ItemId}")">&#8592; item @ItemId</a></p>
+            </div>
+        </div>
+        @if (_loadError is not null)
+        {
+            <ErrorBox Message="@_loadError" />
+        }
+        else if (_history is null)
+        {
+            <p class="gate-meta">Loading purchase history…</p>
+        }
+        else
+        {
+            <section class="gate-card">
+                <p class="gate-card-title">@(_history.ItemDescription ?? _history.ItemId)</p>
+                <p class="gate-meta">@_history.WindowNote</p>
+                @foreach (var note in _history.Notes)
+                {
+                    <p class="gate-meta">@note</p>
+                }
+            </section>
+            <section class="gate-card">
+                <p class="gate-card-title">Totals by vendor country</p>
+                @if (_history.CountryTotals.Count == 0)
+                {
+                    <p class="gate-meta">None.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Country</th><th class="gate-num">Cells</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var total in _history.CountryTotals)
+                            {
+                                <tr>
+                                    <td>@total.CountryName (@total.CountryCode)</td>
+                                    <td class="gate-num">@OriginCapMath.Cells(total.Cells)</td>
+                                </tr>
+                            }
+                            <tr>
+                                <td><strong>Total</strong></td>
+                                <td class="gate-num"><strong>@OriginCapMath.Cells(_history.GrandTotal)</strong></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                }
+            </section>
+            <section class="gate-card">
+                <p class="gate-card-title">Receipts</p>
+                @if (_history.Rows.Count == 0)
+                {
+                    <p class="gate-meta">None.</p>
+                }
+                else
+                {
+                    <table class="gate-table">
+                        <thead>
+                            <tr><th>Source</th><th>Country</th><th class="gate-num">Cells</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _history.Rows)
+                            {
+                                <tr>
+                                    <td>
+                                        @if (row.ReceiptHref is null)
+                                        {
+                                            @row.Source
+                                        }
+                                        else
+                                        {
+                                            <a href="@row.ReceiptHref">@row.Source</a>
+                                        }
+                                    </td>
+                                    <td>@row.CountryName (@row.CountryCode)</td>
+                                    <td class="gate-num">@OriginCapMath.Cells(row.Cells)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string ItemId { get; set; } = string.Empty;
+
+    private PurchaseHistoryVm? _history;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _history = await Views.GetPurchaseHistoryAsync(ItemId);
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning(ex, "Purchase history {ItemId} failed to load.", ItemId);
+            _loadError = $"Purchase history {ItemId} failed to load: {ex.Message}";
+        }
+    }
+}

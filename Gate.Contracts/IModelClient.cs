@@ -21,11 +21,20 @@ public sealed record ModelRequest(
     /// calls), and tool results. Null means a fresh conversation.</summary>
     IReadOnlyList<ModelMessage>? History = null);
 
+/// <summary>Token usage for one model call, as the provider reported it.
+/// Null means the call reported no usage (cached replays, test doubles).</summary>
+public sealed record ModelUsage(int InputTokens, int OutputTokens);
+
 public sealed record ModelResult(
     string Text,
     /// <summary>Tool calls the model requested, in order. Null or empty
     /// means a plain text answer.</summary>
-    IReadOnlyList<ModelToolCall>? ToolCalls = null);
+    IReadOnlyList<ModelToolCall>? ToolCalls = null,
+    /// <summary>Token usage when the provider reported it.</summary>
+    ModelUsage? Usage = null,
+    /// <summary>True when the answer came from the response cache instead
+    /// of a live call. Cached answers bill nothing.</summary>
+    bool FromCache = false);
 
 public interface IModelClient
 {

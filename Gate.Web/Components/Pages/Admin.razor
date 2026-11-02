@@ -1,10 +1,12 @@
 @page "/admin"
 @rendermode InteractiveServer
+@using Gate.Agent
 @using Gate.Web.Components.Outside
 @using Gate.Web.Services
 @using Gate.Web.ViewModels
 @inject SimulationUiService Sim
 @inject ModelSpendTracker Spend
+@inject PresentationPace Pace
 @inject ILogger<Admin> Log
 
 <PageTitle>Admin</PageTitle>
@@ -12,7 +14,7 @@
 <div class="gate-page-head">
     <div>
         <p class="gate-page-title">Admin</p>
-        <p class="gate-page-sub">Operator controls: saved data, ERP-work pickup, answers mode, and spend.</p>
+        <p class="gate-page-sub">Operator controls: saved data, ERP-work pickup, answers mode, presentation pace, and spend.</p>
     </div>
 </div>
 
@@ -33,6 +35,15 @@
         }
     </div>
     <OutcomeBox Outcome="@_pickup" />
+</section>
+
+<section class="gate-card">
+    <p class="gate-card-title">Presentation pace</p>
+    <p class="gate-meta">When on, the agent pauses two seconds between steps and the activity pane refreshes every second, so each step appears one at a time. Off is normal speed. Pacing only; nothing else changes.</p>
+    <div class="gate-checkline">
+        <input type="checkbox" id="pace-toggle" checked="@Pace.IsOn" @onchange="e => Pace.IsOn = e.Value is true" />
+        <label for="pace-toggle">Pause between agent steps</label>
+    </div>
 </section>
 
 <section class="gate-card">

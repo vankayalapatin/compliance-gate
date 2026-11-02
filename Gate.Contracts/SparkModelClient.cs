@@ -79,9 +79,15 @@ public sealed class SparkModelClient : IModelClient
             throw new InvalidOperationException("Spark returned an empty completion.");
         }
 
+        var usage = body?.Usage is null
+            ? null
+            : new ModelUsage(
+                body.Usage.PromptTokens ?? 0,
+                body.Usage.CompletionTokens ?? 0);
         return new ModelResult(
             text ?? string.Empty,
-            calls is null || calls.Count == 0 ? null : calls);
+            calls is null || calls.Count == 0 ? null : calls,
+            usage);
     }
 
     private static ChatMessage[] BuildMessages(ModelRequest request)
@@ -190,7 +196,11 @@ public sealed class SparkModelClient : IModelClient
 
     private sealed record ImageUrl(string Url);
 
-    private sealed record ChatResponse(ChatChoice[]? Choices);
+    private sealed record ChatResponse(ChatChoice[]? Choices, ChatUsage? Usage = null);
+
+    private sealed record ChatUsage(
+        [property: JsonPropertyName("prompt_tokens")] int? PromptTokens = null,
+        [property: JsonPropertyName("completion_tokens")] int? CompletionTokens = null);
 
     private sealed record ChatChoice(
         ChatResponseMessage? Message,

@@ -54,6 +54,8 @@ builder.Services.AddSingleton<IModelClient>(sp =>
 });
 builder.Services.AddScoped<P2pAgent>();
 builder.Services.AddSingleton<IDockEvaluator, DockEvaluatorService>();
+builder.Services.AddSingleton<PresentationPace>();
+builder.Services.AddSingleton(sp => CountryNames.FromConfig(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddScoped(sp => new CaseRunner(
     sp.GetRequiredService<IErpAdapter>(),
     sp.GetRequiredService<P2pAgent>(),
@@ -61,7 +63,8 @@ builder.Services.AddScoped(sp => new CaseRunner(
     sp.GetRequiredService<IComplianceEngine>(),
     sp.GetRequiredService<IDockEvaluator>(),
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath),
-    sp.GetRequiredService<ILogger<CaseRunner>>()));
+    sp.GetRequiredService<ILogger<CaseRunner>>(),
+    pace: sp.GetRequiredService<PresentationPace>()));
 builder.Services.AddSingleton(sp => new CaseCacheStore(
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddSingleton(sp => new MemoFileStore(

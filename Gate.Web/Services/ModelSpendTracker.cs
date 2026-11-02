@@ -20,6 +20,8 @@ public sealed class ModelSpendTracker
     {
         CostPerCallUsd = TryDecimal(config, "ModelSpend:CostPerCallUsd");
         CapUsd = TryDecimal(config, "ModelSpend:CapUsd");
+        InputCostPerMillionUsd = TryDecimal(config, "ModelSpend:InputCostPerMillionUsd");
+        OutputCostPerMillionUsd = TryDecimal(config, "ModelSpend:OutputCostPerMillionUsd");
     }
 
     private static decimal? TryDecimal(IConfiguration? config, string key)
@@ -44,6 +46,22 @@ public sealed class ModelSpendTracker
     /// <summary>Spend cap in dollars from config. Null means no cap: live
     /// calls are never refused.</summary>
     public decimal? CapUsd { get; }
+
+    /// <summary>Per-million-token rates from config for ballpark case
+    /// costing. Null means unconfigured: the scorecard shows calls and
+    /// tokens only.</summary>
+    public decimal? InputCostPerMillionUsd { get; }
+
+    public decimal? OutputCostPerMillionUsd { get; }
+
+    public bool HasTokenRates => InputCostPerMillionUsd is not null && OutputCostPerMillionUsd is not null;
+
+    /// <summary>Ballpark dollars for a token count. Null while either rate
+    /// is unconfigured.</summary>
+    public decimal? CostUsd(int inputTokens, int outputTokens) =>
+        InputCostPerMillionUsd is { } input && OutputCostPerMillionUsd is { } output
+            ? (inputTokens * input + outputTokens * output) / 1_000_000m
+            : null;
 
     public int LiveCallCount
     {

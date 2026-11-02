@@ -7,7 +7,8 @@ namespace Gate.Web.ViewModels;
 
 /// <summary>One decision card: the decision plus its case identity and any
 /// resolved evidence captions (cached vision reads, ERP document summary).
-/// ImageFileNames name files served by /dock-images/{name}.</summary>
+/// ImageFileNames name files served by /dock-images/{name}. CartonFigures
+/// pair each held or reviewed carton with its own photo plus verdict.</summary>
 public sealed record DecisionCardVm(
     Decision Decision,
     string SoNumber,
@@ -15,7 +16,18 @@ public sealed record DecisionCardVm(
     CaseStage Stage,
     IReadOnlyList<string> EvidenceCaptions,
     IReadOnlyList<string> ImageFileNames,
-    string? ErpSummary);
+    string? ErpSummary,
+    IReadOnlyList<CartonFigureVm> CartonFigures);
+
+/// <summary>One held or reviewed carton on a dock decision card: the full
+/// photo the model read (vision reads carry no positions, so never a crop)
+/// plus the carton id and verdict as a clean caption. ImageFileName is null
+/// when the carton's photo is unreadable; the caption still renders.</summary>
+public sealed record CartonFigureVm(
+    string CartonId,
+    string? ImageFileName,
+    string Caption,
+    string? Read);
 
 /// <summary>One SO-to-payment chain step for the Cases surface. IsCurrent
 /// marks the step the case stage points at; at most one step per chain.</summary>
@@ -262,7 +274,9 @@ public sealed record CaseDetailVm(
     IReadOnlyList<Decision> Decisions,
     IReadOnlyList<HoldDto> OpenHolds,
     IReadOnlyList<VendorEmail> Mail,
-    AgentSummaryVm Summary);
+    AgentSummaryVm Summary,
+    IReadOnlyList<MathLineVm> MathLines,
+    ScorecardVm Scorecard);
 
 /// <summary>Human-readable timeline labels. New batch-3 event kinds get
 /// clear phrases; every other kind keeps its enum name.</summary>

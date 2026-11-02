@@ -85,6 +85,20 @@ else
                     }
                 </ul>
             }
+            @foreach (var figure in card.CartonFigures)
+            {
+                <figure class="gate-figure">
+                    @if (figure.ImageFileName is not null)
+                    {
+                        <img class="gate-figure-img" src="dock-images/@figure.ImageFileName" alt="@figure.Caption" />
+                    }
+                    <figcaption>@figure.Caption</figcaption>
+                    @if (figure.Read is not null)
+                    {
+                        <p class="gate-figure-read">@figure.Read</p>
+                    }
+                </figure>
+            }
             @foreach (var image in card.ImageFileNames)
             {
                 <img class="gate-img" src="dock-images/@image" alt="@image" />

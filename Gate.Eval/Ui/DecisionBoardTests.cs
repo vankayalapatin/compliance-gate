@@ -19,7 +19,7 @@ public sealed class DecisionBoardTests
                 requestedTo, now, decidedBy,
                 decidedBy is null ? null : now,
                 "PR", "PR-T", 100m, "TST", null, null, [], null),
-            "SO-T", "ITEM-T", CaseStage.Created, [], [], null);
+            "SO-T", "ITEM-T", CaseStage.Created, [], [], null, []);
     }
 
     [Fact]

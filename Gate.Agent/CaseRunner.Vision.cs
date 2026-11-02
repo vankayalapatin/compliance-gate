@@ -38,7 +38,7 @@ public partial class CaseRunner
         foreach (var photo in photos)
         {
             var text = await ReadPhotoAsync(
-                cache, photo.ImageId, photo.Jpeg, VisionReadCache.CartonReadV1,
+                cache, caseId, photo.ImageId, photo.Jpeg, VisionReadCache.CartonReadV1,
                 DockImagePipeline.ReadPrompt, isArray: true, ct).ConfigureAwait(false);
             foreach (var element in DockImagePipeline.ParseReads(text))
             {
@@ -74,7 +74,7 @@ public partial class CaseRunner
         foreach (var photo in photos)
         {
             var text = await ReadPhotoAsync(
-                cache, photo.ImageId, photo.Jpeg, VisionReadCache.InvoiceReadV1,
+                cache, caseId, photo.ImageId, photo.Jpeg, VisionReadCache.InvoiceReadV1,
                 InvoiceReadPrompt, isArray: false, ct).ConfigureAwait(false);
             var page = ParseTranscribedInvoice(text);
             number ??= BlankToNull(page.SupplierInvoiceNumber);
@@ -102,13 +102,17 @@ public partial class CaseRunner
     }
 
     private async Task<string> ReadPhotoAsync(
-        VisionReadCache cache, string imageId, byte[] jpeg, string promptVersion,
+        VisionReadCache cache, string caseId, string imageId, byte[] jpeg, string promptVersion,
         string prompt, bool isArray, CancellationToken ct)
     {
         var sha = VisionReadCache.Sha256Hex(jpeg);
         var cached = cache.TryRead(sha, promptVersion);
         if (cached is not null)
         {
+            // Usage recording only: the free replay still lands on the
+            // case's vision log so the scorecard counts every read.
+            CaseVisionUsage.AppendPhoto(_cacheDir, caseId, new VisionPhotoUsage(
+                imageId, promptVersion, null, null, null, true, DateTimeOffset.UtcNow));
             return cached.Text;
         }
 
@@ -134,6 +138,10 @@ public partial class CaseRunner
                 }
 
                 cache.Write(sha, promptVersion, _models.ModelName, result.Text);
+                CaseVisionUsage.AppendPhoto(_cacheDir, caseId, new VisionPhotoUsage(
+                    imageId, promptVersion, _models.ModelName,
+                    result.Usage?.InputTokens, result.Usage?.OutputTokens, result.FromCache,
+                    DateTimeOffset.UtcNow));
                 return result.Text;
             }
             catch (JsonException ex)

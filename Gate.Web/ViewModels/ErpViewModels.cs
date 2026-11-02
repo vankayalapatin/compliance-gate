@@ -284,3 +284,31 @@ public sealed record ErpStockRow(
 /// <summary>One picker option on a New form: the stored value plus the
 /// human-readable label the page shows.</summary>
 public sealed record ErpNewOption(string Value, string Label);
+
+/// <summary>One purchase-history row: a volume-history source plus its
+/// country and cells. Receipt rows link to the receipt record; opening
+/// rows carry no receipt.</summary>
+public sealed record PurchaseHistoryRow(
+    string Source,
+    string CountryCode,
+    string CountryName,
+    decimal Cells,
+    string? ReceiptHref);
+
+/// <summary>Country subtotal over the purchase-history rows.</summary>
+public sealed record PurchaseHistoryCountry(
+    string CountryCode,
+    string CountryName,
+    decimal Cells);
+
+/// <summary>Read-only purchase history for one item: the same rows the
+/// country-share math reads, grouped by vendor country with totals.</summary>
+public sealed record PurchaseHistoryVm(
+    string ItemId,
+    string? ItemDescription,
+    string WindowNote,
+    IReadOnlyList<PurchaseHistoryRow> Rows,
+    IReadOnlyList<PurchaseHistoryCountry> CountryTotals,
+    decimal GrandTotal,
+    string ItemHref,
+    IReadOnlyList<string> Notes);

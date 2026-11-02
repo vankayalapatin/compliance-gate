@@ -206,6 +206,55 @@ body {
     margin: 0 0 6px;
 }
 
+/* Activity thread: one grey bubble per entry under a small case header.
+   Agent entries sit left, people actions (approvals, rejections) sit right
+   in a slightly darker grey, refused attempts carry a soft amber edge, and
+   a small timestamp sits under each bubble. Monochrome except the amber. */
+.gate-case-group {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--gate-muted);
+    margin: 10px 0 4px;
+}
+
+.gate-bubble-row {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0 2px;
+}
+
+.gate-bubble-row.agent {
+    align-items: flex-start;
+}
+
+.gate-bubble-row.person {
+    align-items: flex-end;
+}
+
+.gate-bubble {
+    max-width: 94%;
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--gate-border);
+    background: var(--gate-chip);
+}
+
+.gate-bubble-row.person .gate-bubble {
+    background: #e5e7eb;
+    border-color: #d1d5db;
+}
+
+.gate-bubble.refused {
+    border-color: #f59e0b;
+}
+
+.gate-bubble-time {
+    font-size: 11px;
+    color: var(--gate-muted);
+    margin: 2px 0 6px;
+}
+
 @media (max-width: 1100px) {
     .gate-activity {
         display: none;
@@ -489,6 +538,32 @@ body {
     border-radius: 6px;
     border: 1px solid var(--gate-border);
     margin: 6px 8px 0 0;
+}
+
+/* Dock carton figures: block layout, capped width, photo above caption.
+   Nothing floats, so card text can never misalign beside a photo. */
+.gate-figure {
+    margin: 8px 0;
+    max-width: 340px;
+}
+
+.gate-figure-img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    border: 1px solid var(--gate-border);
+}
+
+.gate-figure figcaption {
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.gate-figure-read {
+    font-size: 12px;
+    color: var(--gate-muted);
+    margin: 2px 0 0;
 }
 
 .gate-reset {

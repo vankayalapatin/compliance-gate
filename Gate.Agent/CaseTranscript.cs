@@ -34,7 +34,16 @@ public sealed record TranscriptTurn(
     string Reasoning,
     IReadOnlyList<TranscriptToolCall> Calls,
     IReadOnlyList<string> Results,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>Model behind the turn's call. Null on lines written before
+    /// usage recording.</summary>
+    string? Model = null,
+    /// <summary>Tokens the provider reported for the turn's call. Null when
+    /// the call reported none (cached replays, test doubles, failures).</summary>
+    int? InputTokens = null,
+    int? OutputTokens = null,
+    /// <summary>True when the turn's answer came from the cache.</summary>
+    bool FromCache = false);
 
 public static class CaseTranscript
 {

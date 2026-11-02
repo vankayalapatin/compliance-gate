@@ -14,12 +14,80 @@ public sealed class ErpViewService
     private readonly IErpAdapter _erp;
     private readonly CaseViewService _views;
     private readonly ILogger<ErpViewService> _log;
+    private readonly CountryNames? _countries;
 
-    public ErpViewService(IErpAdapter erp, CaseViewService views, ILogger<ErpViewService> log)
+    public ErpViewService(
+        IErpAdapter erp, CaseViewService views, ILogger<ErpViewService> log, CountryNames? countries = null)
     {
         _erp = erp;
         _views = views;
         _log = log;
+        _countries = countries;
+    }
+
+    /// <summary>Read-only purchase history for one item: the volume-history
+    /// rows the country-share math reads, grouped by vendor country with
+    /// totals. Same adapter source as the math line, so the page totals
+    /// always equal the numbers in the line.</summary>
+    public async Task<PurchaseHistoryVm> GetPurchaseHistoryAsync(string itemId, CancellationToken ct = default)
+    {
+        var notes = new List<string>();
+        string? description = null;
+        try
+        {
+            description = (await _erp.GetItemAsync(itemId, ct).ConfigureAwait(false))?.Description;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Purchase history could not read item {ItemId}.", itemId);
+            notes.Add($"Item {itemId} lookup failed: {ex.Message}.");
+        }
+
+        IReadOnlyList<VolumeHistory> history;
+        try
+        {
+            history = await _erp.GetVolumeHistoryAsync(itemId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Purchase history could not read volume history for {ItemId}.", itemId);
+            notes.Add($"Purchase history for {itemId} failed: {ex.Message}.");
+            history = [];
+        }
+
+        var rows = history
+            .Select(h => new PurchaseHistoryRow(
+                h.Source, h.Country, OriginCapMath.CountryName(_countries?.Map, h.Country), h.Cells,
+                ReceiptHref(h.Source)))
+            .ToList();
+        var totals = rows
+            .GroupBy(r => r.CountryCode, StringComparer.Ordinal)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new PurchaseHistoryCountry(
+                g.Key, OriginCapMath.CountryName(_countries?.Map, g.Key), g.Sum(r => r.Cells)))
+            .ToList();
+        if (rows.Count == 0 && notes.Count == 0)
+        {
+            notes.Add($"No purchase history for item {itemId} in the window.");
+        }
+
+        return new PurchaseHistoryVm(
+            itemId, description,
+            "One row per posted receipt line in the trailing 12 months — the same rows the country-share math reads.",
+            rows, totals, rows.Sum(r => r.Cells),
+            ErpRoutes.RecordHref("item", itemId), notes);
+    }
+
+    private static string? ReceiptHref(string source)
+    {
+        const string prefix = "Receipt ";
+        if (!source.StartsWith(prefix, StringComparison.Ordinal)
+            || source.Length <= prefix.Length)
+        {
+            return null;
+        }
+
+        return ErpRoutes.RecordHref("receipt", source.Substring(prefix.Length));
     }
 
     private async Task<ErpListVm<T>> ListAsync<T>(
@@ -1166,6 +1234,7 @@ public sealed class ErpViewService
                 new("Unit", item.Unit),
                 new("Critical", item.IsCritical ? "yes" : "no"),
                 new("Units per carton", ErpFormat.Count(item.UnitsPerCarton)),
+                new("Purchase history", "View", OriginCapMath.HistoryHref(item.ItemId)),
             ],
             tables, related, [], [], [], notes);
     }

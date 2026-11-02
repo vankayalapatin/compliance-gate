@@ -52,6 +52,29 @@ else
         }
     </section>
 
+    @if (_detail.MathLines.Count > 0)
+    {
+        <section class="gate-card">
+            <p class="gate-card-title">Vendor screening math</p>
+            @foreach (var line in _detail.MathLines)
+            {
+                <p class="gate-row">
+                    @foreach (var segment in line.Segments)
+                    {
+                        if (segment.Href is null)
+                        {
+                            @segment.Text
+                        }
+                        else
+                        {
+                            <a href="@segment.Href">@segment.Text</a>
+                        }
+                    }
+                </p>
+            }
+        </section>
+    }
+
     <section class="gate-card">
         <p class="gate-card-title">Chain</p>
         <table class="gate-table">
@@ -125,6 +148,83 @@ else
                         }
                     </tbody>
                 </table>
+            }
+        </section>
+
+        <section class="gate-card">
+            <p class="gate-card-title">Agent scorecard</p>
+            <p class="gate-row"><span class="gate-label">Tool calls made:</span> @_detail.Scorecard.ToolCallsMade (@_detail.Scorecard.ToolCallsExecuted executed)</p>
+            @if (_detail.Scorecard.Refused.Count == 0)
+            {
+                <p class="gate-meta">No refused calls.</p>
+            }
+            else
+            {
+                <table class="gate-table">
+                    <thead>
+                        <tr><th>Refused call</th><th>Reason</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var refusal in _detail.Scorecard.Refused)
+                        {
+                            <tr>
+                                <td>@refusal.Tool</td>
+                                <td>@refusal.Reason</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (_detail.Scorecard.Failed.Count > 0)
+            {
+                <table class="gate-table">
+                    <thead>
+                        <tr><th>Failed call</th><th>Reason</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var failure in _detail.Scorecard.Failed)
+                        {
+                            <tr>
+                                <td>@failure.Tool</td>
+                                <td>@failure.Reason</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (_detail.Scorecard.RuleSteps.Count > 0)
+            {
+                <p class="gate-row"><span class="gate-label">Steps done by rule instead of the agent:</span></p>
+                <ul class="gate-list">
+                    @foreach (var step in _detail.Scorecard.RuleSteps)
+                    {
+                        <li>@step.Title — @step.Detail</li>
+                    }
+                </ul>
+            }
+            @if (_detail.Scorecard.PolicyApprovals.Count > 0)
+            {
+                <p class="gate-row"><span class="gate-label">Approved by policy:</span></p>
+                <ul class="gate-list">
+                    @foreach (var approval in _detail.Scorecard.PolicyApprovals)
+                    {
+                        <li>@approval.Document — @approval.Detail</li>
+                    }
+                </ul>
+            }
+            <p class="gate-row"><span class="gate-label">Model calls:</span> @_detail.Scorecard.ModelCalls (@_detail.Scorecard.LiveModelCalls live, @_detail.Scorecard.CachedModelCalls from cache)</p>
+            <p class="gate-row"><span class="gate-label">Tokens:</span> @Scorecard.FormatTokens(_detail.Scorecard.InputTokens) in, @Scorecard.FormatTokens(_detail.Scorecard.OutputTokens) out</p>
+            @if (_detail.Scorecard.VisionReads is { } vision)
+            {
+                <p class="gate-row"><span class="gate-label">Vision reads:</span> @vision.Photos photos, @Scorecard.FormatTokens(vision.InputTokens) in / @Scorecard.FormatTokens(vision.OutputTokens) out tokens@(vision.EstimatedCostUsd is { } visionCost ? $" — {Scorecard.FormatCost(visionCost)}" : "")</p>
+            }
+            @if (_detail.Scorecard.RatesConfigured && _detail.Scorecard.EstimatedCostUsd is { } cost)
+            {
+                <p class="gate-row"><span class="gate-label">Estimated cost:</span> @Scorecard.FormatCost(cost) <span class="gate-meta">(ballpark from configured rates)</span></p>
+            }
+            else
+            {
+                <p class="gate-meta">Per-token rates are not configured; showing calls and tokens only.</p>
             }
         </section>
     }

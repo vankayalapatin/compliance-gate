@@ -50,7 +50,7 @@ public sealed class CachedModelClient : IModelClient
             var cached = JsonSerializer.Deserialize<CachedEntry>(await File.ReadAllTextAsync(path, ct).ConfigureAwait(false));
             if (cached is not null)
             {
-                return new ModelResult(cached.Text, cached.ToolCalls);
+                return new ModelResult(cached.Text, cached.ToolCalls, FromCache: true);
             }
         }
 

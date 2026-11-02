@@ -235,6 +235,7 @@ public sealed class CrawlerTests
         ctx.Services.AddSingleton(w.ReplayState);
         ctx.Services.AddSingleton(w.Spend);
         ctx.Services.AddSingleton(w.Cases);
+        ctx.Services.AddSingleton(new PresentationPace());
         ctx.Services.AddSingleton(acting);
         var models = new FakeModelClient();
         var agent = new P2pAgent(w.Erp, models, new RecordingComplianceEngine());

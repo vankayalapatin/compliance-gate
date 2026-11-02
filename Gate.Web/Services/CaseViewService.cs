@@ -14,17 +14,23 @@ public sealed class CaseViewService
     private readonly CaseCacheStore _cases;
     private readonly DockPhotoService _photos;
     private readonly ILogger<CaseViewService> _log;
+    private readonly ModelSpendTracker? _spend;
+    private readonly CountryNames? _countries;
 
     public CaseViewService(
         IErpAdapter erp,
         CaseCacheStore cases,
         DockPhotoService photos,
-        ILogger<CaseViewService> log)
+        ILogger<CaseViewService> log,
+        ModelSpendTracker? spend = null,
+        CountryNames? countries = null)
     {
         _erp = erp;
         _cases = cases;
         _photos = photos;
         _log = log;
+        _spend = spend;
+        _countries = countries;
     }
 
     public async Task<IReadOnlyList<DecisionCardVm>> ListDecisionCardsAsync(CancellationToken ct = default)
@@ -49,19 +55,36 @@ public sealed class CaseViewService
     {
         var captions = new List<string>();
         var images = new List<string>();
-        // Dock reviews render from the persisted per-carton case evidence;
-        // the vision-cache captions below stay as the fallback.
+        var figures = new List<CartonFigureVm>();
+        // Dock reviews render one figure per held or reviewed carton (full
+        // photo plus verdict caption); the text lines below stay for cards
+        // with no figures.
         if (decision.Kind is DecisionKind.DockReview or DecisionKind.DamageReview)
         {
-            captions.AddRange(ReadDockEvidenceLines(kase.CaseId));
+            figures.AddRange(BuildCartonFigures(kase.CaseId));
+            if (figures.Count == 0)
+            {
+                captions.AddRange(ReadDockEvidenceLines(kase.CaseId));
+            }
         }
 
+        var figured = figures
+            .Select(f => f.ImageFileName)
+            .Where(i => i is not null)
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var evidence in decision.EvidenceRefs)
         {
             var image = _photos.ResolveImageFileName(evidence);
             if (image is null)
             {
                 captions.Add(evidence);
+                continue;
+            }
+
+            // A photo already shown in a carton figure is not repeated as a
+            // loose image; the figure carries its caption and read.
+            if (figured.Contains(image))
+            {
                 continue;
             }
 
@@ -91,7 +114,64 @@ public sealed class CaseViewService
             summary = $"ERP lookup failed: {ex.Message}";
         }
 
-        return new DecisionCardVm(decision, kase.SoNumber, kase.ItemId, kase.Stage, captions, images, summary);
+        return new DecisionCardVm(
+            decision, kase.SoNumber, kase.ItemId, kase.Stage, captions, images, summary, figures);
+    }
+
+    /// <summary>One figure per held or reviewed carton: the full photo from
+    /// the carton's own read plus the carton id and verdict caption. Passed
+    /// cartons stay out; a carton without a readable photo still renders
+    /// its caption.</summary>
+    private IReadOnlyList<CartonFigureVm> BuildCartonFigures(string caseId)
+    {
+        var evidence = ReadDockEvidence(caseId);
+        if (evidence is null)
+        {
+            return [];
+        }
+
+        var figures = new List<CartonFigureVm>();
+        foreach (var cartonId in evidence.Verdicts.Keys.Order(StringComparer.Ordinal))
+        {
+            var verdicts = evidence.Verdicts[cartonId]
+                .Where(v => v.Kind != VerdictKind.Pass)
+                .ToList();
+            if (verdicts.Count == 0)
+            {
+                continue;
+            }
+
+            var imageId = evidence.Reads
+                .Where(r => string.Equals(r.CartonId, cartonId, StringComparison.Ordinal))
+                .Select(r => r.ImageId)
+                .FirstOrDefault();
+            var image = _photos.ResolveImageFileName(imageId);
+            string? read = null;
+            if (image is not null)
+            {
+                try
+                {
+                    var cached = _photos.TryCachedRead(image);
+                    read = cached is null
+                        ? $"Photo {image}: no cached read."
+                        : $"Photo {image} cached read: {cached}";
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Cached read refused for {Image}.", image);
+                    read = $"Photo {image}: cached read refused ({ex.Message}).";
+                }
+            }
+
+            figures.Add(new CartonFigureVm(
+                cartonId,
+                image,
+                $"Carton {cartonId}: " + string.Join("; ", verdicts
+                    .Select(v => $"{v.Kind} by {v.RuleId} — {v.Reason}")),
+                read));
+        }
+
+        return figures;
     }
 
     private async Task<string?> DescribeDocumentAsync(Decision decision, CancellationToken ct)
@@ -183,9 +263,21 @@ public sealed class CaseViewService
             _log.LogWarning(ex, "Vendor-mail lookup failed for case {CaseId}.", kase.CaseId);
         }
 
+        IReadOnlyList<OriginCapLine> math = [];
+        try
+        {
+            math = await OriginCapExplainer.LinesAsync(_erp, file, _log, _countries?.Map, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Screening-math lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
         return new CaseDetailVm(
             kase, chain, file.Events, file.Decisions, holds, mail,
-            AgentSummary.Build(kase, file.Events, file.Decisions, holds));
+            AgentSummary.Build(kase, file.Events, file.Decisions, holds),
+            math.Select(m => m.Line).ToList(),
+            await ScorecardAsync(file, ct).ConfigureAwait(false));
     }
 
     private async Task<ChainStepVm> SoStepAsync(Case kase, CancellationToken ct)
@@ -251,6 +343,59 @@ public sealed class CaseViewService
             ? new ChainStepVm(CaseChain.PaymentsLabel, null, "none", null)
             : new ChainStepVm(CaseChain.PaymentsLabel, string.Join("; ", kase.PaymentNumbers),
                 $"{kase.PaymentNumbers.Count} payment(s)", "Detail on ERP.");
+
+    /// <summary>Agent scorecard for one case: transcript counts plus policy
+    /// approvals from the ERP documents. Every read degrades to empty on
+    /// failure with a log entry; the card always renders.</summary>
+    private async Task<ScorecardVm> ScorecardAsync(CaseFile file, CancellationToken ct)
+    {
+        var kase = file.Case;
+        IReadOnlyList<TranscriptTurn> turns = [];
+        try
+        {
+            turns = CaseTranscript.ReadTurns(_cases.CacheDir, kase.CaseId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Scorecard transcript lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
+        IReadOnlyList<VisionPhotoUsage> vision = [];
+        try
+        {
+            vision = CaseVisionUsage.ReadPhotos(_cases.CacheDir, kase.CaseId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Scorecard vision lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
+        PurchaseRequisition? pr = null;
+        PurchaseOrder? po = null;
+        decimal? threshold = null;
+        try
+        {
+            if (kase.PrNumber is not null)
+            {
+                pr = await _erp.GetPrAsync(kase.PrNumber, ct).ConfigureAwait(false);
+            }
+
+            if (kase.PoNumber is not null)
+            {
+                po = await _erp.GetPurchaseOrderAsync(kase.PoNumber, ct).ConfigureAwait(false);
+            }
+
+            threshold = await _erp.GetAutoApproveThresholdAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Scorecard ERP lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
+        return Scorecard.Build(
+            turns, file, pr, po, threshold,
+            _spend?.InputCostPerMillionUsd, _spend?.OutputCostPerMillionUsd, vision);
+    }
 
     public async Task<IReadOnlyList<UserDto>> ListUsersAsync(CancellationToken ct = default) =>
         await _erp.GetUsersAsync(ct).ConfigureAwait(false);

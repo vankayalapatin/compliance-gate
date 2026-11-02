@@ -29,6 +29,7 @@ public partial class CaseRunner
     private readonly ILogger<CaseRunner> _logger;
     private readonly string _cacheDir;
     private readonly string _visionReadCacheDir;
+    private readonly PresentationPace _pace;
 
     public CaseRunner(
         IErpAdapter erp,
@@ -38,7 +39,8 @@ public partial class CaseRunner
         IDockEvaluator dock,
         string cacheDir,
         ILogger<CaseRunner>? logger = null,
-        string? visionReadCacheDir = null)
+        string? visionReadCacheDir = null,
+        PresentationPace? pace = null)
     {
         _erp = erp;
         _core = core;
@@ -48,6 +50,7 @@ public partial class CaseRunner
         _cacheDir = cacheDir;
         _logger = logger ?? NullLogger<CaseRunner>.Instance;
         _visionReadCacheDir = visionReadCacheDir ?? Path.Combine(cacheDir, "vision-reads");
+        _pace = pace ?? new PresentationPace();
     }
 
     /// <summary>Advances the case through the Spark-driven tool loop until it
