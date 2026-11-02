@@ -5,6 +5,10 @@
 ComplianceGate is the software name. It is a product a company runs every
 day: an ERP plus an agent platform. Not a demo, a scenario, or a run.
 
+The ERP stays strict and simple. The agent does the thinking. People make
+the decisions. The ERP's controls and the company's rules apply to people
+and agents alike.
+
 - System of record: the ERP has its own db; the agent platform has its own
   db for cases, events, decisions, knowledge articles, rules, memos,
   proposals, and exceptions. Every screen reads from these two dbs. The

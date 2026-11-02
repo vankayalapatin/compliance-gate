@@ -26,10 +26,10 @@ system-as-person in UI text, stored data, or numbers. Full bar: `AGENTS.md`.
 ## Rules
 
 - Reads raw ERP data only through the adapter: BOM (never the explosion), stock, open POs, sales orders, vendors, documents, history, ASN, receipts, invoices. Explosion, shortfall netting, and invoice matching run in the agent and are tested there.
-- Flow: order intake, BOM explosion, shortfall against forecast plus stock plus open POs, PR creation, vendor screening callout (failing vendors blocked citing the rule), PO to the passing vendor, supplier ACK, ASN recorded, receipt posting, invoice creation with match result recorded, payment request.
-- Writes go through the adapter only: create PR, submit for approval, create PO, update SO status, block vendor, add PO note, post receipt, set and release hold or quarantine, create invoice plus record match result.
+- Flow: order intake, BOM explosion, shortfall against forecast plus stock plus open POs, PR creation, vendor screening callout (losing vendors rejected for the award citing the rule; the vendor master stays untouched), PO to the passing vendor, supplier ACK, ASN recorded, receipt posting, invoice creation with match result recorded, payment request.
+- Writes go through the adapter only: create PR, submit for approval, create PO, update SO status, add PO note, post receipt, set and release hold or quarantine, create invoice plus record match result.
 - Invoice matching is line-level against PO lines with tolerances, and the match result is recorded per invoice line. AP controls stay in the agent and workflow, never cited as regulation.
-- Partial pay: passed units pay, failed units stay held with the cited rule and amount. The reshot releases the hold and the remainder pays in the next payment run. Customer notification fires once materials are secured.
+- Payable gate: accepted value pays while held value waits on its reshot; open reviews (damage, hand check) block the whole payment until they close. Held value releases on reshot and pays in the next payment run. Customer notification fires once every case for the order is resolved.
 - Every agent write sets native `Source` to `p2p-agent` so the UI banner appears. No direct table writes, ever.
 - Outside-world inputs (order webhook, supplier ACK, ASN, invoices, secured notification) are idempotent and redeliverable from cache with zero live calls.
 - No business values in code. Quantities, limits, vendor names, carton ids, document numbers, dates, and similar domain values come from company data in the two dbs, never from C# constants or literals. Code holds logic only.
@@ -41,4 +41,4 @@ system-as-person in UI text, stored data, or numbers. Full bar: `AGENTS.md`.
 
 ## Done criteria
 
-Done when a shortfall case runs order intake to payment request, failing vendors are blocked citing the rule, line-level matching is recorded, and every block carries its rule id.
+Done when a shortfall case runs order intake to payment request, losing vendors are rejected for the award citing the rule, line-level matching is recorded, and every block carries its rule id.
