@@ -134,7 +134,7 @@ public static class PolicyLabels
         || decision.DecidedAt is null
             ? "Not yet decided; the pin (proposal hash + KB version + approver + timestamp) lands on decision."
             : $"hash {decision.DocumentNumber} · KB {KbDisplay.Version(kbVersion)} · " +
-              $"{ActorLabels.Display(decision.DecidedBy)} · {decision.DecidedAt:u}";
+              $"{ActorLabels.Display(decision.DecidedBy)} · {ErpFormat.When(decision.DecidedAt.Value)}";
 
     /// <summary>Citation for display: kb:&lt;section&gt;#&lt;id&gt;@&lt;version&gt;
     /// with the version in display form ("version N", never kbvN).</summary>
@@ -143,12 +143,40 @@ public static class PolicyLabels
 
     /// <summary>One flip's money, always with its currency.</summary>
     public static string FlipMoney(decimal amount, string? currency) =>
-        $"{amount} {currency ?? CurrencyMissing}";
+        ErpFormat.Money(amount, currency);
 
     /// <summary>What-if totals money. A null currency means the flipped set
     // spans more than one currency, so it is never blended.</summary>
     public static string TotalsMoney(decimal amount, string? currency) =>
-        $"{amount} {currency ?? MixedCurrencies}";
+        currency is null
+            ? $"{ErpFormat.Amount(amount)} {MixedCurrencies}"
+            : ErpFormat.Money(amount, currency);
+
+    /// <summary>Short plain words for the applicability mode, used in
+    /// selects and activation lines (blurbs carry the detail).</summary>
+    public static string ApplicabilityWords(RuleApplicability mode) =>
+        mode switch
+        {
+            RuleApplicability.ProspectiveOnly => "Prospective only",
+            RuleApplicability.ProspectiveWithReview => "Prospective + review",
+            RuleApplicability.ImmediateHold => "Immediate hold",
+            _ => "Unknown mode",
+        };
+
+    public static string TierWords(RuleTier tier) =>
+        tier switch
+        {
+            RuleTier.Tier1 => "Tier 1",
+            RuleTier.Tier2 => "Tier 2",
+            RuleTier.Tier3 => "Tier 3",
+            _ => "Unknown tier",
+        };
+
+    public static string VerdictWords(VerdictKind kind) =>
+        DisplayWords.Verdict(kind);
+
+    public static string ConflictWords(RuleConflictKind kind) =>
+        DisplayWords.Conflict(kind);
 
     /// <summary>Activation source line, mirroring the publisher wording:
     // board memo plus approver plus effective date.</summary>
@@ -198,6 +226,6 @@ public static class PolicyLabels
             RuleApplicability.ImmediateHold =>
                 "Immediate hold (safety/regulatory Tier-1 dock-gate only): holds in-flight docs " +
                 "pending human review; creates holds, never cancels. Requires a recorded reason.",
-            _ => mode.ToString(),
+            _ => "Unknown mode.",
         };
 }

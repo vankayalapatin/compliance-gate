@@ -233,9 +233,9 @@ public partial class CaseRunner
     {
         var lines = pr.Lines.Count == 0
             ? "no lines"
-            : string.Join("; ", pr.Lines.Select(l => $"{l.Quantity} {l.Unit} of {l.ItemId}"));
+            : string.Join("; ", pr.Lines.Select(l => $"{DisplayWords.Qty(l.Quantity)} {l.Unit} of {l.ItemId}"));
         return $"Picked up approved PR {pr.PrNumber} ({lines}) from ERP; no PO yet. " +
-            $"No sourcing candidates on the handoff; screening all {vendorIds.Count} ERP vendor(s): " +
+            $"No sourcing candidates on the handoff; screening all {DisplayWords.Plural(vendorIds.Count, "ERP vendor")}: " +
             string.Join(", ", vendorIds) + ".";
     }
 

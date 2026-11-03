@@ -236,6 +236,10 @@ public sealed class CrawlerTests
         ctx.Services.AddSingleton(w.Spend);
         ctx.Services.AddSingleton(w.Cases);
         ctx.Services.AddSingleton(new PresentationPace());
+        ctx.Services.AddSingleton(new SplitProposals());
+        ctx.Services.AddSingleton(new DockSceneLive());
+        ctx.Services.AddSingleton(new DockSceneStatus(
+            new ConfigurationBuilder().Build()));
         ctx.Services.AddSingleton(acting);
         var models = new FakeModelClient();
         var agent = new P2pAgent(w.Erp, models, new RecordingComplianceEngine());
@@ -326,6 +330,16 @@ public sealed class CrawlerTests
                 .Add(r => r.Key, (string)null!)
                 .Add(r => r.Vendor, vendor)
                 .Add(r => r.Number, number));
+        }
+        else if (segments is ["erp", "new", var newKind])
+        {
+            RenderClean<ErpNew>(ctx, href, p => p.Add(n => n.Kind, newKind));
+        }
+        else if (segments is ["erp", "new", var newKindPreset, var preset])
+        {
+            RenderClean<ErpNew>(ctx, href, p => p
+                .Add(n => n.Kind, newKindPreset)
+                .Add(n => n.Preset, preset));
         }
         else if (segments is ["cases", var caseId])
         {

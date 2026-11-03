@@ -192,7 +192,7 @@ public sealed partial class EfCoreErpAdapter
             foreach (var line in poLines)
             {
                 await RequireSourcingAsync(
-                    db, po.VendorId, line.ItemId, line.QtyOrdered, po.PrNumber, ct).ConfigureAwait(false);
+                    db, po.VendorId, line.ItemId, line.QtyOrdered, po.PrNumber, ct, documentNumber).ConfigureAwait(false);
             }
         }
         if (approved && documentType == "Payment")
@@ -318,28 +318,29 @@ public sealed partial class EfCoreErpAdapter
         }
     }
 
-    public async Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    public async Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, IReadOnlyList<PoOrderLine>? lines = null, CancellationToken ct = default)
     {
         using var db = _factory.CreateDbContext();
         var replay = await ReplayAsync<PurchaseOrder>(db, $"po:{idempotencyKey}", ct).ConfigureAwait(false);
         if (replay is not null) return replay;
         using var tx = await db.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
         var pr = await db.PurchaseRequisitions.FindAsync([prNumber], ct).ConfigureAwait(false);
-        if (pr is null || Enum<PrStatus>(pr.Status) != PrStatus.Approved)
+        if (pr is null || Enum<PrStatus>(pr.Status) is not (PrStatus.Approved or PrStatus.PartiallyOrdered))
             throw new InvalidOperationException($"No valid approved PR {prNumber}: PO refused.");
         var vendor = await db.Vendors.FindAsync([vendorId], ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Unknown vendor {vendorId}.");
         if (vendor.IsBlocked) throw new InvalidOperationException($"Vendor {vendorId} is blocked: {vendor.BlockReason}.");
         var prLines = await db.PurchaseRequisitionLines
             .Where(l => l.PrNumber == prNumber).OrderBy(l => l.LineNo).ToListAsync(ct).ConfigureAwait(false);
-        foreach (var l in prLines)
+        var order = await ResolveOrderLinesAsync(db, prNumber, prLines, lines, ct).ConfigureAwait(false);
+        foreach (var l in order)
         {
             await RequireSourcingAsync(db, vendorId, l.ItemId, l.Quantity, prNumber, ct).ConfigureAwait(false);
         }
         var poNumber = await NextAsync(db, "PO", ct).ConfigureAwait(false);
         var newLines = new List<PurchaseOrderLine>();
         var lineNo = 0;
-        foreach (var l in prLines)
+        foreach (var l in order)
         {
             lineNo++;
             var price = await db.VendorPrices.FindAsync([vendorId, l.ItemId], ct).ConfigureAwait(false);
@@ -383,13 +384,96 @@ public sealed partial class EfCoreErpAdapter
             ApprovedBy = poApprovedBy, ApprovedAt = poApprovedAt is null ? null : Text(poApprovedAt.Value)
         });
         db.Requesters.Add(new RequesterRow { DocumentType = "PO", DocumentNumber = poNumber, Requester = pr.Requester });
-        pr.Status = PrStatus.Closed.ToString();
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        pr.Status = await PrFullyOrderedAsync(db, prNumber, prLines, ct).ConfigureAwait(false)
+            ? PrStatus.Closed.ToString()
+            : PrStatus.PartiallyOrdered.ToString();
         var po = new PurchaseOrder(poNumber, prNumber, vendorId, vendor.PaymentTermsId, approval,
             PoDocStatus.Open, pr.Currency, source, createdBy, idempotencyKey, newLines, CreatedAt: poCreatedAt, ApprovedBy: poApprovedBy, ApprovedAt: poApprovedAt);
         RecordReplay(db, $"po:{idempotencyKey}", po);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await tx.CommitAsync(ct).ConfigureAwait(false);
         return po;
+    }
+
+    /// <summary>Resolves what a PO actually orders: the whole request when no
+    /// lines are named, else the named quantities. Every line must name a
+    /// requested item with a positive quantity, and no item may exceed what
+    /// the request still has left across all its non-cancelled POs.</summary>
+    private static async Task<IReadOnlyList<PoOrderLine>> ResolveOrderLinesAsync(
+        ErpDbContext db, string prNumber, IReadOnlyList<PrLineRow> prLines,
+        IReadOnlyList<PoOrderLine>? lines, CancellationToken ct)
+    {
+        var wanted = lines ?? prLines.Select(l => new PoOrderLine(l.ItemId, l.Quantity)).ToList();
+        if (wanted.Count == 0)
+        {
+            throw new InvalidOperationException($"PR {prNumber} names nothing to order: PO refused.");
+        }
+
+        var requested = prLines
+            .GroupBy(l => l.ItemId)
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
+        var now = wanted
+            .GroupBy(l => l.ItemId)
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity));
+        foreach (var (itemId, qty) in now)
+        {
+            if (qty <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"PO for PR {prNumber} must order a positive quantity of {itemId}: PO refused.");
+            }
+
+            if (!requested.TryGetValue(itemId, out var ask))
+            {
+                throw new InvalidOperationException(
+                    $"PR {prNumber} does not request {itemId}: PO refused.");
+            }
+
+            var ordered = await OrderedForPrAsync(db, prNumber, itemId, ct).ConfigureAwait(false);
+            if (ordered + qty > ask)
+            {
+                throw new InvalidOperationException(
+                    $"PR {prNumber} requests {DisplayWords.Qty(ask)} of {itemId} with " +
+                    $"{DisplayWords.Qty(ask - ordered)} left: ordering {DisplayWords.Qty(qty)} is refused.");
+            }
+        }
+
+        return wanted;
+    }
+
+    /// <summary>Quantity already ordered for one request line across the
+    /// request's non-cancelled POs. Cancelled POs consume nothing; received
+    /// ones still count, since reorders go on a new request.</summary>
+    private static async Task<decimal> OrderedForPrAsync(
+        ErpDbContext db, string prNumber, string itemId, CancellationToken ct)
+    {
+        var cancelled = nameof(PoDocStatus.Cancelled);
+        var poNumbers = await db.PurchaseOrders
+            .Where(p => p.PrNumber == prNumber && p.DocStatus != cancelled)
+            .Select(p => p.PoNumber)
+            .ToListAsync(ct).ConfigureAwait(false);
+        // Client-side sum: SQLite cannot aggregate decimals server-side.
+        var ordered = await db.PurchaseOrderLines
+            .Where(l => poNumbers.Contains(l.PoNumber) && l.ItemId == itemId)
+            .Select(l => l.QtyOrdered)
+            .ToListAsync(ct).ConfigureAwait(false);
+        return ordered.Sum();
+    }
+
+    private static async Task<bool> PrFullyOrderedAsync(
+        ErpDbContext db, string prNumber, IReadOnlyList<PrLineRow> prLines, CancellationToken ct)
+    {
+        foreach (var group in prLines.GroupBy(l => l.ItemId))
+        {
+            var ordered = await OrderedForPrAsync(db, prNumber, group.Key, ct).ConfigureAwait(false);
+            if (ordered < group.Sum(l => l.Quantity))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public async Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default)

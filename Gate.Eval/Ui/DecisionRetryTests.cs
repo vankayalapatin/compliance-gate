@@ -110,7 +110,7 @@ public sealed class DecisionRetryTests
             () => Assert.Contains("did not advance", board.Markup), TimeSpan.FromSeconds(30));
         board.FindAll("button").First(b => b.TextContent == "Try again").Click();
         board.WaitForAssertion(
-            () => Assert.Contains("Case advanced to", board.Markup), TimeSpan.FromSeconds(30));
+            () => Assert.Contains("The case is now", board.Markup), TimeSpan.FromSeconds(30));
 
         Assert.DoesNotContain("Try again", board.Markup);
         var pos = await h.Erp.GetPurchaseOrdersAsync();

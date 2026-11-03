@@ -96,6 +96,27 @@
                         <p class="gate-meta">@state.MintNote</p>
                     }
                 }
+                <p class="gate-row"><span class="gate-label">Rebuild views with a simulated problem</span></p>
+                <p class="gate-meta">Pick a problem per carton, then rebuild. The rebuilt views land on the counter and go out with the normal send below.</p>
+                @foreach (var carton in truck.Cartons)
+                {
+                    <div class="gate-field">
+                        <span class="gate-row">@carton.CartonId</span>
+                        <select class="gate-select" value="@RebuildProblemFor(state, carton.CartonId)" @onchange="e => SetRebuildProblem(state, carton.CartonId, e.Value?.ToString())" aria-label="Simulated problem for @carton.CartonId">
+                            @foreach (var option in DockProblemKinds.PickerOptions)
+                            {
+                                <option value="@option.Value">@option.Label</option>
+                            }
+                        </select>
+                    </div>
+                }
+                <div class="gate-actions">
+                    <button class="gate-btn" disabled="@_busy" @onclick="() => RebuildViewsAsync(truck, state)">Rebuild views</button>
+                </div>
+                @if (state.RebuildNote is not null)
+                {
+                    <p class="gate-meta">@state.RebuildNote</p>
+                }
                 <p class="gate-row"><span class="gate-label">Counter images @(state.Reshot ? "(close-ups)" : "(pallet views)")</span></p>
                 @{
                     var offered = DockPhotoService.OfferedCounterImages(TruckImages(Options.DockImages, truck.AsnNumber, state), state.Reshot);
@@ -180,8 +201,10 @@
         public SimulationOutcome? Outcome;
         public string? UploadError;
         public string? MintNote;
+        public string? RebuildNote;
         public readonly HashSet<string> ReshotCartons = new(StringComparer.Ordinal);
         public readonly Dictionary<string, string?> ServerPicks = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, string?> RebuildProblems = new(StringComparer.Ordinal);
         public readonly List<UploadRow> Uploads = [];
         public readonly List<string> MintedFiles = [];
     }
@@ -313,6 +336,60 @@
         else
         {
             state.ReshotCartons.Remove(carton);
+        }
+    }
+
+    private static string RebuildProblemFor(TruckState state, string cartonId) =>
+        state.RebuildProblems.TryGetValue(cartonId, out var kind) ? kind ?? string.Empty : string.Empty;
+
+    private static void SetRebuildProblem(TruckState state, string cartonId, string? kind)
+    {
+        if (string.IsNullOrWhiteSpace(kind))
+        {
+            state.RebuildProblems.Remove(cartonId);
+        }
+        else
+        {
+            state.RebuildProblems[cartonId] = kind;
+        }
+    }
+
+    private async Task RebuildViewsAsync(ExpectedTruckVm truck, TruckState state)
+    {
+        state.RebuildNote = null;
+        if (truck.CaseId is null)
+        {
+            state.RebuildNote = "No case links this truck yet; rebuilds wait for the case.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var problems = state.RebuildProblems
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+                .Select(kv => new DockProblemForm(kv.Key, kv.Value!))
+                .ToList();
+            var rebuilt = await Simulate.RebuildDockViewsAsync(truck.CaseId, problems);
+            state.RebuildNote = rebuilt.Message;
+            if (rebuilt.Ok)
+            {
+                // Rebuilt views join the counter and go out through the
+                // normal dock photo send below.
+                foreach (var file in rebuilt.FileNames)
+                {
+                    if (!state.MintedFiles.Contains(file, StringComparer.Ordinal))
+                    {
+                        state.MintedFiles.Add(file);
+                    }
+
+                    state.ServerPicks.TryAdd(file, null);
+                }
+            }
+        }
+        finally
+        {
+            _busy = false;
         }
     }
 

@@ -1,12 +1,13 @@
 // Origin-cap math line: the one-line country-share calculation shown on
-// the case page and in the activity pane when a vendor is blocked under
-// the origin-cap rule. Every number comes from ERP history plus the PR
-// quantity at render time, and the cap from the rule's own pack config —
-// no amounts, caps, or names in code. History figures link to the purchase
-// history view, which reads the same rows, so the page totals always equal
-// the numbers in the line.
+// the case page and in the activity pane. Every number comes from ERP
+// history plus the PR quantity (live for undecided orders, the stored
+// award-time figures for decided ones), and the cap from the rule's own
+// pack config — no amounts, caps, or names in code. History figures link
+// to the purchase history view, which reads the same rows, so the page
+// totals always equal the numbers in the line.
 using System.Globalization;
 using Gate.Compliance;
+using Gate.Contracts;
 
 namespace Gate.Web.ViewModels;
 
@@ -21,6 +22,29 @@ public static class OriginCapMath
 {
     public static string HistoryHref(string itemId) =>
         $"erp/purchase-history/{Uri.EscapeDataString(itemId)}";
+
+    /// <summary>Vendor id from a screening summary ("Vendor {id} passed
+    /// screening.", "Vendor {id} failed screening: ..."), or null when
+    /// the summary has no such shape.</summary>
+    public static string? TryParseScreenedVendor(string summary)
+    {
+        const string prefix = "Vendor ";
+        if (!summary.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        foreach (var infix in new[] { " passed screening.", " failed screening:" })
+        {
+            var end = summary.IndexOf(infix, prefix.Length, StringComparison.Ordinal);
+            if (end > prefix.Length)
+            {
+                return summary.Substring(prefix.Length, end - prefix.Length);
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>Vendor id from an award-rejection summary ("Vendor {id}
     /// rejected for the award: ...", legacy "Vendor {id} blocked: ..."),
@@ -53,10 +77,12 @@ public static class OriginCapMath
     public static string Cells(decimal cells) =>
         cells.ToString("N0", CultureInfo.InvariantCulture);
 
-    /// <summary>One-line share-afterward calculation, mirroring the engine's
-    /// own formula: (country cells + award) / (total cells + award) against
-    /// the cap. Country names come from the company-owned map. Null when
-    /// there is no denominator to divide by.</summary>
+    /// <summary>Share-afterward sentence, mirroring the engine's own
+    /// formula: (country cells + award) / (total cells + award) against
+    /// the cap. Country names come from the company-owned map, the count
+    /// noun from the item description. The page renders a separate "See
+    /// purchase history" link from HistoryHref; the sentence itself wraps
+    /// normally. Null when there is no denominator to divide by.</summary>
     public static MathLineVm? Build(
         string ruleId,
         string vendorName,
@@ -67,39 +93,41 @@ public static class OriginCapMath
         decimal cap,
         string historyHref,
         string qtyHref,
-        IReadOnlyDictionary<string, string>? countryNames = null)
+        string unitNoun,
+        IReadOnlyDictionary<string, string>? countryNames = null,
+        bool excused = false,
+        decimal countryOpenCells = 0,
+        decimal totalOpenCells = 0)
     {
-        if (totalCells + awardQty <= 0)
+        var line = ScreeningSentence.Build(
+            ruleId, vendorName, CountryName(countryNames, countryCode),
+            countryCells, totalCells, countryOpenCells, totalOpenCells,
+            awardQty, cap, unitNoun, excused);
+        if (line is null)
         {
             return null;
         }
 
-        var share = (countryCells + awardQty) / (totalCells + awardQty);
-        var over = share > cap;
-        var country = CountryName(countryNames, countryCode);
-        // Manual percent shapes (no space, invariant): identical on every
-        // machine and matching the engine's own verdict figures.
-        var shareText = (share * 100).ToString("0.0", CultureInfo.InvariantCulture) + "%";
-        var capText = (cap * 100).ToString("0", CultureInfo.InvariantCulture) + "%";
-        var cc = Cells(countryCells);
-        var qty = Cells(awardQty);
-        var total = Cells(totalCells);
-        var relation = over ? "over" : "within";
-        var outcome = over ? "is blocked" : "passes";
-
-        var segments = new List<MathSegment>
+        var segments = line.Segments.Select(s => new MathSegment(s.Text, s.Link switch
         {
-            new($"{country} share (", null),
-            new(cc, historyHref),
-            new("+", null),
-            new(qty, qtyHref),
-            new(")/(", null),
-            new(total, historyHref),
-            new("+", null),
-            new(qty, qtyHref),
-            new($")={shareText}, {relation} the {capText} {ruleId} cap, so {vendorName} {outcome}.", null),
-        };
-        return new MathLineVm(string.Concat(segments.Select(s => s.Text)), segments, historyHref);
+            AwardMathLink.History => historyHref,
+            AwardMathLink.Quantity => qtyHref,
+            _ => null,
+        })).ToList();
+        return new MathLineVm(line.PlainText, segments, historyHref);
+    }
+
+    /// <summary>Stored math line back into view segments: the sentence and
+    /// figures render exactly as decided; only the hrefs resolve live.</summary>
+    public static MathLineVm FromStored(AwardMathLine stored, string historyHref, string qtyHref)
+    {
+        var segments = stored.Segments.Select(s => new MathSegment(s.Text, s.Link switch
+        {
+            AwardMathLink.History => historyHref,
+            AwardMathLink.Quantity => qtyHref,
+            _ => null,
+        })).ToList();
+        return new MathLineVm(stored.PlainText, segments, historyHref);
     }
 
     /// <summary>The origin-cap rule id as the compliance layer defines it.

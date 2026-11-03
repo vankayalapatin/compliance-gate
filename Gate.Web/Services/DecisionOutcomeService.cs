@@ -5,6 +5,7 @@
 // validates, advances after applying, and reports failures with context.
 using Gate.Agent;
 using Gate.Contracts;
+using Gate.Web.ViewModels;
 
 namespace Gate.Web.Services;
 
@@ -47,13 +48,13 @@ public sealed class DecisionOutcomeService
             string.Equals(d.DecisionId, decisionId, StringComparison.Ordinal));
         if (decision is null)
         {
-            return new DecisionOutcome(false, $"Decision {decisionId} not found in case {caseId}.", []);
+            return new DecisionOutcome(false, "That decision is no longer on this case.", []);
         }
 
         if (decision.Status != DecisionStatus.Pending)
         {
             return new DecisionOutcome(false,
-                $"Decision {decisionId} is already {decision.Status} (by {decision.DecidedBy ?? "unknown"}).", []);
+                $"{decision.Title} is already {ErpStatusWords.Of(decision.Status).ToLowerInvariant()} (by {ActorLabels.Display(decision.DecidedBy)}).", []);
         }
 
         Decision updated;
@@ -65,7 +66,7 @@ public sealed class DecisionOutcomeService
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Decision {DecisionId} failed.", decisionId);
-            return new DecisionOutcome(false, $"{decision.Kind} {decisionId} failed: {ex.Message}", []);
+            return new DecisionOutcome(false, $"{ActivityLines.KindWords(decision.Kind)} failed: {ex.Message}", []);
         }
 
         var warnings = new List<string>();
@@ -73,7 +74,7 @@ public sealed class DecisionOutcomeService
         try
         {
             var advanced = await _runner.AdvanceAsync(caseId, ct).ConfigureAwait(false);
-            warnings.Add($"Case advanced to {advanced.Stage} ({advanced.Step}).");
+            warnings.Add(AdvancedLine(advanced));
         }
         catch (Exception ex)
         {
@@ -84,10 +85,13 @@ public sealed class DecisionOutcomeService
 
         return new DecisionOutcome(
             true,
-            $"{updated.Kind} {updated.DecisionId} {(approved ? "approved" : "rejected")} by {updated.DecidedBy}.",
+            $"{updated.Title} {(approved ? "approved" : "rejected")} by {ActorLabels.Display(updated.DecidedBy)}.",
             warnings,
             advanceFailed);
     }
+
+    private static string AdvancedLine(CaseAdvanceOutcome advanced) =>
+        $"The case is now {CaseDisplay.StageSummary(advanced.Stage)}; next: {ActivityLines.StepWords(advanced.Step)}.";
 
     /// <summary>Re-runs the agent advance for a case whose post-decision
     /// advance failed (usually a transient model call). The person asks
@@ -103,7 +107,7 @@ public sealed class DecisionOutcomeService
         try
         {
             var advanced = await _runner.AdvanceAsync(caseId, ct).ConfigureAwait(false);
-            return new DecisionOutcome(true, $"Case advanced to {advanced.Stage} ({advanced.Step}).", []);
+            return new DecisionOutcome(true, AdvancedLine(advanced), []);
         }
         catch (Exception ex)
         {

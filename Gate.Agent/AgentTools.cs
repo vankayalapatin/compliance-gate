@@ -17,9 +17,12 @@ public static class AgentTools
     public const string RaisePr = "raise_pr";
     public const string ScreenVendors = "screen_vendors";
     public const string AwardSupplier = "award_supplier";
+    public const string ProposeSplit = "propose_split";
+    public const string CreateSplitChildren = "create_split_children";
     public const string CreatePo = "create_po";
     public const string SubmitPoApproval = "submit_po_approval";
     public const string CheckPrePay = "check_pre_pay";
+    public const string GetVendorHeadroom = "get_vendor_headroom";
     public const string DraftPayment = "draft_payment";
     public const string NotifyCustomer = "notify_customer";
     public const string FinishCase = "finish_case";
@@ -46,6 +49,15 @@ public static class AgentTools
                 new("case_id", "Case id.", ModelToolParameterType.String),
                 new("vendor_id", "Passing vendor id to award, e.g. V-B.", ModelToolParameterType.String),
             ]),
+        new(ProposeSplit, "Propose splitting the buy across vendors in whole cartons when the cheapest vendor is blocked for the full quantity. Read get_vendor_headroom first and plan from those facts: no line above its headroom, lines in PO creation order, quantities adding up to the requested amount. Code verifies the whole plan (and blocks valid-but-costlier plans, naming only the dollars left on the table) before anyone sees it; answer a block by revising or by explaining in note why the plan stands.",
+            [
+                new("case_id", "Case id.", ModelToolParameterType.String),
+                new("vendor_ids", "Vendor id per split line, in PO creation order.", ModelToolParameterType.String, Required: true, IsArray: true),
+                new("quantities", "Cell quantity per split line, same order as vendor_ids.", ModelToolParameterType.Number, Required: true, IsArray: true),
+                new("note", "Why this plan stands when a cheaper valid plan exists; blank to revise instead.", ModelToolParameterType.String),
+            ]),
+        new(CreateSplitChildren, "Create one child case per approved split line and place their purchase orders in plan order. Only call after the person approves the split.",
+            [new("case_id", "Case id.", ModelToolParameterType.String)]),
         new(CreatePo, "Create the purchase order with the awarded vendor.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
         new(SubmitPoApproval, "Submit a draft PO for human approval.",
@@ -69,12 +81,15 @@ public static class AgentTools
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
         new(GetMail, "Read the vendor email thread for the case.",
             [new("case_id", "Case id.", ModelToolParameterType.String)]),
+        new(GetVendorHeadroom, "Read each candidate vendor's headroom for the case item: the unit price and the largest whole-carton quantity it can supply under every cap. Plan splits from these facts: cheapest headroom first. Call before propose_split.",
+            [new("case_id", "Case id.", ModelToolParameterType.String)]),
     ];
 
     public static bool IsReadTool(string name) =>
         string.Equals(name, GetCase, StringComparison.Ordinal)
         || string.Equals(name, GetErpView, StringComparison.Ordinal)
         || string.Equals(name, GetMail, StringComparison.Ordinal)
+        || string.Equals(name, GetVendorHeadroom, StringComparison.Ordinal)
         || string.Equals(name, CheckPrePay, StringComparison.Ordinal);
 
     /// <summary>Maps a runnable picker step to its action tool. Waiting steps
@@ -87,6 +102,8 @@ public static class AgentTools
         RaisePr => "raise the request",
         ScreenVendors => "screen vendors",
         AwardSupplier => "award the supplier",
+        ProposeSplit => "propose a split",
+        CreateSplitChildren => "create the split orders",
         CreatePo => "place the order",
         SubmitPoApproval => "submit the approval",
         DraftPayment => "draft the payment",
@@ -118,6 +135,8 @@ public static class AgentTools
         CaseNextStep.RaisePr => RaisePr,
         CaseNextStep.ScreenVendors => ScreenVendors,
         CaseNextStep.AwardSupplier => AwardSupplier,
+        CaseNextStep.ProposeSplit => ProposeSplit,
+        CaseNextStep.CreateSplitChildren => CreateSplitChildren,
         CaseNextStep.CreatePo => CreatePo,
         CaseNextStep.SubmitPoApproval => SubmitPoApproval,
         CaseNextStep.DraftPayment => DraftPayment,
@@ -133,6 +152,8 @@ public static class AgentTools
         RaisePr => CaseNextStep.RaisePr,
         ScreenVendors => CaseNextStep.ScreenVendors,
         AwardSupplier => CaseNextStep.AwardSupplier,
+        ProposeSplit => CaseNextStep.ProposeSplit,
+        CreateSplitChildren => CaseNextStep.CreateSplitChildren,
         CreatePo => CaseNextStep.CreatePo,
         SubmitPoApproval => CaseNextStep.SubmitPoApproval,
         DraftPayment => CaseNextStep.DraftPayment,
@@ -153,11 +174,35 @@ public static class AgentTools
         "from the case state, the ERP view, or a tool result. Illegal calls " +
         "are blocked and the refusal is fed back to you; adjust and continue.";
 
-    /// <summary>Builds one turn prompt: stable case JSON plus the ERP view.
-    /// No timestamps anywhere, so replays reproduce the prompt byte for byte.
-    /// Names no step and no choice; the request carries only the step's own
-    /// tools, so the prompt never needs to steer among them.</summary>
-    public static string BuildTurnPrompt(CaseFile file, CaseErpView view)
+    /// <summary>One-line goal per step, in plain words: the picker already
+    /// chose the step from case state, and the turn prompt says what it
+    /// is so the model acts instead of guessing. Waiting steps never
+    /// reach a turn; they share the idle line.</summary>
+    public static string StepGoal(CaseNextStep step) => step switch
+    {
+        CaseNextStep.ComputeShortfall => "compute the shortfall from stock, open orders, and demand",
+        CaseNextStep.RaisePr => "raise the purchase request for the shortfall",
+        CaseNextStep.ScreenVendors => "screen every candidate vendor against the rules",
+        CaseNextStep.ProposeSplit =>
+            "propose a split across vendors in whole cartons that stays inside every cap and beats the single-vendor award, or reply without a tool call if no split beats it",
+        CaseNextStep.CreateSplitChildren => "create one child case per split line",
+        CaseNextStep.AwardSupplier => "award the order to one passing vendor, naming every loser and its blocking rule",
+        CaseNextStep.CreatePo => "create the purchase order for the award",
+        CaseNextStep.SubmitPoApproval => "submit the purchase order for approval",
+        CaseNextStep.QueryVendor => "ask the vendor about the open problem",
+        CaseNextStep.DraftPayment => "draft the payment for the accepted amount",
+        CaseNextStep.NotifyCustomer => "notify the customer the order is complete",
+        CaseNextStep.FinishCase => "finish the case",
+        _ => "wait; nothing to do this turn",
+    };
+
+    /// <summary>Builds one turn prompt: stable case JSON plus the ERP view,
+    /// the current step's goal, then the tools offered this turn. No
+    /// timestamps anywhere, so replays reproduce the prompt byte for
+    /// byte. The request carries only the step's own tools, and the
+    /// prompt names exactly those: models call remembered tools unasked,
+    /// so only the moves that are legal appear.</summary>
+    public static string BuildTurnPrompt(CaseFile file, CaseErpView view, IReadOnlySet<string> legal, CaseNextStep step)
     {
         var projection = new
         {
@@ -166,9 +211,12 @@ public static class AgentTools
             Decisions = file.Decisions.Select(DecisionProjection).ToList(),
             RecentEvents = file.Events.TakeLast(30).Select(EventProjection).ToList(),
         };
+        var offered = string.Join(", ", legal.Order(StringComparer.Ordinal));
         return "Case state and ERP view (JSON):\n"
             + JsonSerializer.Serialize(projection, JsonOpts)
-            + "\nCall the tool you judge best. Reply with tool calls only, plus a one-line reason.";
+            + $"\nCurrent step: {StepGoal(step)}."
+            + "\nCall the tool you judge best. Reply with tool calls only, plus a one-line reason."
+            + $"\nYou may only call these tools this turn: {offered}. Do not call any other tool.";
     }
 
     /// <summary>Stable case JSON for the get_case tool: full timeline, no
@@ -303,6 +351,76 @@ public static class AgentTools
 
             var text = value.GetString();
             return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Reads one required string-array argument. Returns null when
+    /// the arguments are not an object, the value is missing or not an
+    /// array, or any element is missing or blank.</summary>
+    public static IReadOnlyList<string>? ReadStringArrayArg(string argumentsJson, string name)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty(name, out var value)
+                || value.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var items = new List<string>();
+            foreach (var element in value.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(element.GetString()))
+                {
+                    return null;
+                }
+
+                items.Add(element.GetString()!);
+            }
+
+            return items;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Reads one required number-array argument. Returns null when
+    /// the arguments are not an object, the value is missing or not an
+    /// array, or any element is not a number.</summary>
+    public static IReadOnlyList<decimal>? ReadNumberArrayArg(string argumentsJson, string name)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(argumentsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty(name, out var value)
+                || value.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var items = new List<decimal>();
+            foreach (var element in value.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.Number
+                    || !element.TryGetDecimal(out var number))
+                {
+                    return null;
+                }
+
+                items.Add(number);
+            }
+
+            return items;
         }
         catch (JsonException)
         {

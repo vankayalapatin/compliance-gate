@@ -26,7 +26,8 @@ public sealed class ToolLoopTests
         var compliance = new RecordingComplianceEngine();
         var dir = TempDir("gate-tooloop-test");
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), dir);
+            compliance, new DockEvaluatorAdapter(), dir,
+            splitProposals: new SplitProposals { IsOn = false });
         return new Harness(erp, runner, models, dir);
     }
 
@@ -61,17 +62,32 @@ public sealed class ToolLoopTests
     private static CaseErpView View() => new(true, null, null, false, false, false, 0, 0, 0, false, 0, false);
 
     [Fact]
-    public void PromptPresentsToolsWithoutPrescribingTheChoice()
+    public void PromptNamesOnlyTheOfferedTools()
     {
         var file = CaseFileAt(CaseStage.Created, DateTimeOffset.UtcNow);
-        var prompt = AgentTools.BuildTurnPrompt(file, View());
+        var legal = new HashSet<string>(StringComparer.Ordinal)
+        {
+            AgentTools.GetCase, AgentTools.ComputeShortfall,
+        };
+        var prompt = AgentTools.BuildTurnPrompt(file, View(), legal, CaseNextStep.ComputeShortfall);
 
         Assert.Contains("case-1", prompt, StringComparison.Ordinal);
         Assert.Contains(CaseStage.Created.ToString(), prompt, StringComparison.Ordinal);
         Assert.Contains("Call the tool you judge best.", prompt, StringComparison.Ordinal);
+        Assert.Contains("Do not call any other tool.", prompt, StringComparison.Ordinal);
+        Assert.Contains(
+            "Current step: compute the shortfall from stock, open orders, and demand.",
+            prompt, StringComparison.Ordinal);
         foreach (var tool in AgentTools.Catalog)
         {
-            Assert.DoesNotContain(tool.Name, prompt, StringComparison.Ordinal);
+            if (legal.Contains(tool.Name))
+            {
+                Assert.Contains(tool.Name, prompt, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.DoesNotContain(tool.Name, prompt, StringComparison.Ordinal);
+            }
         }
 
         Assert.DoesNotContain("ComputeShortfall", prompt, StringComparison.Ordinal);
@@ -82,11 +98,12 @@ public sealed class ToolLoopTests
     public void ToolCatalogMirrorsExecutorsReadsAndVendorEmail()
     {
         var names = AgentTools.Catalog.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
-        Assert.Equal(14, names.Count);
+        Assert.Equal(17, names.Count);
         foreach (var action in new[]
             {
                 AgentTools.ComputeShortfall, AgentTools.RaisePr, AgentTools.ScreenVendors,
-                AgentTools.AwardSupplier, AgentTools.CreatePo,
+                AgentTools.AwardSupplier, AgentTools.ProposeSplit, AgentTools.CreateSplitChildren,
+                AgentTools.CreatePo,
                 AgentTools.SubmitPoApproval, AgentTools.DraftPayment, AgentTools.NotifyCustomer,
                 AgentTools.FinishCase, AgentTools.SendVendorEmail,
             })
@@ -94,7 +111,7 @@ public sealed class ToolLoopTests
             Assert.Contains(action, names);
         }
 
-        foreach (var read in new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail, AgentTools.CheckPrePay })
+        foreach (var read in new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail, AgentTools.GetVendorHeadroom, AgentTools.CheckPrePay })
         {
             Assert.Contains(read, names);
         }
@@ -110,10 +127,16 @@ public sealed class ToolLoopTests
     public void PromptIsStableAcrossTimestamps()
     {
         var view = View();
+        var legal = new HashSet<string>(StringComparer.Ordinal)
+        {
+            AgentTools.GetCase, AgentTools.ComputeShortfall,
+        };
         var first = AgentTools.BuildTurnPrompt(
-            CaseFileAt(CaseStage.Created, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)), view);
+            CaseFileAt(CaseStage.Created, new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)), view, legal,
+            CaseNextStep.ComputeShortfall);
         var second = AgentTools.BuildTurnPrompt(
-            CaseFileAt(CaseStage.Created, new DateTimeOffset(2026, 6, 30, 12, 0, 0, TimeSpan.Zero)), view);
+            CaseFileAt(CaseStage.Created, new DateTimeOffset(2026, 6, 30, 12, 0, 0, TimeSpan.Zero)), view, legal,
+            CaseNextStep.ComputeShortfall);
         Assert.Equal(first, second);
     }
 
@@ -156,8 +179,8 @@ public sealed class ToolLoopTests
 
         var first = h.Models.Requests[0].Tools!.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
         Assert.Equal(
-            new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail, AgentTools.CheckPrePay,
-                AgentTools.ComputeShortfall }.ToHashSet(StringComparer.Ordinal),
+            new[] { AgentTools.GetCase, AgentTools.GetErpView, AgentTools.GetMail, AgentTools.GetVendorHeadroom,
+                AgentTools.CheckPrePay, AgentTools.ComputeShortfall }.ToHashSet(StringComparer.Ordinal),
             first);
         var second = h.Models.Requests[1].Tools!.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
         Assert.Contains(AgentTools.RaisePr, second);
@@ -281,7 +304,7 @@ public sealed class ToolLoopTests
     }
 
     [Fact]
-    public async Task ReadsForeverHitsTheTurnCap()
+    public async Task RepeatReadsFallBackByRuleInsteadOfHittingTheTurnCap()
     {
         var h = Create();
         var caseId = await OpenBatteryCaseAsync(h);
@@ -290,9 +313,17 @@ public sealed class ToolLoopTests
             h.Models.QueueToolCalls($"look {i}", ($"c{i}", AgentTools.GetCase, Args(caseId)));
         }
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => h.Runner.AdvanceAsync(caseId));
-        Assert.Contains("50 tool turns", ex.Message, StringComparison.Ordinal);
-        Assert.Equal(50, CaseTranscript.ReadTurns(h.CaseDir, caseId).Count);
+        // Identical reads trip the rule fallback instead of burning
+        // turns: the shortfall computes and the request raises by rule,
+        // then the case parks on the request approval.
+        var parked = await h.Runner.AdvanceAsync(caseId);
+
+        Assert.Equal(CaseNextStep.AwaitDecision, parked.Step);
+        var file = CaseStore.Load(h.CaseDir, caseId)!;
+        Assert.NotNull(file.Case.PrNumber);
+        Assert.Equal(2, file.Events.Count(e =>
+            e.Kind == CaseEventKind.Note && e.Summary.Contains("ran by rule instead", StringComparison.Ordinal)));
+        Assert.True(CaseTranscript.ReadTurns(h.CaseDir, caseId).Count < 50);
     }
 
     [Fact]

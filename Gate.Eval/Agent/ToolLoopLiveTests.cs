@@ -154,15 +154,19 @@ public sealed class ToolLoopLiveTests
         var dockOut = Path.Combine(Path.GetTempPath(), "gate-tooloop-live-dock", Guid.NewGuid().ToString("N"));
         var dockDir = FindDockDir();
         var assetsDir = Directory.GetParent(dockDir)!.FullName;
+        // Scene-library options: the legacy composited path is retired,
+        // so every shipment photos from the scene catalog.
         var dockOptions = new DockImageOptions(
-            dockDir,
-            Path.Combine(assetsDir, "image-specs.json"),
+            Path.Combine(assetsDir, "dock-scenes", "bases"),
+            Path.Combine(assetsDir, "dock-scenes", "scenes.json"),
             Path.Combine(assetsDir, "cartons.json"),
             dockOut,
             Path.Combine(dockOut, ".image-cache"),
             Path.Combine(caseDir, "vision-reads"));
+        // Single-vendor flow pinned here; splits stay off.
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), caseDir, dockImageOptions: dockOptions);
+            compliance, new DockEvaluatorAdapter(), caseDir, dockImageOptions: dockOptions,
+            splitProposals: new SplitProposals { IsOn = false });
 
         var caseIds = await runner.OnOrderWebhookAsync(
             new OrderWebhookInput(scenarioName, soNumber, requester, candidates));
@@ -401,19 +405,28 @@ public sealed class ToolLoopLiveTests
         CaseRunner runner, string bat, IReadOnlyList<ScenarioCarton> cartons)
     {
         var unmarked = cartons.Single(c => !c.MarkPresent);
-        var palletIds = cartons.SelectMany(c => c.VisibleIn).Distinct(StringComparer.Ordinal).ToList();
         var reshotId = unmarked.ReshotIn
             ?? throw new InvalidOperationException("Scenario carton without markPresent has no reshotIn image.");
         // The pallet views are labeled from the just-sent ASN (minted PO
         // plus ASN lots) and read live; the committed PO-2 set would hold
-        // every carton under the label check, so it never stands in.
-        var set = await runner.BuildDockImagesAsync(bat);
+        // every carton under the label check, so it never stands in. The
+        // scene library covers the shipment's own carton count in one or
+        // more views, so reads pool across views and match by carton id.
+        // Scenario mark/damage truth stages as simulated problems: the
+        // retired file truth no longer feeds the builder.
+        var staged = cartons
+            .Where(c => !c.MarkPresent)
+            .Select(c => new SimulatedProblem(c.Id, SimulatedProblemKind.MissingMark))
+            .Concat(cartons
+                .Where(IsDamaged)
+                .Select(c => new SimulatedProblem(c.Id, SimulatedProblemKind.Crushed)))
+            .ToList();
+        var set = await runner.BuildDockImagesAsync(bat, default, staged);
         Assert.NotNull(set);
         var perImage = new Dictionary<string, IReadOnlyList<DockCartonRead>>(StringComparer.Ordinal);
         foreach (var image in set.Images)
         {
             Assert.Equal(DockImagePath.Composited, image.Path);
-            Assert.False(string.IsNullOrWhiteSpace(image.FallbackReason));
             var fileName = Path.GetFileName(image.FilePath);
             var jpeg = await File.ReadAllBytesAsync(image.FilePath);
             var reads = await runner.TranscribeDockPhotosAsync(bat, [new DockPhoto(fileName, jpeg, null)]);
@@ -422,62 +435,64 @@ public sealed class ToolLoopLiveTests
 
         var minted = await runner.MintReshotImageAsync(bat, unmarked.Id);
         var reshotJpeg = await File.ReadAllBytesAsync(minted.FilePath);
-        perImage[reshotId] = await runner.TranscribeDockPhotosAsync(
+        var reshotReads = await runner.TranscribeDockPhotosAsync(
             bat, [new DockPhoto(minted.FileName, reshotJpeg, null)]);
 
+        var pooled = perImage.Values.SelectMany(r => r).ToList();
         var mismatches = new List<string>();
         var damageViews = cartons.ToDictionary(c => c.Id, _ => new List<string>(), StringComparer.Ordinal);
-        foreach (var imageId in palletIds)
+        foreach (var carton in cartons)
         {
-            var expected = cartons.Where(c => c.VisibleIn.Contains(imageId, StringComparer.Ordinal)).ToList();
-            var reads = perImage.TryGetValue(imageId, out var found) ? found : [];
-            var readIds = reads.Select(r => r.CartonId).OrderBy(id => id, StringComparer.Ordinal).ToList();
-            var expectedIds = expected.Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal).ToList();
-            _output.WriteLine($"[photo-accuracy] {imageId}: read [{string.Join(",", readIds)}] expected [{string.Join(",", expectedIds)}]");
-            foreach (var carton in expected)
+            var matches = pooled
+                .Where(r => string.Equals(r.CartonId, carton.Id, StringComparison.Ordinal))
+                .ToList();
+            var read = matches.SingleOrDefault();
+            _output.WriteLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "[photo-accuracy] {0}: mark read {1} expected {2}; damage read {3} expected {4}; legible {5}; class9 {6}",
+                carton.Id,
+                read?.MarkPresent.ToString() ?? "(missing)", carton.MarkPresent,
+                read?.DamageVisible.ToString() ?? "(missing)", IsDamaged(carton),
+                read?.MarkLegible.ToString() ?? "(missing)",
+                read?.Class9Visible.ToString() ?? "(missing)"));
+            if (read is null)
             {
-                var read = reads.SingleOrDefault(r =>
-                    string.Equals(r.CartonId, carton.Id, StringComparison.Ordinal));
-                _output.WriteLine(string.Format(
-                    CultureInfo.InvariantCulture,
-                    "[photo-accuracy] {0} {1}: mark read {2} expected {3}; damage read {4} expected {5}; legible {6}; class9 {7}",
-                    imageId, carton.Id,
-                    read?.MarkPresent.ToString() ?? "(missing)", carton.MarkPresent,
-                    read?.DamageVisible.ToString() ?? "(missing)", IsDamaged(carton),
-                    read?.MarkLegible.ToString() ?? "(missing)",
-                    read?.Class9Visible.ToString() ?? "(missing)"));
-                if (read is null)
-                {
-                    mismatches.Add($"{imageId} {carton.Id}: no read transcribed.");
-                }
-                else
-                {
-                    if (read.MarkPresent != carton.MarkPresent)
-                    {
-                        mismatches.Add($"{imageId} {carton.Id}: mark read {read.MarkPresent}, expected {carton.MarkPresent}.");
-                    }
-
-                    if (read.MarkLegible != carton.MarkPresent)
-                    {
-                        mismatches.Add($"{imageId} {carton.Id}: legible read {read.MarkLegible}, expected {carton.MarkPresent}.");
-                    }
-
-                    if (read.DamageVisible)
-                    {
-                        damageViews[carton.Id].Add(imageId);
-                    }
-
-                    if (!read.Class9Visible)
-                    {
-                        mismatches.Add($"{imageId} {carton.Id}: class9 read False, expected True.");
-                    }
-                }
+                mismatches.Add($"{carton.Id}: no read transcribed.");
+                continue;
             }
 
-            if (!new HashSet<string>(readIds, StringComparer.Ordinal).SetEquals(expectedIds))
+            if (matches.Count > 1)
             {
-                mismatches.Add($"{imageId}: carton set read [{string.Join(",", readIds)}], expected [{string.Join(",", expectedIds)}].");
+                mismatches.Add($"{carton.Id}: read {matches.Count} times, expected once.");
             }
+
+            if (read.MarkPresent != carton.MarkPresent)
+            {
+                mismatches.Add($"{carton.Id}: mark read {read.MarkPresent}, expected {carton.MarkPresent}.");
+            }
+
+            if (read.MarkLegible != carton.MarkPresent)
+            {
+                mismatches.Add($"{carton.Id}: legible read {read.MarkLegible}, expected {carton.MarkPresent}.");
+            }
+
+            if (read.DamageVisible)
+            {
+                damageViews[carton.Id].AddRange(
+                    perImage.Where(kv => kv.Value.Contains(read)).Select(kv => kv.Key));
+            }
+
+            if (!read.Class9Visible)
+            {
+                mismatches.Add($"{carton.Id}: class9 read False, expected True.");
+            }
+        }
+
+        var readIds = pooled.Select(r => r.CartonId).OrderBy(id => id, StringComparer.Ordinal).ToList();
+        var expectedIds = cartons.Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal).ToList();
+        if (!new HashSet<string>(readIds, StringComparer.Ordinal).SetEquals(expectedIds))
+        {
+            mismatches.Add($"carton set read [{string.Join(",", readIds)}], expected [{string.Join(",", expectedIds)}].");
         }
 
         foreach (var carton in cartons)
@@ -494,7 +509,6 @@ public sealed class ToolLoopLiveTests
             }
         }
 
-        var reshotReads = perImage.TryGetValue(reshotId, out var reshot) ? reshot : [];
         var reshotLine = string.Join(";", reshotReads.Select(r =>
             $"{r.CartonId} mark={r.MarkPresent} legible={r.MarkLegible} damage={r.DamageVisible}"));
         _output.WriteLine($"[photo-accuracy] {reshotId} (reshot of {unmarked.Id}): [{reshotLine}] expected [{unmarked.Id} mark=True damage=False]");
@@ -509,8 +523,7 @@ public sealed class ToolLoopLiveTests
             + string.Join("\n", mismatches));
 
         _output.WriteLine("[photo-accuracy] Pallet views read correctly; dock runs on transcribed photo reads.");
-        var dockReads = palletIds.SelectMany(id => perImage[id]).ToList();
-        return new LivePhotoReads(dockReads, reshotReads);
+        return new LivePhotoReads(pooled, reshotReads);
     }
 
     /// <summary>Renders the battery invoice at runtime with SkiaSharp (white

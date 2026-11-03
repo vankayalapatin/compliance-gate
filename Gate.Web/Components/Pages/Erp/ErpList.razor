@@ -18,7 +18,7 @@
             <div>
                 @if (ErpRoutes.CanCreate(Slug))
                 {
-                    <a class="gate-btn gate-btn-primary" href="@ErpRoutes.NewHref(Slug)">New</a>
+                    <a class="gate-btn gate-btn-primary" href="@ErpRoutes.NewHref(Slug)">@ErpRoutes.NewLabelFor(Slug)</a>
                 }
             </div>
         </div>
@@ -59,7 +59,7 @@
                             {
                                 <tr>
                                     <td><a href="@ErpRoutes.RecordHref("so", so.SoNumber)">@so.SoNumber</a></td>
-                                    <td>@so.Status</td>
+                                    <td>@ErpStatusWords.Of(so.Status)</td>
                                     <td>@so.Currency</td>
                                     <td class="gate-num">@ErpFormat.Count(so.Lines.Count)</td>
                                     <td class="gate-num">@ErpFormat.Qty(so.Lines.Sum(l => l.Quantity))</td>
@@ -87,7 +87,7 @@
                             {
                                 <tr>
                                     <td><a href="@ErpRoutes.RecordHref("pr", pr.PrNumber)">@pr.PrNumber</a></td>
-                                    <td>@pr.Status</td>
+                                    <td>@ErpStatusWords.Of(pr.Status)</td>
                                     <td>@pr.Requester</td>
                                     <td class="gate-num">@ErpFormat.Money(pr.EstimatedAmount, pr.Currency)</td>
                                     <td class="gate-num">@ErpFormat.Count(pr.Lines.Count)</td>
@@ -115,9 +115,9 @@
                             {
                                 <tr>
                                     <td><a href="@ErpRoutes.RecordHref("po", po.PoNumber)">@po.PoNumber</a></td>
-                                    <td>@po.ApprovalStatus</td>
-                                    <td>@po.DocStatus</td>
-                                    <td><a href="@ErpRoutes.RecordHref("vendor", po.VendorId)">@po.VendorId</a></td>
+                                    <td>@ErpStatusWords.Of(po.ApprovalStatus)</td>
+                                    <td>@ErpStatusWords.Of(po.DocStatus)</td>
+                                    <td><a href="@ErpRoutes.RecordHref("vendor", po.VendorId)">@VendorName(po.VendorId)</a></td>
                                     <td class="gate-num">@ErpFormat.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)</td>
                                     <td><AgentBanner Source="@po.Source" /></td>
                                 </tr>
@@ -171,7 +171,7 @@
                                     <td><a href="@ErpRoutes.RecordHref("receipt", receipt.ReceiptNumber)">@receipt.ReceiptNumber</a></td>
                                     <td><a href="@ErpRoutes.RecordHref("po", receipt.PoNumber)">@receipt.PoNumber</a></td>
                                     <td>@receipt.SupplierPackingSlipNumber</td>
-                                    <td>@receipt.Status</td>
+                                    <td>@ErpStatusWords.Of(receipt.Status)</td>
                                     <td><AgentBanner Source="@receipt.Source" /></td>
                                 </tr>
                             }
@@ -223,8 +223,8 @@
                             {
                                 <tr>
                                     <td><a href="@ErpRoutes.RecordHref("invoice", inv.VendorId, inv.SupplierInvoiceNumber)">@inv.SupplierInvoiceNumber</a></td>
-                                    <td><a href="@ErpRoutes.RecordHref("vendor", inv.VendorId)">@inv.VendorId</a></td>
-                                    <td>@inv.Status</td>
+                                    <td><a href="@ErpRoutes.RecordHref("vendor", inv.VendorId)">@VendorName(inv.VendorId)</a></td>
+                                    <td>@ErpStatusWords.Of(inv.Status)</td>
                                     <td>@(inv.PoNumber ?? "—")</td>
                                     <td class="gate-num">@ErpFormat.Money(inv.Lines.Sum(l => l.Quantity * l.UnitPrice), inv.Currency)</td>
                                     <td>@(inv.Voucher ?? "—")</td>
@@ -245,15 +245,16 @@
                 {
                     <table class="gate-table">
                         <thead>
-                            <tr><th>Payment</th><th>Status</th><th>Due</th><th>Bank</th><th class="gate-num">Total</th><th>Origin</th></tr>
+                            <tr><th>Payment</th><th>Vendor</th><th>Status</th><th>Due</th><th>Bank</th><th class="gate-num">Total</th><th>Origin</th></tr>
                         </thead>
                         <tbody>
                             @foreach (var pay in payments)
                             {
                                 <tr>
                                     <td><a href="@ErpRoutes.RecordHref("payment", pay.PaymentNumber)">@pay.PaymentNumber</a></td>
-                                    <td>@pay.Status</td>
-                                    <td>@pay.DueDate</td>
+                                    <td>@PaymentVendors(pay)</td>
+                                    <td>@ErpStatusWords.Of(pay.Status)</td>
+                                    <td>@ErpFormat.Day(pay.DueDate)</td>
                                     <td>@pay.PayeeBank.AccountRef (@(pay.PayeeBank.Verified ? "verified" : "not verified"))</td>
                                     <td class="gate-num">@ErpFormat.Money(pay.Lines.Sum(l => l.Amount), pay.Currency)</td>
                                     <td><AgentBanner Source="@pay.Source" /></td>
@@ -282,8 +283,8 @@
                                     <td><a href="@ErpRoutes.RecordHref("hold", hold.HoldId)">@hold.HoldId</a> (@hold.ReasonCode)</td>
                                     <td>@(hold.RuleId ?? "—")</td>
                                     <td><a href="cases/@hold.CaseId">@hold.CaseId</a></td>
-                                    <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
-                                    <td>@hold.SetBy</td>
+                                    <td>@HoldTarget(hold)</td>
+                                    <td>@ActorLabels.Display(hold.SetBy)</td>
                                     <td>@hold.Note</td>
                                 </tr>
                             }
@@ -359,6 +360,8 @@
     private IReadOnlyList<string> _notes = [];
     private string? _loadError;
     private bool _loading = true;
+    private IReadOnlyDictionary<string, string> _vendorNames =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     protected override async Task OnParametersSetAsync()
     {
@@ -367,6 +370,12 @@
         try
         {
             var notes = new List<string>();
+            if (Slug is "po" or "invoice" or "payment")
+            {
+                var vendors = await LoadAsync(Views.ListVendorsAsync(), notes);
+                _vendorNames = vendors.ToDictionary(
+                    v => v.VendorId, v => v.Name, StringComparer.Ordinal);
+            }
             _rows = Slug switch
             {
                 "so" => await LoadAsync(Views.ListSalesOrdersAsync(), notes),
@@ -401,4 +410,19 @@
         notes.AddRange(list.Notes);
         return list.Rows;
     }
+
+    private string VendorName(string vendorId) =>
+        _vendorNames.TryGetValue(vendorId, out var name) ? name : vendorId;
+
+    private string PaymentVendors(Payment pay) =>
+        string.Join(", ", pay.Lines
+            .Select(l => l.VendorId)
+            .Distinct(StringComparer.Ordinal)
+            .Select(VendorName));
+
+    private static string HoldTarget(HoldDto hold) =>
+        string.Join(" · ", new[]
+        {
+            hold.DocumentType, hold.DocumentNumber, hold.PoLineRef, hold.LotRef, hold.CartonId,
+        }.Where(p => !string.IsNullOrWhiteSpace(p)));
 }

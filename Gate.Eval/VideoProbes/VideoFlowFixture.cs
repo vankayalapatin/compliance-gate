@@ -168,7 +168,8 @@ public static class VideoFlowFixture
         var compliance = new ComplianceEngine();
         var dir = Path.Combine(Path.GetTempPath(), "gate-video-probe", Guid.NewGuid().ToString("N"));
         var core = new P2pAgent(erp, models, compliance);
-        var runner = new CaseRunner(erp, core, models, compliance, new ProbeDockAdapter(), dir);
+        var runner = new CaseRunner(erp, core, models, compliance, new ProbeDockAdapter(), dir,
+            splitProposals: new SplitProposals { IsOn = false });
         return new ProbeHarness(erp, core, models, compliance, runner, dir);
     }
 

@@ -383,6 +383,9 @@ public sealed class CaseRunnerTests
         Assert.True(intake.Persisted);
         Assert.Equal(80 * 12m, intake.AcceptedValue);
         Assert.Equal(10 * 12m, intake.HeldValue);
+        var recorded = await h.Erp.GetInvoiceAsync("V-B", "INV-T1");
+        Assert.NotNull(recorded);
+        Assert.Equal(RecordSource.P2pAgent, recorded.CreatedBy);
 
         var invoiced = Load(h, ctx.CaseId);
         var invDecision = PendingDecision(invoiced, DecisionKind.InvoiceApproval);
@@ -398,6 +401,11 @@ public sealed class CaseRunnerTests
         Assert.Equal("finance", pay1.RequestedTo);
         Assert.Equal(80 * 12m, pay1.Amount);
         Assert.Equal("Payment", pay1.DocumentType);
+        var prePay = drafted.Events.Last(e =>
+            e.Kind == CaseEventKind.Note && e.Summary.StartsWith("Pre-pay gate:", StringComparison.Ordinal));
+        Assert.Contains("$120.00 held", prePay.Summary, StringComparison.Ordinal);
+        Assert.Contains("quarantine", prePay.Summary, StringComparison.Ordinal);
+        Assert.Contains("The other $960.00 can be paid.", prePay.Summary, StringComparison.Ordinal);
         Assert.NotNull(pay1.DocumentNumber);
         await h.Runner.ResolveDecisionAsync(ctx.CaseId, pay1.DecisionId, true, "finance", "ok");
 

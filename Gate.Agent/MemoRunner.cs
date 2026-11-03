@@ -598,7 +598,7 @@ public sealed class MemoRunner
         if (blocking.Count > 0)
         {
             throw new InvalidOperationException(
-                $"Decision {decisionId} on memo {memoId} cannot resolve: {blocking.Count} blocking question(s) " +
+                $"Decision {decisionId} on memo {memoId} cannot resolve: {DisplayWords.Plural(blocking.Count, "blocking question")} " +
                 $"are still open ({string.Join(", ", blocking.Select(d => d.DecisionId))}); " +
                 "nothing publishes past a block.");
         }
@@ -607,7 +607,7 @@ public sealed class MemoRunner
         if (declined.Count > 0)
         {
             throw new InvalidOperationException(
-                $"Decision {decisionId} on memo {memoId} cannot resolve: blocking question(s) " +
+                $"Decision {decisionId} on memo {memoId} cannot resolve: blocking questions " +
                 $"{string.Join(", ", declined.Select(d => d.DecisionId))} were declined; " +
                 "the memo is closed without publication.");
         }
@@ -670,22 +670,22 @@ public sealed class MemoRunner
                 ? "validated; nothing to publish."
                 : validation.Conflicts.Count == 0
                     ? "validated with no live-pack conflicts."
-                    : $"validated with conflicts: {string.Join("; ", validation.Conflicts.Select(c => $"{c.RuleId} {c.Kind}"))}."
+                    : $"validated with conflicts: {string.Join("; ", validation.Conflicts.Select(c => $"{c.RuleId} {DisplayWords.Conflict(c.Kind).ToLowerInvariant()}"))}."
             : "REJECTED:\n- " + string.Join("\n- ", validation.Errors);
         var questions = proposal.Questions.Count(q => q.Blocking);
         return $"Proposal {proposal.ProposalId} by Spark for {owner}: {shape} {verdict} " +
-            $"{proposal.Statements.Count} statement(s), {proposal.Resolutions.Count} resolution(s), " +
-            $"{questions} blocking question(s).";
+            $"{DisplayWords.Plural(proposal.Statements.Count, "statement")}, {DisplayWords.Plural(proposal.Resolutions.Count, "resolution")}, " +
+            $"{DisplayWords.Plural(questions, "blocking question")}.";
     }
 
     private static string DescribeWhatIf(
         WhatIfReport report, int historyRows, int pipelineRows, IReadOnlyList<string> caveats)
     {
         var text = $"What-if {report.ProposalHash[..Math.Min(8, report.ProposalHash.Length)]}: " +
-            $"{report.HistoryFlips.Count} history flip(s) over {historyRows} row(s) ({report.HistoryLabel}), " +
-            $"{report.PipelineRows.Count} pipeline row(s) over {pipelineRows} gathered, " +
+            $"{DisplayWords.Plural(report.HistoryFlips.Count, "history flip")} over {DisplayWords.Plural(historyRows, "row")} ({report.HistoryLabel}), " +
+            $"{DisplayWords.Plural(report.PipelineRows.Count, "pipeline row")} over {pipelineRows} gathered, " +
             $"{report.Totals.FlipsToBlock} to block / {report.Totals.FlipsToPass} to pass, " +
-            $"unviable={report.Unviable}.";
+            (report.Unviable ? "unviable: the proposal cannot ship." : "viable.");
         if (caveats.Count > 0)
         {
             text += " Caveats: " + string.Join(" ", caveats);
@@ -717,14 +717,14 @@ public sealed class MemoRunner
             lines.Add(record.Validation.Conflicts.Count == 0
                 ? "Conflicts: none against the live packs."
                 : "Conflicts: " + string.Join("; ",
-                    record.Validation.Conflicts.Select(c => $"{c.RuleId} {c.Kind}: {c.Detail}")));
+                    record.Validation.Conflicts.Select(c => $"{c.RuleId} {DisplayWords.Conflict(c.Kind).ToLowerInvariant()}: {c.Detail}")));
             if (record.WhatIf is not null)
             {
                 var report = record.WhatIf;
-                lines.Add($"What-if: {report.HistoryFlips.Count} history flip(s) ({report.HistoryLabel}), " +
-                    $"{report.PipelineRows.Count} pipeline row(s), " +
+                lines.Add($"What-if: {DisplayWords.Plural(report.HistoryFlips.Count, "history flip")} ({report.HistoryLabel}), " +
+                    $"{DisplayWords.Plural(report.PipelineRows.Count, "pipeline row")}, " +
                     $"{report.Totals.FlipsToBlock} to block / {report.Totals.FlipsToPass} to pass, " +
-                    $"unviable={report.Unviable}.");
+                    (report.Unviable ? "unviable: the proposal cannot ship." : "viable."));
             }
             else
             {

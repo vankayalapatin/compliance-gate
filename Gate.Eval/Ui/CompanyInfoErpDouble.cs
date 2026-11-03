@@ -176,8 +176,8 @@ internal sealed class CompanyInfoErpDouble : IErpAdapter
     public Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordApprovalAsync(documentType, documentNumber, actedBy, approved, comment, idempotencyKey, ct);
 
-    public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.CreatePoAsync(prNumber, vendorId, source, createdBy, idempotencyKey, ct);
+    public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, IReadOnlyList<PoOrderLine>? lines = null, CancellationToken ct = default) =>
+        _inner.CreatePoAsync(prNumber, vendorId, source, createdBy, idempotencyKey, lines, ct);
 
     public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) =>
         _inner.RecordVendorConfirmationAsync(poNumber, confirmDate, source, createdBy, lines, idempotencyKey, ct);

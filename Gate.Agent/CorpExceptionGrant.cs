@@ -68,7 +68,7 @@ public static class CorpExceptionFlow
                 {
                     Kind = VerdictKind.Pass,
                     Reason = $"{v.Reason} Overridden by logged exception from " +
-                        $"{grant.Approver} at {grant.At:u}: {grant.Reason}.",
+                        $"{grant.Approver} at {DisplayWords.When(grant.At)}: {grant.Reason}.",
                 }
                 : v).ToList();
         var excused = new VendorScreening(screening.VendorId, false, verdicts);

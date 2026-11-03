@@ -123,7 +123,7 @@
                             <option value="">— none —</option>
                             @foreach (var po in _pos)
                             {
-                                <option value="@po.PoNumber">@po.PoNumber — @po.VendorId (@po.ApprovalStatus / @po.DocStatus)</option>
+                                <option value="@po.PoNumber">@po.PoNumber — @VendorNameFor(po.VendorId) (@ErpStatusWords.Of(po.ApprovalStatus) / @ErpStatusWords.Of(po.DocStatus))</option>
                             }
                         </select>
                     </div>
@@ -177,8 +177,8 @@
                                     <tr>
                                         <td><input type="checkbox" checked="@_paySelection.Contains(doc)" @onchange="e => TogglePay(doc, e.Value)" aria-label="Pay @doc" /></td>
                                         <td>@inv.SupplierInvoiceNumber</td>
-                                        <td>@inv.VendorId</td>
-                                        <td>@inv.Status</td>
+                                        <td>@VendorNameFor(inv.VendorId)</td>
+                                        <td>@ErpStatusWords.Of(inv.Status)</td>
                                         <td class="gate-num">@ErpFormat.Money(inv.Lines.Sum(l => l.Quantity * l.UnitPrice), inv.Currency)</td>
                                     </tr>
                                 }
@@ -196,7 +196,7 @@
                             <option value="">— pick —</option>
                             @foreach (var asn in _asns)
                             {
-                                <option value="@asn.AsnNumber">@asn.AsnNumber — PO @asn.PoNumber (@asn.Cartons.Count carton(s))</option>
+                                <option value="@asn.AsnNumber">@asn.AsnNumber — PO @asn.PoNumber (@CaseChain.CountWords(asn.Cartons.Count, "carton"))</option>
                             }
                         </select>
                     </div>
@@ -304,6 +304,11 @@
     private IReadOnlyList<VendorDto> _vendors = [];
     private IReadOnlyList<AsnDto> _asns = [];
     private IReadOnlyList<VendorInvoice> _openInvoices = [];
+
+    private string VendorNameFor(string vendorId) =>
+        _vendors.FirstOrDefault(v =>
+            string.Equals(v.VendorId, vendorId, StringComparison.Ordinal))?.Name
+        ?? vendorId;
 
     private string _currency = string.Empty;
     private string _requester = string.Empty;

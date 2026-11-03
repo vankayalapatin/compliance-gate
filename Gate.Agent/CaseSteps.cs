@@ -14,6 +14,8 @@ public enum CaseNextStep
     RaisePr,
     ScreenVendors,
     AwardSupplier,
+    ProposeSplit,
+    CreateSplitChildren,
     CreatePo,
     SubmitPoApproval,
     DraftPayment,
@@ -21,6 +23,7 @@ public enum CaseNextStep
     QueryVendor,
     FinishCase,
     AwaitDecision,
+    AwaitSplitChildren,
     AwaitSupplierAck,
     AwaitAsn,
     AwaitDockReads,
@@ -35,6 +38,7 @@ public static class CaseNextStepExtensions
     public static bool IsWaiting(this CaseNextStep step) => step switch
     {
         CaseNextStep.AwaitDecision => true,
+        CaseNextStep.AwaitSplitChildren => true,
         CaseNextStep.AwaitSupplierAck => true,
         CaseNextStep.AwaitAsn => true,
         CaseNextStep.AwaitDockReads => true,
@@ -76,6 +80,22 @@ public static class CasePicker
     /// marker (a refusal outside any run date) stays sticky.</summary>
     public const string PaymentNotDueMarker = "payment-not-due";
 
+    /// <summary>Note-event marker the deferred split step records when Spark
+    /// does not propose a split: the case falls through to today's
+    /// single-vendor award instead of proposing forever.</summary>
+    public const string SplitSkippedMarker = "split-skipped";
+
+    private static bool SplitSkipped(CaseFile file) => file.Events.Any(e =>
+        e.Kind == CaseEventKind.Note
+        && e.Summary.Contains(SplitSkippedMarker, StringComparison.Ordinal));
+
+    /// <summary>True when some candidate's screening names the origin-cap
+    /// rule: the only block a quantity split can route around. Document
+    /// and identity blocks hold at any quantity, so they never propose.</summary>
+    private static bool HasCorp02Block(CaseFile file) => file.Events.Any(e =>
+        e.Kind == CaseEventKind.VendorScreened
+        && string.Equals(e.RuleId, CorpExceptionFlow.CorpOriginCapRuleId, StringComparison.Ordinal));
+
     public static string PaymentNotDueMarkerFor(DateOnly? runDate) =>
         runDate.HasValue
             ? $"{PaymentNotDueMarker}:{runDate.Value:yyyy-MM-dd}"
@@ -112,12 +132,18 @@ public static class CasePicker
     /// step naming it; otherwise the next runnable agent tool. runDate is the
     /// payment run date behind this pick: a not-due marker blocks only runs
     /// on its date or earlier.</summary>
-    public static (CaseNextStep Step, string Reason) Pick(CaseFile file, CaseErpView view, DateOnly? runDate = null)
+    public static (CaseNextStep Step, string Reason) Pick(
+        CaseFile file, CaseErpView view, DateOnly? runDate = null, bool splitProposals = true)
     {
         var current = file.Case;
         if (current.Stage is CaseStage.Resolved or CaseStage.Closed or CaseStage.Cancelled)
         {
             return (CaseNextStep.Done, $"Case is {current.Stage}.");
+        }
+
+        if (current.Stage == CaseStage.SplitOrdered)
+        {
+            return (CaseNextStep.AwaitSplitChildren, "Split approved; waiting on the split children.");
         }
 
         if (!view.SoExists && !IsErpHandedWork(file))
@@ -163,6 +189,26 @@ public static class CasePicker
                     return (CaseNextStep.AwaitDecision, "CORP-02 exception decision is pending.");
                 }
 
+                var split = file.Decisions.FirstOrDefault(d => d.Kind == DecisionKind.SplitApproval);
+                if (split is not null)
+                {
+                    if (split.Status == DecisionStatus.Pending)
+                    {
+                        return (CaseNextStep.AwaitDecision, "Split award decision is pending.");
+                    }
+
+                    if (split.Status == DecisionStatus.Approved)
+                    {
+                        return (CaseNextStep.CreateSplitChildren, "Split approved; child orders not yet created.");
+                    }
+
+                    // A rejected split falls back to today's single-vendor award.
+                }
+                else if (splitProposals && !SplitSkipped(file) && HasCorp02Block(file))
+                {
+                    return (CaseNextStep.ProposeSplit, "Cheapest vendor may be blocked for the full quantity; read headroom facts first, then split cheaper inside the cap.");
+                }
+
                 return (CaseNextStep.AwardSupplier, "Vendors screened; no supplier awarded yet.");
             }
 
@@ -203,6 +249,7 @@ public static class CasePicker
         }
 
         if (!view.CustomerNotified
+            && current.ParentCaseId is null
             && view.ReceiptExists
             && current.Stage >= CaseStage.DockChecked
             && view.OpenHoldCount == 0
@@ -340,16 +387,18 @@ public static class CasePicker
     /// runnable. Each step offers only its own tool: email belongs to the
     /// vendor-query step alone, never to payment or anything else. Waiting
     /// steps end the advance, so they contribute no action tool.</summary>
-    public static IReadOnlySet<string> LegalTools(CaseFile file, CaseErpView view, DateOnly? runDate = null)
+    public static IReadOnlySet<string> LegalTools(
+        CaseFile file, CaseErpView view, DateOnly? runDate = null, bool splitProposals = true)
     {
         var legal = new HashSet<string>(StringComparer.Ordinal)
         {
             AgentTools.GetCase,
             AgentTools.GetErpView,
             AgentTools.GetMail,
+            AgentTools.GetVendorHeadroom,
             AgentTools.CheckPrePay,
         };
-        var action = AgentTools.ToToolName(Pick(file, view, runDate).Step);
+        var action = AgentTools.ToToolName(Pick(file, view, runDate, splitProposals).Step);
         if (action is not null)
         {
             legal.Add(action);

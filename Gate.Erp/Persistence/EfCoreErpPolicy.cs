@@ -23,7 +23,7 @@ public sealed partial class EfCoreErpAdapter
 
     private async Task RequireSourcingAsync(
         ErpDbContext db, string vendorId, string itemId, decimal awardQuantity,
-        string? prNumber, CancellationToken ct)
+        string? prNumber, CancellationToken ct, string? excludePoNumber = null)
     {
         if (_policy is null)
         {
@@ -40,6 +40,7 @@ public sealed partial class EfCoreErpAdapter
             .Select(d => new VendorDocumentDto(d.VendorId, d.Kind, d.Reference, d.Present))
             .ToList();
         var history = await VolumeHistoryForAsync(db, itemId, ct).ConfigureAwait(false);
+        var open = await OpenOrdersForAsync(db, itemId, excludePoNumber, ct).ConfigureAwait(false);
         var grant = _policyContext is null
             ? null
             : await _policyContext.FindExceptionGrantAsync(
@@ -47,7 +48,7 @@ public sealed partial class EfCoreErpAdapter
         var result = await _policy.CheckSourcingAsync(new SourcingCheckInput(
             vendor.VendorId, vendor.Name, vendor.CountryOfOrigin, vendor.PaymentTermsId,
             item.ItemId, item.Description, item.IsCritical, awardQuantity,
-            docs, history, grant), ct).ConfigureAwait(false);
+            docs, history, grant, open), ct).ConfigureAwait(false);
         if (!result.Allowed)
         {
             throw new InvalidOperationException(result.Refusal!.Display);

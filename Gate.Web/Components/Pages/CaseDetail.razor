@@ -33,7 +33,7 @@ else
         <div class="gate-card-head">
             <p class="gate-card-title">@CaseDisplay.DisplayName(_detail.Case)</p>
             <div class="gate-card-badges">
-                <span class="gate-badge">@_detail.Case.Stage</span>
+                <span class="gate-badge">@CaseDisplay.StageSummary(_detail.Case.Stage)</span>
                 @if (_detail.Case.IsOpeningData)
                 {
                     <span class="gate-chip">opening data</span>
@@ -41,6 +41,10 @@ else
             </div>
         </div>
         <p class="gate-meta">@_detail.Case.CaseId</p>
+        @if (_detail.Case.ParentCaseId is not null)
+        {
+            <p class="gate-meta">Split child of <a href="cases/@_detail.Case.ParentCaseId">@_detail.Case.ParentCaseId</a></p>
+        }
         <ChainStrip Steps="@_detail.Chain" />
         @if (_detail.Case.BlockedByRuleId is null)
         {
@@ -52,6 +56,67 @@ else
         }
     </section>
 
+    @if (_detail.SplitChildren.Count > 0)
+    {
+        <section class="gate-card">
+            <p class="gate-card-title">Split orders</p>
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Child case</th><th>Vendor</th><th class="gate-num">Quantity</th><th>Order</th><th>Stage</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var child in _detail.SplitChildren)
+                    {
+                        <tr>
+                            <td><a href="cases/@child.CaseId">@child.CaseId</a></td>
+                            <td>@child.VendorName</td>
+                            <td class="gate-num">@ErpFormat.Qty(child.Quantity)</td>
+                            <td>
+                                @if (child.PoNumber is null)
+                                {
+                                    <span>—</span>
+                                }
+                                else
+                                {
+                                    <a href="@ErpRoutes.RecordHref("po", child.PoNumber)">@child.PoNumber</a>
+                                }
+                            </td>
+                            <td>@child.Stage</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+    @if (_detail.ScreeningRows.Count > 0)
+    {
+        <section class="gate-card">
+            <p class="gate-card-title">Vendor screening</p>
+            <table class="gate-table">
+                <thead>
+                    <tr><th>Vendor</th><th>Country</th><th class="gate-num">Unit price</th><th>Result</th><th>Reason</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _detail.ScreeningRows)
+                    {
+                        <tr>
+                            <td>
+                                @row.VendorName
+                                @if (row.Awarded)
+                                {
+                                    <span class="gate-badge gate-badge-dark">awarded</span>
+                                }
+                            </td>
+                            <td>@row.Country</td>
+                            <td class="gate-num">@row.Price</td>
+                            <td><span class="gate-badge @(row.Passed ? "gate-badge-dark" : "")">@row.Result</span></td>
+                            <td>@row.Reason</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
     @if (_detail.MathLines.Count > 0)
     {
         <section class="gate-card">
@@ -70,6 +135,7 @@ else
                             <a href="@segment.Href">@segment.Text</a>
                         }
                     }
+                    <span> <a href="@line.HistoryHref">See purchase history</a></span>
                 </p>
             }
         </section>
@@ -140,7 +206,7 @@ else
                         @foreach (var attempt in _detail.Summary.Stopped)
                         {
                             <tr>
-                                <td>@(attempt.At?.ToString("u") ?? "—")</td>
+                                <td>@(attempt.At is null ? "—" : ErpFormat.When(attempt.At.Value))</td>
                                 <td>@attempt.What</td>
                                 <td>@(attempt.RuleId ?? "—")</td>
                                 <td>@attempt.Reason</td>
@@ -243,7 +309,7 @@ else
                         <tr>
                             <td>@hold.HoldId</td>
                             <td>@(hold.RuleId ?? "—")</td>
-                            <td>@hold.DocumentType @hold.DocumentNumber @hold.PoLineRef @hold.LotRef @hold.CartonId</td>
+                            <td>@HoldTarget(hold)</td>
                             <td>@hold.Note</td>
                         </tr>
                     }
@@ -268,11 +334,11 @@ else
                     @foreach (var d in _detail.Decisions)
                     {
                         <tr>
-                            <td><a href="decisions">@d.DecisionId</a> — @d.Title</td>
-                            <td>@d.Kind</td>
-                            <td><span class="gate-badge">@d.Status</span></td>
-                            <td>@(d.RuleId is null ? "—" : $"{d.RuleId}: {d.Reason}")</td>
-                            <td class="gate-num">@(d.Amount is null ? "—" : $"{d.Amount} {d.Currency}")</td>
+                            <td><a href="decisions">@d.Title</a></td>
+                            <td>@ActivityLines.KindWords(d.Kind)</td>
+                            <td><span class="gate-badge">@ErpStatusWords.Of(d.Status)</span></td>
+                            <td>@(_detail.RuleLines.TryGetValue(d.DecisionId, out var ruleLine) ? ruleLine : d.Reason ?? "—")</td>
+                            <td class="gate-num">@(d.Amount is null ? "—" : ErpFormat.Money(d.Amount.Value, d.Currency))</td>
                         </tr>
                     }
                 </tbody>
@@ -291,7 +357,7 @@ else
     {
         <section class="gate-card">
             <p class="gate-card-title">@mail.Subject</p>
-            <p class="gate-meta">From @mail.From · to @mail.To · sent @mail.SentAt.ToString("u")</p>
+            <p class="gate-meta">From @ActorLabels.Display(mail.From) · to @ActorLabels.Display(mail.To) · sent @ErpFormat.When(mail.SentAt)</p>
             <p class="gate-row">@mail.Body</p>
         </section>
     }
@@ -312,8 +378,8 @@ else
                     @foreach (var e in _detail.Events.OrderBy(e => e.Timestamp))
                     {
                         <tr>
-                            <td>@e.Timestamp.ToString("u")</td>
-                            <td>@e.Actor</td>
+                            <td>@ErpFormat.When(e.Timestamp)</td>
+                            <td>@ActorLabels.Display(e.Actor)</td>
                             <td>@CaseEventLabels.Label(e.Kind)</td>
                             <td>
                                 @e.Summary
@@ -323,7 +389,7 @@ else
                                 }
                                 @if (e.Amount is not null)
                                 {
-                                    <span> — @e.Amount @e.Currency</span>
+                                    <span> — @ErpFormat.Money(e.Amount.Value, e.Currency)</span>
                                 }
                             </td>
                         </tr>
@@ -340,6 +406,12 @@ else
 
     private CaseDetailVm? _detail;
     private string? _loadError;
+
+    private static string HoldTarget(HoldDto hold) =>
+        string.Join(" · ", new[]
+        {
+            hold.DocumentType, hold.DocumentNumber, hold.PoLineRef, hold.LotRef, hold.CartonId,
+        }.Where(p => !string.IsNullOrWhiteSpace(p)));
 
     protected override async Task OnInitializedAsync()
     {

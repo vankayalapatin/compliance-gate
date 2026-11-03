@@ -4,6 +4,8 @@
 // reads-without-photo path. Each handler runs, then the runner advances
 // until it waits on external input or completes.
 using Gate.Agent;
+using Gate.Web.Services;
+using Gate.Web.ViewModels;
 
 namespace Gate.Web;
 
@@ -14,6 +16,46 @@ public sealed record ReshotPhotosRequest(string CaseId, List<string> CartonIds, 
 public sealed record ReshotImageRequest(string CaseId, string CartonId);
 
 public sealed record InvoicePhotosRequest(string CaseId, List<InvoicePhoto> Photos);
+
+/// <summary>One simulated carton problem on a shipment notice or a dock
+/// view rebuild: the carton plus the kind (a DockProblemKinds wire name).
+/// Kinds validate against the canonical names; unknown kinds are refused
+/// with their reason, never silently dropped.</summary>
+public sealed record DockProblemInput(string CartonId, string Kind);
+
+public sealed record DockRebuildViewsRequest(string CaseId, List<DockProblemInput>? Problems);
+
+/// <summary>Supplier ASN submission plus the per-carton simulated problems
+/// from the portal picker. Problems is optional: payloads without it bind
+/// exactly like the plain ASN input.</summary>
+public sealed record SupplierAsnWithProblemsRequest(
+    string CaseId,
+    string? AsnNumber,
+    string? SupplierPackingSlipNumber,
+    List<AsnCartonInput>? Cartons,
+    string? IdempotencyKey,
+    List<DockProblemInput>? Problems);
+
+/// <summary>Outcome of rebuilding dock views: the rebuilt image file names
+/// plus the normalized problems, or the failure reason.</summary>
+public sealed record DockRebuildOutcome(
+    bool Ok,
+    string? Error,
+    string CaseId,
+    IReadOnlyList<string> Images,
+    IReadOnlyList<DockProblemForm> Problems);
+
+/// <summary>Outcome of a supplier shipment notice: the minted ASN plus the
+/// receipt, the labeled dock images, and the advance, or the failure
+/// reason. Response shape matches the plain ASN post.</summary>
+public sealed record SupplierAsnOutcome(
+    bool Ok,
+    string? Error,
+    string? AsnNumber,
+    string? ReceiptNumber,
+    IReadOnlyList<string> DockImages,
+    string Step,
+    bool Complete);
 
 public static class SimulationEndpoints
 {
@@ -53,23 +95,34 @@ public static class SimulationEndpoints
         });
 
         app.MapPost("/simulation/supplier/asn", async (
-            SupplierAsnInput input, CaseRunner runner, CancellationToken ct) =>
+            SupplierAsnWithProblemsRequest request, CaseRunner runner, CancellationToken ct) =>
         {
-            var (asn, receipt) = await runner.OnAsnAsync(input, ct).ConfigureAwait(false);
-            // The moment the supplier sends the ASN, the pallet views are
-            // labeled from it (minted PO plus ASN lots) and read live; the
-            // dock counter then offers this truck's own photos.
-            var images = await runner.BuildDockImagesAsync(input.CaseId, ct).ConfigureAwait(false);
-            var advanced = await runner.AdvanceAsync(input.CaseId, ct).ConfigureAwait(false);
-            return Results.Ok(new
-            {
-                asn.AsnNumber,
-                receiptNumber = receipt?.ReceiptNumber,
-                dockImages = images?.Images.Select(i => System.IO.Path.GetFileName(i.FilePath)).ToList()
-                    ?? new List<string>(),
-                step = advanced.Step.ToString(),
-                advanced.Complete,
-            });
+            var outcome = await SubmitSupplierAsnAsync(request, runner, ct).ConfigureAwait(false);
+            return outcome.Ok
+                ? Results.Ok(new
+                {
+                    asnNumber = outcome.AsnNumber,
+                    receiptNumber = outcome.ReceiptNumber,
+                    dockImages = outcome.DockImages,
+                    step = outcome.Step,
+                    complete = outcome.Complete,
+                })
+                : Results.BadRequest(new { error = outcome.Error });
+        });
+
+        app.MapPost("/simulation/dock/rebuild-views", async (
+            DockRebuildViewsRequest request, CaseRunner runner, CancellationToken ct) =>
+        {
+            var outcome = await RebuildDockViewsAsync(request, runner, ct).ConfigureAwait(false);
+            return outcome.Ok
+                ? Results.Ok(new
+                {
+                    caseId = outcome.CaseId,
+                    images = outcome.Images,
+                    problems = outcome.Problems
+                        .Select(p => new { cartonId = p.CartonId, kind = p.Kind }).ToList(),
+                })
+                : Results.BadRequest(new { error = outcome.Error });
         });
 
         app.MapPost("/simulation/dock/reshot-image", async (
@@ -180,5 +233,129 @@ public static class SimulationEndpoints
                 advanced.Complete,
             });
         });
+    }
+
+    /// <summary>Validates simulated problems against the canonical kind
+    /// names. Returns the refusal reason, or null with the normalized
+    /// problems when every entry is valid.</summary>
+    public static string? ValidateDockProblems(
+        IEnumerable<DockProblemInput>? problems, out List<DockProblemForm> normalized)
+    {
+        normalized = [];
+        if (problems is null)
+        {
+            return null;
+        }
+
+        foreach (var problem in problems)
+        {
+            if (problem is null || string.IsNullOrWhiteSpace(problem.CartonId))
+            {
+                return "Every simulated problem needs a carton id.";
+            }
+
+            if (!DockProblemKinds.TryParse(problem.Kind, out var canonical))
+            {
+                return $"Unknown carton problem '{problem.Kind}' for carton {problem.CartonId.Trim()}; " +
+                    $"pick {DockProblemKinds.DescribeOptions()}.";
+            }
+
+            normalized.Add(new DockProblemForm(problem.CartonId.Trim(), canonical));
+        }
+
+        return null;
+    }
+
+    /// <summary>Maps validated picker problems onto the canonical staged
+    /// problem shape. Kinds arrive canonical from validation, so the parse
+    /// cannot fail; the guard keeps the mapping honest.</summary>
+    public static List<SimulatedProblem> ToSimulatedProblems(IEnumerable<DockProblemForm> problems) =>
+        problems.Select(p =>
+            Enum.TryParse<SimulatedProblemKind>(p.Kind, out var kind)
+                ? new SimulatedProblem(p.CartonId, kind)
+                : throw new InvalidOperationException(
+                    $"Unknown carton problem '{p.Kind}' for carton {p.CartonId}.")).ToList();
+
+    /// <summary>Shipment-notice handler: validates the picker problems,
+    /// runs the ASN (problems included) through the runner, then labels
+    /// the pallet views from it and advances as before.</summary>
+    public static async Task<SupplierAsnOutcome> SubmitSupplierAsnAsync(
+        SupplierAsnWithProblemsRequest? request, CaseRunner runner,
+        CancellationToken ct = default)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.CaseId))
+        {
+            return new SupplierAsnOutcome(
+                false, "Case is required for a shipment notice.", null, null, [], string.Empty, false);
+        }
+
+        var invalid = ValidateDockProblems(request.Problems, out var problems);
+        if (invalid is not null)
+        {
+            return new SupplierAsnOutcome(
+                false, invalid, null, null, [], string.Empty, false);
+        }
+
+        var input = new SupplierAsnInput(
+            request.CaseId.Trim(),
+            request.AsnNumber?.Trim() ?? string.Empty,
+            request.SupplierPackingSlipNumber?.Trim() ?? string.Empty,
+            request.Cartons ?? [],
+            request.IdempotencyKey,
+            ToSimulatedProblems(problems));
+        var (asn, receipt) = await runner.OnAsnAsync(input, ct).ConfigureAwait(false);
+        // The moment the supplier sends the ASN, the pallet views are
+        // labeled from it (minted PO plus ASN lots) and read live; the
+        // dock counter then offers this truck's own photos.
+        var images = await runner.BuildDockImagesAsync(input.CaseId, ct).ConfigureAwait(false);
+        var advanced = await runner.AdvanceAsync(input.CaseId, ct).ConfigureAwait(false);
+        return new SupplierAsnOutcome(
+            true, null, asn.AsnNumber, receipt?.ReceiptNumber,
+            images?.Images.Select(i => System.IO.Path.GetFileName(i.FilePath)).ToList()
+                ?? new List<string>(),
+            advanced.Step.ToString(), advanced.Complete);
+    }
+
+    /// <summary>Dock-view rebuild handler: validates the problems, rebuilds
+    /// the case's labeled pallet views through the runner (which persists
+    /// the problems and records any live fallback on the timeline), and
+    /// returns the rebuilt image list. Every failure carries its reason.</summary>
+    public static async Task<DockRebuildOutcome> RebuildDockViewsAsync(
+        DockRebuildViewsRequest? request, CaseRunner runner,
+        CancellationToken ct = default)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.CaseId))
+        {
+            return new DockRebuildOutcome(false, "Case is required to rebuild dock views.", string.Empty, [], []);
+        }
+
+        var invalid = ValidateDockProblems(request.Problems, out var problems);
+        if (invalid is not null)
+        {
+            return new DockRebuildOutcome(false, invalid, request.CaseId.Trim(), [], []);
+        }
+
+        try
+        {
+            var set = await runner.RebuildDockViewsAsync(
+                new RebuildDockViewsInput(request.CaseId.Trim(), ToSimulatedProblems(problems)), ct)
+                .ConfigureAwait(false);
+            if (set is null)
+            {
+                return new DockRebuildOutcome(
+                    false,
+                    $"Dock views for case {request.CaseId.Trim()} could not be rebuilt; the case timeline carries the reason.",
+                    request.CaseId.Trim(), [], []);
+            }
+
+            return new DockRebuildOutcome(
+                true, null, request.CaseId.Trim(),
+                set.Images.Select(i => System.IO.Path.GetFileName(i.FilePath)).ToList(),
+                problems);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new DockRebuildOutcome(false, ex.Message, request.CaseId.Trim(), [], []);
+        }
     }
 }

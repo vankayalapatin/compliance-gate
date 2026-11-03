@@ -141,11 +141,25 @@ public sealed class CaseMailUiTests
     }
 
     [Fact]
-    public void OtherEventLabelsKeepEnumNames()
+    public void EveryEventLabelReadsAsPlainWords()
     {
+        // Multi-word kinds never render their raw member name; single-word
+        // kinds (Note) are already plain.
+        foreach (var kind in Enum.GetValues<CaseEventKind>())
+        {
+            var label = CaseEventLabels.Label(kind);
+            Assert.False(string.IsNullOrWhiteSpace(label));
+            if (kind.ToString().Skip(1).Any(char.IsUpper))
+            {
+                Assert.NotEqual(kind.ToString(), label.Replace(" ", string.Empty));
+            }
+        }
+
         Assert.Equal("Note", CaseEventLabels.Label(CaseEventKind.Note));
-        Assert.Equal("PrApproved", CaseEventLabels.Label(CaseEventKind.PrApproved));
-        Assert.Equal("DockEvaluated", CaseEventLabels.Label(CaseEventKind.DockEvaluated));
+        Assert.Equal("Request approved", CaseEventLabels.Label(CaseEventKind.PrApproved));
+        Assert.Equal("Dock checked", CaseEventLabels.Label(CaseEventKind.DockEvaluated));
+        Assert.Equal("Order placed", CaseEventLabels.Label(CaseEventKind.PoCreated));
+        Assert.Equal("Payment posted", CaseEventLabels.Label(CaseEventKind.PaymentPosted));
     }
 
     [Fact]

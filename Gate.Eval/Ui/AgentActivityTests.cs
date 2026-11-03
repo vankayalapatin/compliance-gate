@@ -393,7 +393,7 @@ public sealed class AgentActivityTests
 
         var vm = await service.BuildAsync();
 
-        Assert.Equal("Idle.", vm.Now);
+        Assert.Equal("Idle", vm.Now);
         Assert.Empty(vm.Waiting);
         Assert.Empty(vm.Recent);
     }
@@ -419,7 +419,7 @@ public sealed class AgentActivityTests
 
         var vm = await service.BuildAsync();
 
-        Assert.Equal("Idle.", vm.Now);
+        Assert.Equal("Idle", vm.Now);
         var waiting = Assert.Single(vm.Waiting);
         Assert.StartsWith("Battery cell for SO-1001: agent step stopped:", waiting.Text);
         Assert.DoesNotContain(": agent.", waiting.Text);
@@ -456,6 +456,62 @@ public sealed class AgentActivityTests
         Assert.DoesNotContain("Waiting on", cut.Markup);
         cut.FindAll("button").Single(b => b.TextContent == "Activity").Click();
         cut.WaitForAssertion(() => Assert.Contains("Waiting on", cut.Markup));
+    }
+
+    [Fact]
+    public void ScreeningLinesNameTheVendorAndTheRule()
+    {
+        var lookups = Lookups(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["V-A"] = "CinderVolt Energy Ltd",
+            ["V-B"] = "Meridian Cellworks Inc",
+        });
+        var file = UiTestSupport.CaseFileWith("CASE-9", "SO-9", "BAT-9");
+        var now = DateTimeOffset.UtcNow;
+        var failed = new CaseEvent("e1", "CASE-9", now, RecordSource.P2pAgent,
+            CaseEventKind.VendorScreened, "Vendor V-A failed screening: CORP-02.",
+            "CORP-02", null, null, null, null, null);
+        var passed = new CaseEvent("e2", "CASE-9", now, RecordSource.P2pAgent,
+            CaseEventKind.VendorScreened, "Vendor V-B passed screening.",
+            null, null, null, null, null, null);
+
+        Assert.Equal(
+            "CinderVolt Energy Ltd blocked by CORP-02 for order SO-9.",
+            ActivityLines.EventLine(file, failed, lookups));
+        Assert.Equal(
+            "Meridian Cellworks Inc passed screening for order SO-9.",
+            ActivityLines.EventLine(file, passed, lookups));
+    }
+
+    [Fact]
+    public void RejectionNoteNamesTheVendorAndKeepsTheReason()
+    {
+        var lookups = Lookups(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["V-A"] = "CinderVolt Energy Ltd",
+        });
+        var file = UiTestSupport.CaseFileWith("CASE-9", "SO-9", "BAT-9");
+        var note = new CaseEvent("e3", "CASE-9", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
+            CaseEventKind.Note, "Vendor V-A rejected for the award: CORP-02: share exceeded.",
+            "CORP-02", null, null, null, null, null);
+
+        Assert.Equal(
+            "CinderVolt Energy Ltd blocked by CORP-02 for order SO-9: share exceeded.",
+            ActivityLines.EventLine(file, note, lookups));
+    }
+
+    [Fact]
+    public void DecidedReviewNamesTheReviewNotTheDocument()
+    {
+        var line = ActivityLines.DecidedLine(
+            Lookups(),
+            UiTestSupport.PendingDecision("D-9", "CASE-9", DecisionKind.DockReview, "Receipt", "RCT-9") with
+            {
+                Status = DecisionStatus.Approved,
+                DecidedBy = "Del Delegate",
+            });
+
+        Assert.Equal("Del Delegate approved dock review for receipt RCT-9.", line);
     }
 
     private static AgentActivityService ActivityService(string cacheDir, InMemoryErpAdapter? erp = null)

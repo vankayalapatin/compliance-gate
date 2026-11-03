@@ -27,15 +27,34 @@ internal sealed class GovernanceFakeEngine : IComplianceEngine
 
     public Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor, ItemDto item, IReadOnlyList<VendorDocumentDto> documents,
-        ProposedAward award, IReadOnlyList<VolumeHistory> history, CancellationToken ct = default)
+        ProposedAward award, IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<OpenOrderQty>? openOrders = null, CancellationToken ct = default)
     {
         _ = vendor;
         _ = item;
         _ = documents;
         _ = award;
         _ = history;
+        _ = openOrders;
         _ = ct;
         throw new NotSupportedException("GovernanceFakeEngine carries no vendor verdicts.");
+    }
+
+    public Task<VendorHeadroom> HeadroomAsync(
+        VendorDto vendor, ItemDto item, IReadOnlyList<VendorDocumentDto> documents,
+        decimal requestedQty, IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<VolumeHistory> openOrders, int cartonSize,
+        CancellationToken ct = default)
+    {
+        _ = vendor;
+        _ = item;
+        _ = documents;
+        _ = requestedQty;
+        _ = history;
+        _ = openOrders;
+        _ = cartonSize;
+        _ = ct;
+        throw new NotSupportedException("GovernanceFakeEngine carries no headroom.");
     }
 
     public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(

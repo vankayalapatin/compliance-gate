@@ -172,7 +172,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     }
 
     private async Task RequireSourcingAsync(
-        string vendorId, string itemId, decimal awardQuantity, string? prNumber, CancellationToken ct)
+        string vendorId, string itemId, decimal awardQuantity, string? prNumber, CancellationToken ct,
+        string? excludePoNumber = null)
     {
         if (_policy is null)
         {
@@ -183,6 +184,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         if (!_items.TryGetValue(itemId, out var item)) throw new InvalidOperationException($"Unknown item {itemId}.");
         var docs = _vendorDocs.GetValueOrDefault(vendorId, []);
         var history = VolumeHistoryFor(itemId);
+        var open = OpenOrdersFor(itemId, excludePoNumber);
         var grant = _policyContext is null
             ? null
             : await _policyContext.FindExceptionGrantAsync(
@@ -190,7 +192,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         var result = await _policy.CheckSourcingAsync(new SourcingCheckInput(
             vendor.VendorId, vendor.Name, vendor.CountryOfOrigin, vendor.PaymentTermsId,
             item.ItemId, item.Description, item.IsCritical, awardQuantity,
-            docs, history, grant), ct).ConfigureAwait(false);
+            docs, history, grant, open), ct).ConfigureAwait(false);
         if (!result.Allowed)
         {
             throw new InvalidOperationException(result.Refusal!.Display);
@@ -442,11 +444,53 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             .Order(StringComparer.Ordinal)
             .ToList());
 
+    public Task<decimal?> GetVendorPriceAsync(string vendorId, string itemId, CancellationToken ct = default) =>
+        Task.FromResult(_prices.TryGetValue((vendorId, itemId), out var price) ? price : (decimal?)null);
+
     public Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default) =>
         Task.FromResult(_volumeShares.GetValueOrDefault(vendorId));
 
     public Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default) =>
         Task.FromResult(VolumeHistoryFor(itemId));
+
+    public Task<IReadOnlyList<OpenOrderQty>> GetOpenOrderQuantitiesAsync(string itemId, CancellationToken ct = default) =>
+        Task.FromResult(OpenOrdersFor(itemId, null));
+
+    /// <summary>Open, not-yet-received PO quantity for an item: ordered minus
+    /// received on every PO line whose PO is neither closed nor cancelled.
+    /// The PO under check is excluded so an approval re-check never counts
+    /// the line's own quantity twice (once open, once as the award).</summary>
+    private IReadOnlyList<OpenOrderQty> OpenOrdersFor(string itemId, string? excludePoNumber)
+    {
+        var rows = new List<OpenOrderQty>();
+        foreach (var po in _pos.Values.OrderBy(p => p.PoNumber, StringComparer.Ordinal))
+        {
+            if (po.DocStatus is PoDocStatus.Closed or PoDocStatus.Cancelled)
+            {
+                continue;
+            }
+
+            if (excludePoNumber is not null
+                && string.Equals(po.PoNumber, excludePoNumber, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var vendor = _vendors.GetValueOrDefault(po.VendorId);
+            var country = vendor?.CountryOfOrigin ?? "OTHER";
+            foreach (var line in po.Lines.Where(l =>
+                string.Equals(l.ItemId, itemId, StringComparison.Ordinal)))
+            {
+                var open = line.QtyOrdered - line.QtyReceived;
+                if (open > 0)
+                {
+                    rows.Add(new OpenOrderQty($"PO {po.PoNumber}", country, open));
+                }
+            }
+        }
+
+        return rows;
+    }
 
     private IReadOnlyList<VolumeHistory> VolumeHistoryFor(string itemId)
     {
@@ -513,6 +557,9 @@ public sealed class InMemoryErpAdapter : IErpAdapter
 
     public Task<IReadOnlyList<Settlement>> GetSettlementsAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<Settlement>>(_settlements.Where(s => s.VendorId == vendorId && s.SupplierInvoiceNumber == supplierInvoiceNumber).ToList());
+
+    public Task<IReadOnlyList<HeldRelease>> GetHeldReleasesAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<HeldRelease>>(_heldReleases.Where(r => r.VendorId == vendorId && r.SupplierInvoiceNumber == supplierInvoiceNumber).ToList());
 
     public Task<IReadOnlyList<HoldDto>> GetOpenHoldsAsync(string? documentNumber, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<HoldDto>>(_holds.Values
@@ -647,7 +694,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 var po = _pos.GetValueOrDefault(documentNumber) ?? throw new InvalidOperationException($"Unknown PO {documentNumber}.");
                 foreach (var line in po.Lines)
                 {
-                    await RequireSourcingAsync(po.VendorId, line.ItemId, line.QtyOrdered, po.PrNumber, ct).ConfigureAwait(false);
+                    await RequireSourcingAsync(po.VendorId, line.ItemId, line.QtyOrdered, po.PrNumber, ct, documentNumber).ConfigureAwait(false);
                 }
             }
             if (approved && documentType == "Payment")
@@ -727,28 +774,29 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         }
     }
 
-    public async Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default)
+    public async Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, IReadOnlyList<PoOrderLine>? lines = null, CancellationToken ct = default)
     {
         if (TryIdem($"po:{idempotencyKey}", out PurchaseOrder? replay))
         {
             return replay;
         }
 
-        if (!_prs.TryGetValue(prNumber, out var pr) || pr.Status != PrStatus.Approved)
+        if (!_prs.TryGetValue(prNumber, out var pr) || pr.Status is not (PrStatus.Approved or PrStatus.PartiallyOrdered))
             throw new InvalidOperationException($"No valid approved PR {prNumber}: PO refused.");
         if (!_vendors.TryGetValue(vendorId, out var vendor)) throw new InvalidOperationException($"Unknown vendor {vendorId}.");
         if (vendor.IsBlocked) throw new InvalidOperationException($"Vendor {vendorId} is blocked: {vendor.BlockReason}.");
-        foreach (var l in pr.Lines)
+        var order = ResolveOrderLines(prNumber, pr, lines);
+        foreach (var l in order)
         {
             await RequireSourcingAsync(vendorId, l.ItemId, l.Quantity, prNumber, ct).ConfigureAwait(false);
         }
-        var lines = pr.Lines.Select((l, i) =>
+        var poLines = order.Select((l, i) =>
             {
                 if (!_prices.TryGetValue((vendorId, l.ItemId), out var price))
                     throw new InvalidOperationException($"No price for vendor {vendorId} item {l.ItemId}: PO refused.");
                 return new PurchaseOrderLine($"PO-L{i + 1}", i + 1, l.ItemId, l.Quantity, 0, 0, 0, 0, price, l.Quantity * price);
             }).ToList();
-            var total = lines.Sum(l => l.LineAmount);
+            var total = poLines.Sum(l => l.LineAmount);
             var approval = total < _autoApproveThreshold ? PoApprovalStatus.Approved : PoApprovalStatus.Draft;
             var poNow = DateTimeOffset.UtcNow;
             var poNumber = Next("PO");
@@ -762,13 +810,74 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                     $"Auto-approved: {total} {pr.Currency} under the {_autoApproveThreshold} threshold.", total, _autoApproveThreshold));
             }
             var po = new PurchaseOrder(poNumber, prNumber, vendorId, vendor.PaymentTermsId, approval,
-                PoDocStatus.Open, pr.Currency, source, createdBy, idempotencyKey, lines, CreatedAt: poNow, ApprovedBy: poApprovedBy, ApprovedAt: poApprovedAt);
-            foreach (var l in lines) _lastPrice[l.ItemId] = l.UnitPrice;
+                PoDocStatus.Open, pr.Currency, source, createdBy, idempotencyKey, poLines, CreatedAt: poNow, ApprovedBy: poApprovedBy, ApprovedAt: poApprovedAt);
+            foreach (var l in poLines) _lastPrice[l.ItemId] = l.UnitPrice;
             _pos[po.PoNumber] = po;
             _requesters[("PO", po.PoNumber)] = pr.Requester;
-            _prs[prNumber] = pr with { Status = PrStatus.Closed };
+            _prs[prNumber] = pr with { Status = PrFullyOrdered(prNumber, pr) ? PrStatus.Closed : PrStatus.PartiallyOrdered };
             return SetIdem($"po:{idempotencyKey}", po);
     }
+
+    /// <summary>Resolves what a PO actually orders: the whole request when no
+    /// lines are named, else the named quantities. Every line must name a
+    /// requested item with a positive quantity, and no item may exceed what
+    /// the request still has left across all its non-cancelled POs.</summary>
+    private IReadOnlyList<PoOrderLine> ResolveOrderLines(
+        string prNumber, PurchaseRequisition pr, IReadOnlyList<PoOrderLine>? lines)
+    {
+        var wanted = lines ?? pr.Lines.Select(l => new PoOrderLine(l.ItemId, l.Quantity)).ToList();
+        if (wanted.Count == 0)
+        {
+            throw new InvalidOperationException($"PR {prNumber} names nothing to order: PO refused.");
+        }
+
+        var requested = pr.Lines
+            .GroupBy(l => l.ItemId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity), StringComparer.Ordinal);
+        var now = wanted
+            .GroupBy(l => l.ItemId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantity), StringComparer.Ordinal);
+        foreach (var (itemId, qty) in now)
+        {
+            if (qty <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"PO for PR {prNumber} must order a positive quantity of {itemId}: PO refused.");
+            }
+
+            if (!requested.TryGetValue(itemId, out var ask))
+            {
+                throw new InvalidOperationException(
+                    $"PR {prNumber} does not request {itemId}: PO refused.");
+            }
+
+            var ordered = OrderedForPr(prNumber, itemId);
+            if (ordered + qty > ask)
+            {
+                throw new InvalidOperationException(
+                    $"PR {prNumber} requests {DisplayWords.Qty(ask)} of {itemId} with " +
+                    $"{DisplayWords.Qty(ask - ordered)} left: ordering {DisplayWords.Qty(qty)} is refused.");
+            }
+        }
+
+        return wanted;
+    }
+
+    /// <summary>Quantity already ordered for one request line across the
+    /// request's non-cancelled POs. Cancelled POs consume nothing; received
+    /// ones still count, since reorders go on a new request.</summary>
+    private decimal OrderedForPr(string prNumber, string itemId) =>
+        _pos.Values
+            .Where(p => string.Equals(p.PrNumber, prNumber, StringComparison.Ordinal)
+                && p.DocStatus is not PoDocStatus.Cancelled)
+            .SelectMany(p => p.Lines)
+            .Where(l => string.Equals(l.ItemId, itemId, StringComparison.Ordinal))
+            .Sum(l => l.QtyOrdered);
+
+    private bool PrFullyOrdered(string prNumber, PurchaseRequisition pr) =>
+        pr.Lines
+            .GroupBy(l => l.ItemId, StringComparer.Ordinal)
+            .All(g => OrderedForPr(prNumber, g.Key) >= g.Sum(l => l.Quantity));
 
     public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) =>
         Task.FromResult(Idem($"confirm:{idempotencyKey}", () =>

@@ -69,6 +69,7 @@ builder.Services.AddSingleton<IModelClient>(sp =>
 builder.Services.AddScoped<P2pAgent>();
 builder.Services.AddSingleton<IDockEvaluator, DockEvaluatorService>();
 builder.Services.AddSingleton<PresentationPace>();
+builder.Services.AddSingleton<SplitProposals>();
 builder.Services.AddSingleton(sp => CountryNames.FromConfig(sp.GetRequiredService<IConfiguration>()));
 builder.Services.AddSingleton<IImageLabeler>(sp =>
 {
@@ -88,9 +89,11 @@ builder.Services.AddSingleton(sp =>
     var dockDir = DockPhotoService.ResolveImageDir();
     var assetsDir = Directory.GetParent(dockDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))?.FullName ?? dockDir;
     var cacheDir = CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath);
+    // The library path labels every shipment from the scene catalog; the
+    // legacy spec file stays for the older tests only.
     return new DockImageOptions(
-        dockDir,
-        Path.Combine(assetsDir, "image-specs.json"),
+        Path.Combine(assetsDir, "dock-scenes", "bases"),
+        Path.Combine(assetsDir, "dock-scenes", "scenes.json"),
         Path.Combine(assetsDir, "cartons.json"),
         dockDir,
         Path.Combine(dockDir, ".image-cache"),
@@ -106,7 +109,32 @@ builder.Services.AddScoped(sp => new CaseRunner(
     sp.GetRequiredService<ILogger<CaseRunner>>(),
     pace: sp.GetRequiredService<PresentationPace>(),
     imageLabeler: sp.GetRequiredService<IImageLabeler>(),
-    dockImageOptions: sp.GetRequiredService<DockImageOptions>()));
+    dockImageOptions: sp.GetRequiredService<DockImageOptions>(),
+    countryNames: sp.GetRequiredService<CountryNames>().Map,
+    splitProposals: sp.GetRequiredService<SplitProposals>(),
+    turnMaxTokens: sp.GetRequiredService<TurnBudgetOptions>().TurnMaxTokens,
+    dockSceneLive: sp.GetRequiredService<DockSceneLive>()));
+// Turn token budget from config (MetaApi:TurnMaxTokens).
+builder.Services.AddSingleton(TurnBudgetOptions.FromConfig(builder.Configuration));
+// Dock scene source: photo library unless the Admin live build is on. The
+// scene generator arrives only with MetaImages credentials (SceneModel
+// defaulting to ImageModel); without them the live path reports itself
+// unavailable and the library stays in use.
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var section = config.GetSection("MetaImages");
+    var baseUrl = section["BaseUrl"];
+    var model = DockSceneStatus.SceneModelName(config);
+    var key = section["ApiKey"];
+    ISceneGenerator? generator = string.IsNullOrWhiteSpace(baseUrl)
+        || string.IsNullOrWhiteSpace(model)
+        || string.IsNullOrWhiteSpace(key)
+        ? null
+        : new MetaSceneGenerator(new HttpClient(), new MetaSceneOptions(baseUrl, model, key));
+    return new DockSceneLive { SceneGenerator = generator };
+});
+builder.Services.AddSingleton<DockSceneStatus>();
 builder.Services.AddSingleton(sp => new CaseCacheStore(
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddSingleton(sp => new MemoFileStore(

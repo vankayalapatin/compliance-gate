@@ -231,7 +231,7 @@ public static class ScenarioLoader
             await erp.SubmitForApprovalAsync("PR", pr.PrNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
             await erp.RecordApprovalAsync("PR", pr.PrNumber, approver, true, "scenario seed", Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
         }
-        var po = await erp.CreatePoAsync(pr.PrNumber, vendor, RecordSource.P2pAgent, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
+        var po = await erp.CreatePoAsync(pr.PrNumber, vendor, RecordSource.P2pAgent, requester, Guid.NewGuid().ToString("N"), ct: ct).ConfigureAwait(false);
         if (po.ApprovalStatus == PoApprovalStatus.Draft)
         {
             await erp.SubmitForApprovalAsync("PO", po.PoNumber, approver, requester, Guid.NewGuid().ToString("N"), ct).ConfigureAwait(false);
@@ -319,7 +319,7 @@ public static class ScenarioLoader
         var backbonePr = await DraftPrAsync(lc.BackboneQty).ConfigureAwait(false);
         if (backbonePr.Status == PrStatus.Draft) await ApprovePrAsync(backbonePr.PrNumber).ConfigureAwait(false);
         var backbonePo = await erp.CreatePoAsync(
-            backbonePr.PrNumber, lc.Vendor, RecordSource.P2pAgent, requester, Idem(), ct).ConfigureAwait(false);
+            backbonePr.PrNumber, lc.Vendor, RecordSource.P2pAgent, requester, Idem(), ct: ct).ConfigureAwait(false);
         if (backbonePo.ApprovalStatus == PoApprovalStatus.Draft)
         {
             await erp.SubmitForApprovalAsync("PO", backbonePo.PoNumber, approver, requester, Idem(), ct).ConfigureAwait(false);
@@ -357,7 +357,7 @@ public static class ScenarioLoader
         {
             var pr = await DraftPrAsync(quantity).ConfigureAwait(false);
             if (pr.Status == PrStatus.Draft) await ApprovePrAsync(pr.PrNumber).ConfigureAwait(false);
-            var po = await erp.CreatePoAsync(pr.PrNumber, lc.Vendor, RecordSource.P2pAgent, requester, Idem(), ct).ConfigureAwait(false);
+            var po = await erp.CreatePoAsync(pr.PrNumber, lc.Vendor, RecordSource.P2pAgent, requester, Idem(), ct: ct).ConfigureAwait(false);
             record($"lc.{key}.pr", "PR", pr.PrNumber);
             record($"lc.{key}.po", "PO", po.PoNumber);
             return po;

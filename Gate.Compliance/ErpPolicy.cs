@@ -35,7 +35,7 @@ public sealed class ErpPolicy : IErpPolicy
                 input.ExceptionGrant.Reason);
         var award = new ProposedAward(input.ItemId, input.AwardQuantity, input.Country);
         var verdicts = await _engine.EvaluateVendorWithExceptionAsync(
-            vendor, item, input.Documents, award, input.History, exception, ct)
+            vendor, item, input.Documents, award, input.History, exception, ct, input.OpenOrders)
             .ConfigureAwait(false);
         var block = verdicts.FirstOrDefault(v =>
             v.Kind == VerdictKind.Block

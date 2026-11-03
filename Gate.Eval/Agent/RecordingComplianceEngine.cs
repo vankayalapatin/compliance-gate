@@ -48,8 +48,16 @@ internal sealed class RecordingComplianceEngine : IComplianceEngine
 
     public Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor, ItemDto item, IReadOnlyList<VendorDocumentDto> documents,
-        ProposedAward award, IReadOnlyList<VolumeHistory> history, CancellationToken ct = default) =>
-        _inner.EvaluateVendorAsync(vendor, item, documents, award, history, ct);
+        ProposedAward award, IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<OpenOrderQty>? openOrders = null, CancellationToken ct = default) =>
+        _inner.EvaluateVendorAsync(vendor, item, documents, award, history, openOrders, ct);
+
+    public Task<VendorHeadroom> HeadroomAsync(
+        VendorDto vendor, ItemDto item, IReadOnlyList<VendorDocumentDto> documents,
+        decimal requestedQty, IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<VolumeHistory> openOrders, int cartonSize,
+        CancellationToken ct = default) =>
+        _inner.HeadroomAsync(vendor, item, documents, requestedQty, history, openOrders, cartonSize, ct);
 
     public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
         PrePayState state, CancellationToken ct = default)

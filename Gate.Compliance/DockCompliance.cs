@@ -150,7 +150,7 @@ public sealed class DockEvaluator
         if (reads.All(r => r.MarkPresent && r.MarkLegible))
         {
             return new Verdict(MarkRuleId, VerdictKind.Pass,
-                $"{cartonId} shows the lithium-battery mark legible in {reads.Count} read(s).",
+                $"{cartonId} shows the lithium-battery mark legible in {DisplayWords.Plural(reads.Count, "read")}.",
                 source);
         }
 
@@ -158,7 +158,7 @@ public sealed class DockEvaluator
         {
             var images = string.Join(", ", reads.Select(r => r.ImageId).Distinct(StringComparer.Ordinal));
             return new Verdict(MarkRuleId, VerdictKind.Hold,
-                $"{cartonId} shows no lithium-battery mark in {reads.Count} read(s) ({images}); hold for relabel.",
+                $"{cartonId} shows no lithium-battery mark in {DisplayWords.Plural(reads.Count, "read")} ({images}); hold for relabel.",
                 source);
         }
 

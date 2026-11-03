@@ -37,6 +37,11 @@ public interface IErpAdapter
     /// a price cannot be awarded or ordered.</summary>
     Task<IReadOnlyList<string>> GetPricedVendorIdsAsync(string itemId, CancellationToken ct = default) =>
         throw new NotSupportedException("GetPricedVendorIdsAsync is implemented by the ERP layer.");
+    /// <summary>Unit purchase price for one vendor and item, or null when
+    /// the vendor carries no price. Defaults to unsupported until the ERP
+    /// layer implements it.</summary>
+    Task<decimal?> GetVendorPriceAsync(string vendorId, string itemId, CancellationToken ct = default) =>
+        throw new NotSupportedException("GetVendorPriceAsync is implemented by the ERP layer.");
     /// <summary>Legacy precomputed per-vendor share. New paths read raw
     /// history below and let compliance compute; kept for interface stability.</summary>
     Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default);
@@ -44,6 +49,11 @@ public interface IErpAdapter
     /// item, union of seeded openings plus one row per posted receipt line.
     /// Shares are computed from these rows.</summary>
     Task<IReadOnlyList<VolumeHistory>> GetVolumeHistoryAsync(string itemId, CancellationToken ct = default);
+    /// <summary>Raw open, not-yet-received PO quantity in cells for an item,
+    /// one row per open PO line. The cap counts these rows with received
+    /// history. Implemented by the ERP layer.</summary>
+    Task<IReadOnlyList<OpenOrderQty>> GetOpenOrderQuantitiesAsync(string itemId, CancellationToken ct = default) =>
+        throw new NotSupportedException("GetOpenOrderQuantitiesAsync is implemented by the ERP layer.");
     Task<ItemDto?> GetItemAsync(string itemId, CancellationToken ct = default);
     Task<PaymentTermsDto?> GetPaymentTermsAsync(string termsId, CancellationToken ct = default);
     Task<VendorBankDto?> GetVendorBankAsync(string vendorId, CancellationToken ct = default);
@@ -61,6 +71,10 @@ public interface IErpAdapter
     Task<IReadOnlyList<Settlement>> GetSettlementsAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default);
     Task<IReadOnlyList<HoldDto>> GetOpenHoldsAsync(string? documentNumber, CancellationToken ct = default);
     Task<IReadOnlyList<HoldRelease>> GetHoldHistoryAsync(string holdId, CancellationToken ct = default);
+    /// <summary>Held-qty releases per invoice line (who released what and
+    /// when). Defaults to unsupported until the ERP layer implements it.</summary>
+    Task<IReadOnlyList<HeldRelease>> GetHeldReleasesAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default) =>
+        throw new NotSupportedException("GetHeldReleasesAsync is implemented by the ERP layer.");
     Task<IReadOnlyList<ApprovalDto>> GetApprovalsAsync(string documentType, string documentNumber, CancellationToken ct = default);
     /// <summary>Full-list reads for ERP list pages plus POs-by-vendor for
     /// the supplier portal and the pending-approval projection seed.
@@ -98,7 +112,12 @@ public interface IErpAdapter
     Task<PurchaseRequisition?> GetPrAsync(string prNumber, CancellationToken ct = default);
     Task SubmitForApprovalAsync(string documentType, string documentNumber, string routedTo, string submittedBy, string idempotencyKey, CancellationToken ct = default);
     Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default);
-    Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default);
+    /// <summary>Creates a PO against an approved (or partially ordered)
+    /// request. A null line list orders every request line in full; a list
+    /// orders those quantities only. Ordered quantities accumulate per
+    /// request line across POs: ordering more than requested is refused,
+    /// and the request closes only once every line is fully ordered.</summary>
+    Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, IReadOnlyList<PoOrderLine>? lines = null, CancellationToken ct = default);
     Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default);
     /// <summary>ASNs mint from the ASN number sequence. A null asnNumber
     /// mints; an explicit one records the supplier's own reference.

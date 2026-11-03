@@ -22,7 +22,11 @@ public enum CaseStage
     PaymentPartial,
     Resolved,
     Closed,
-    Cancelled
+    Cancelled,
+    /// <summary>Split parent: the approved plan's children are ordering.
+    /// Appended last: stages persist as numbers in case files, so existing
+    /// values never shift.</summary>
+    SplitOrdered
 }
 
 /// <summary>One shortfall-item chain: SO + item plus its document refs and
@@ -48,7 +52,11 @@ public sealed record Case(
     /// <summary>Seeded opening shell: no agent-authored timeline entries,
     /// decisions project 1:1 from ERP pending approvals. Only real runs
     /// show what the agent did.</summary>
-    bool IsOpeningData = false);
+    bool IsOpeningData = false,
+    /// <summary>Split parent case id. Set only on split children: each
+    /// child runs one approved split line through today's single-PO flow,
+    /// and the customer message waits for the parent.</summary>
+    string? ParentCaseId = null);
 
 public enum CaseEventKind
 {
@@ -135,7 +143,12 @@ public enum DecisionKind
     /// memo-to-rule proposal. Reason carries the question, Comment records
     /// the chosen option on approve. The memo waits; nothing publishes
     /// past a block.</summary>
-    PolicyQuestion
+    PolicyQuestion,
+    /// <summary>A person approves a verified split award plan before any PO
+    /// is created. The plan rides on Decision.Split: each line, the final
+    /// country shares, and the saving. Appended last: kinds persist as
+    /// numbers in case files, so existing values never shift.</summary>
+    SplitApproval
 }
 
 public enum DecisionStatus
@@ -165,11 +178,16 @@ public sealed record Decision(
     string? RuleId,
     string? Reason,
     IReadOnlyList<string> EvidenceRefs,
-    string? Comment);
+    string? Comment,
+    /// <summary>Verified split award plan. Set only on SplitApproval cards:
+    /// the lines in creation order, final country shares, totals, and the
+    /// saving versus the single-vendor award.</summary>
+    SplitPlan? Split = null);
 
 /// <summary>One case file: the JSON root the agent writes and the UI reads.
 /// Both sides serialize with web defaults; one file per case.</summary>
 public sealed record CaseFile(
     Case Case,
     IReadOnlyList<CaseEvent> Events,
-    IReadOnlyList<Decision> Decisions);
+    IReadOnlyList<Decision> Decisions,
+    AwardScreeningSnapshot? ScreeningSnapshot = null);

@@ -191,6 +191,13 @@ public partial class CaseRunner
                 input.AsnNumber, po.PoNumber, RecordSource.P2pAgent, po.VendorId,
                 input.Cartons.Select(c => new AsnCarton(c.CartonId, c.ItemId, c.UnitsPerCarton, c.LotRef)).ToList(),
                 input.IdempotencyKey ?? $"{current.CaseId}:asn", ct).ConfigureAwait(false);
+        if (input.SimulatedProblems is { Count: > 0 })
+        {
+            var stored = CaseStore.LoadProblems(_cacheDir, current.CaseId)?.Problems ?? [];
+            var merged = MergeProblems(stored, input.SimulatedProblems);
+            CaseStore.SaveProblems(
+                _cacheDir, new DockProblems(current.CaseId, merged, DateTimeOffset.UtcNow));
+        }
 
         ShipmentReceipt? receipt = current.ReceiptNumber is null
             ? null
@@ -217,7 +224,7 @@ public partial class CaseRunner
             && string.Equals(e.DocumentNumber, asn.AsnNumber, StringComparison.Ordinal)))
         {
             work.AddEvent(CaseEventKind.AsnRecorded,
-                $"ASN {asn.AsnNumber} recorded with {asn.Cartons.Count} carton(s).",
+                $"ASN {asn.AsnNumber} recorded with {DisplayWords.Plural(asn.Cartons.Count, "carton")}.",
                 documentType: "ASN", documentNumber: asn.AsnNumber);
         }
 
@@ -225,8 +232,8 @@ public partial class CaseRunner
             && string.Equals(e.DocumentNumber, receipt.ReceiptNumber, StringComparison.Ordinal)))
         {
             work.AddEvent(CaseEventKind.ReceiptPosted,
-                $"Receipt {receipt.ReceiptNumber} posted for {receipt.Lines.Sum(l => l.QtyReceived)} units " +
-                $"in {receipt.Lines.Count} lot(s).",
+                $"Receipt {receipt.ReceiptNumber} posted for {DisplayWords.Qty(receipt.Lines.Sum(l => l.QtyReceived))} units " +
+                $"in {DisplayWords.Plural(receipt.Lines.Count, "lot")}.",
                 documentType: "Receipt", documentNumber: receipt.ReceiptNumber);
         }
 
@@ -334,7 +341,7 @@ public partial class CaseRunner
                 work.AddEvent(CaseEventKind.Note,
                     $"Reshot for {cartonId} still failing: " +
                     string.Join("; ", verdicts.Where(v => v.Kind != VerdictKind.Pass)
-                        .Select(v => $"{v.RuleId} {v.Kind}.")),
+                        .Select(v => $"{v.RuleId} {DisplayWords.Verdict(v.Kind).ToLowerInvariant()}.")),
                     ruleId: verdicts.First(v => v.Kind != VerdictKind.Pass).RuleId);
             }
         }
@@ -599,7 +606,7 @@ public partial class CaseRunner
             var blankVendor = input.VendorId ?? string.Empty;
             var blankDoc = $"{blankVendor}/{input.SupplierInvoiceNumber}";
             var blankScope = input.IdempotencyKey ?? $"{current.CaseId}:inv:{blankDoc}";
-            var blankBy = await CreatedByAsync(file, ct).ConfigureAwait(false);
+            var blankBy = InvoiceRecorder();
             var blankHeld = await _core.MatchInvoiceAsync(
                 blankVendor, input.SupplierInvoiceNumber, input.PoNumber,
                 RecordSource.P2pAgent, blankBy, lines, ct,
@@ -612,7 +619,7 @@ public partial class CaseRunner
         var vendorId = input.VendorId ?? string.Empty;
         var docKey = $"{vendorId}/{input.SupplierInvoiceNumber}";
         var scope = input.IdempotencyKey ?? $"{current.CaseId}:inv:{docKey}";
-        var createdBy = await CreatedByAsync(file, ct).ConfigureAwait(false);
+        var createdBy = InvoiceRecorder();
 
         var duplicate = !string.IsNullOrWhiteSpace(vendorId)
             && await _erp.GetInvoiceAsync(vendorId, input.SupplierInvoiceNumber, ct).ConfigureAwait(false) is not null;
@@ -691,20 +698,11 @@ public partial class CaseRunner
         return await FinishMatchedIntakeAsync(file, invoice, bankHold: false, ct).ConfigureAwait(false);
     }
 
-    private async Task<string> CreatedByAsync(CaseFile file, CancellationToken ct)
-    {
-        var current = file.Case;
-        if (current.PrNumber is not null)
-        {
-            var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false);
-            if (pr is not null)
-            {
-                return pr.Requester;
-            }
-        }
-
-        return ResolveRequester(file) ?? RecordSource.P2pAgent;
-    }
+    /// <summary>Invoice intake attribution: the agent records the invoice
+    /// from the supplier's document, so the agent is the recorder — never
+    /// the PR requester, who only raised the request.</summary>
+    private static string InvoiceRecorder() =>
+        RecordSource.P2pAgent;
 
     private async Task<InvoiceIntakeOutcome> FinishHeldIntakeAsync(
         CaseFile file, string reason, string docKey, VendorInvoice held,
@@ -716,7 +714,7 @@ public partial class CaseRunner
             .ConfigureAwait(false);
         var work = new CaseWork(file);
         work.AddEvent(CaseEventKind.Note,
-            $"Invoice {docKey} held: {reason} Held value {heldValue} {held.Currency}.",
+            $"Invoice {docKey} held: {reason} Held value {DisplayWords.Money(heldValue, currency)}.",
             documentType: "Invoice", documentNumber: docKey,
             amount: heldValue, currency: currency);
         Decision? decision = null;
@@ -902,9 +900,33 @@ public partial class CaseRunner
             DecisionKind.VendorIdentity => ResolveVendorIdentity(work, decision, approved, decidedBy, comment),
             DecisionKind.ExceptionApproval => await ResolveCorpExceptionAsync(work, decision, approved, decidedBy, comment, ct)
                 .ConfigureAwait(false),
+            DecisionKind.SplitApproval => ResolveSplitApproval(work, decision, approved, decidedBy, comment),
             _ => throw new InvalidOperationException($"Decision kind {decision.Kind} is not resolvable by the runner."),
         };
         work.Save(_cacheDir);
+        if (work.Current.Stage == CaseStage.Cancelled && work.Current.ParentCaseId is not null)
+        {
+            await TryResolveParentAsync(work.Current.ParentCaseId, ct).ConfigureAwait(false);
+        }
+
+        return updated;
+    }
+
+    /// <summary>Split verdicts only flip the card: approve parks the parent
+    /// for child creation on the next advance, reject falls back to today's
+    /// single-vendor award. Nothing is ordered here either way.</summary>
+    private static Decision ResolveSplitApproval(
+        CaseWork work, Decision decision, bool approved, string decidedBy, string? comment)
+    {
+        var updated = work.Decide(decision, approved, decidedBy, comment);
+        var what = decision.Split is null
+            ? "the split award"
+            : $"the split award ({string.Join(", ", decision.Split.Lines.Select(l => $"{DisplayWords.Qty(l.Quantity)} to {l.VendorName}"))})";
+        work.AddEvent(CaseEventKind.Note,
+            approved
+                ? $"Split approved by {decidedBy}: {what}; child orders next."
+                : $"Split rejected by {decidedBy}: {what}; single-vendor award proceeds.",
+            documentType: decision.DocumentType, documentNumber: decision.DocumentNumber);
         return updated;
     }
 

@@ -12,7 +12,8 @@ namespace Gate.Web.ViewModels;
 /// <summary>Governance sidebar: two modules mirroring ErpSidebar. Compliance
 // links are static route vocabulary (like ErpModules slugs); Knowledge
 // spaces arrive at runtime from the engine seam and are rendered from the
-// sidebar's Spaces parameter, never from code.</summary>
+// sidebar's Spaces parameter, never from code. The Exceptions page stays
+// routable by direct visit but is not listed in the sidebar.</summary>
 public static class GovernanceModules
 {
     public const string Compliance = "Compliance";
@@ -35,11 +36,16 @@ public static class GovernanceModules
     [
         new(RulesSlug, "Rules"),
         new(MemosSlug, "Memos"),
-        new(ExceptionsSlug, "Exceptions"),
     ];
+
+    /// <summary>Compliance pages that stay reachable by direct visit even
+    // though the sidebar does not list them.</summary>
+    public static bool IsUnlistedCompliance(string slug) =>
+        string.Equals(slug, ExceptionsSlug, StringComparison.Ordinal);
 
     public static string? ModuleFor(string key) =>
         ComplianceLinks.Any(l => string.Equals(l.Slug, key, StringComparison.Ordinal))
+            || IsUnlistedCompliance(key)
             ? Compliance
             : key.StartsWith("kb:", StringComparison.Ordinal)
                 || string.Equals(key, VersionsSlug, StringComparison.Ordinal)
@@ -49,12 +55,14 @@ public static class GovernanceModules
     public static string TitleFor(string key) =>
         ComplianceLinks.FirstOrDefault(l =>
             string.Equals(l.Slug, key, StringComparison.Ordinal))?.Title
+        ?? (IsUnlistedCompliance(key) ? "Exceptions" : null)
         ?? (key.StartsWith("kb:", StringComparison.Ordinal)
             ? $"KB space {key["kb:".Length..]}"
             : key);
 
     public static bool IsKnownCompliance(string slug) =>
-        ComplianceLinks.Any(l => string.Equals(l.Slug, slug, StringComparison.Ordinal));
+        ComplianceLinks.Any(l => string.Equals(l.Slug, slug, StringComparison.Ordinal))
+        || IsUnlistedCompliance(slug);
 }
 
 /// <summary>Governance area routes. Citation links always pin the proposal's
@@ -98,7 +106,7 @@ public static class GovernanceLabels
         "No dock evaluations recorded; dock-gate counts are zero.";
 
     public static string DockCoverage(int files) =>
-        $"Dock evaluated in {files} case(s).";
+        $"Dock evaluated in {CaseChain.CountWords(files, "case")}.";
 
     public static string ScanLabel(int files) =>
         $"all cases ({files} scanned)";
@@ -206,8 +214,12 @@ public static class RuleBlockScan
 }
 
 /// <summary>One Rules-view row: a live pack rule (regulatory) or a published
-// company rule (activation). Owner, version, and date are pack-level for
-// regulatory rows and activation-level for company rows.</summary>
+// company rule (activation). Every row carries its own pack version and
+// date: live rows show the rule's pack version plus the pack adoption
+// date from the seam; company rows show the activation's new pack
+// version plus its effective date. Owners are rule-level too: live rows
+// show the pack owner, company rows the matched proposal's policy owner
+// (the activation approver when no proposal round matches).</summary>
 public sealed record GovernanceRuleRow(
     string RuleId,
     string PackId,
@@ -224,11 +236,16 @@ public sealed record GovernanceRuleRow(
     string? KbVersion);
 
 /// <summary>Pure Rules-board builder. Live rules come from the seam with
-// their pack owner, adoption date, and public source; company rows come
-// from memo-file activations joined to their proposals by proposal hash
-// (published rules show the approval effective date), block counts from
-// the case-cache scan. A live rule without a source refuses loudly: the
-// pack loader guarantees one, so a miss is an engine bug, never a guess.</summary>
+// their own pack version, pack owner, adoption date, and public source;
+// company rows come from memo-file activations joined to their proposals
+// by proposal hash (each shows its activation's new pack version, the
+// matched round's policy owner, and the effective date; an unmatched
+// activation falls back to its approver), block counts from the
+// case-cache scan. Grounded entries join the proposal's citations plus
+// its resolution citations, deduplicated, so a rule grounded only
+// through resolutions still cites its real entries. A live rule without
+// a source refuses loudly: the pack loader guarantees one, so a miss is
+// an engine bug, never a guess.</summary>
 public static class GovernanceRuleBoard
 {
     public static IReadOnlyList<GovernanceRuleRow> BuildRows(
@@ -261,9 +278,6 @@ public static class GovernanceRuleBoard
             .SelectMany(f => f.Proposals.Select(p => (File: f, Record: p)))
             .GroupBy(t => t.Record.Proposal.ProposalHash, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
-        var packOwner = liveRules
-            .GroupBy(r => r.PackId, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First().Owner, StringComparer.Ordinal);
 
         foreach (var file in memoFiles.OrderBy(f => f.Memo.MemoId, StringComparer.Ordinal))
         {
@@ -272,13 +286,19 @@ public static class GovernanceRuleBoard
                 .ThenBy(a => a.ActivationId, StringComparer.Ordinal))
             {
                 proposalsByHash.TryGetValue(activation.ProposalHash, out var match);
-                var citations = match.Record?.Proposal.Citations ?? [];
+                var proposal = match.Record?.Proposal;
+                IReadOnlyList<KbCitation> citations = proposal is null
+                    ? []
+                    : proposal.Citations
+                        .Concat(proposal.Resolutions.Select(r => r.Citation))
+                        .GroupBy(c => (c.Section, c.EntryId, c.KbVersion))
+                        .Select(g => g.First())
+                        .ToList();
                 var needsReview = KbVersionCompare.NeedsReview(activation.KbVersion, currentKbVersion);
                 blockCounts.TryGetValue(activation.RuleId, out var blocks);
-                packOwner.TryGetValue(activation.PackId, out var owner);
                 rows.Add(new GovernanceRuleRow(
                     activation.RuleId, activation.PackId, activation.NewPackVersion,
-                    owner ?? activation.Approver,
+                    match.Record?.PolicyOwner ?? activation.Approver,
                     activation.EffectiveAt.ToString("yyyy-MM-dd"),
                     PolicyLabels.SourceLine(activation),
                     blocks, citations,
@@ -392,7 +412,7 @@ public static class KbEntries
                 .ToList(),
             KbCitations.Documents => snapshot.Documents
                 .Select(d => new KbEntryVm(
-                    section, d.Id, d.Id, $"{d.Kind} · p2pRelevant={d.P2pRelevant}", null,
+                    section, d.Id, d.Id, $"{d.Kind} · {(d.P2pRelevant ? "used in purchasing" : "reference only")}", null,
                     d.Owner, d.Status?.ToString(), d.Version, DateLabel(d.EffectiveDate),
                     d.CreatedBy, AtLabel(d.CreatedAt), d.ModifiedBy, AtLabel(d.ModifiedAt), d.ApprovedBy))
                 .ToList(),
@@ -496,7 +516,8 @@ public static class KbEntries
 
     private static string? DateLabel(DateOnly? date) => date?.ToString("yyyy-MM-dd");
 
-    private static string? AtLabel(DateTimeOffset? at) => at?.ToString("u");
+    private static string? AtLabel(DateTimeOffset? at) =>
+        at is null ? null : ErpFormat.When(at.Value);
 }
 
 /// <summary>One used-by hit: a proposal citing an entry, or an activation
@@ -595,8 +616,8 @@ public static class ExceptionBoard
                 .Where(d => d.Kind == DecisionKind.ExceptionApproval)
                 .Select(d => new ExceptionRowVm(
                     f.Case.CaseId, d.DecisionId, d.DocumentNumber, d.RuleId,
-                    d.RequestedTo, d.DecidedBy, d.DecidedAt?.ToString("u"),
-                    d.Status.ToString(), d.Reason, d.Comment)))
+                    d.RequestedTo, d.DecidedBy, d.DecidedAt is null ? null : ErpFormat.When(d.DecidedAt.Value),
+                    ErpStatusWords.Of(d.Status), d.Reason, d.Comment)))
             .OrderByDescending(r => r.DecidedAt ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(r => r.DecisionId, StringComparer.Ordinal)
             .ToList();

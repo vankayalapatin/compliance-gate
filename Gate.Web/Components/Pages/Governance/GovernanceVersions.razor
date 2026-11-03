@@ -76,9 +76,9 @@
     }
 
     private string Subtitle() =>
-        _versions is null
-            ? "Loading…"
-            : $"{_versions.Count} version(s) · current {KbDisplay.Version(_current)}.";
+        _loadError is not null ? "Failed to load." :
+        _versions is null ? "Loading…" :
+        $"{CaseChain.CountWords(_versions.Count, "version")} · current {KbDisplay.Version(_current)}.";
 
     private async Task ReloadAsync()
     {

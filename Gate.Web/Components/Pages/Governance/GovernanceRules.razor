@@ -45,7 +45,7 @@
             {
                 <table class="gate-table">
                     <thead>
-                        <tr><th>Rule</th><th>Pack</th><th>Owner</th><th>Date</th><th>Source</th><th class="gate-num">Blocks</th><th>Grounded entries</th><th>Review</th></tr>
+                        <tr><th>Rule</th><th>Pack</th><th>Pack version</th><th>Owner</th><th>Adopted / Effective</th><th>Source</th><th class="gate-num">Blocks</th><th>Grounded entries</th><th>Review</th></tr>
                     </thead>
                     <tbody>
                         @foreach (var row in _rows)
@@ -58,7 +58,8 @@
                                         <span class="gate-badge">company</span>
                                     }
                                 </td>
-                                <td>@row.PackId @row.PackVersion</td>
+                                <td>@row.PackId</td>
+                                <td>@row.PackVersion</td>
                                 <td>@row.Owner</td>
                                 <td>@row.EffectiveOrAdopted</td>
                                 <td>@row.Source</td>
@@ -112,9 +113,9 @@
     }
 
     private string Subtitle() =>
-        _rows is null
-            ? "Loading…"
-            : $"{_rows.Count} rule(s) · KB {KbDisplay.Version(_currentKb)} · counts are {GovernanceLabels.BlocksThisRun.ToLowerInvariant()}.";
+        _loadError is not null ? "Failed to load." :
+        _rows is null ? "Loading…" :
+        $"{CaseChain.CountWords(_rows.Count, "rule")} · KB {KbDisplay.Version(_currentKb)} · counts are {GovernanceLabels.BlocksThisRun.ToLowerInvariant()}.";
 
     private string ScanLabel() => _scanLabel;
 

@@ -57,7 +57,8 @@ public sealed record CropSpec(double X, double Y, double W, double H, int Scale)
 public sealed class DockImagePipeline(
     IImageLabeler labeler,
     IModelClient models,
-    Microsoft.Extensions.Logging.ILogger<DockImagePipeline>? logger = null)
+    Microsoft.Extensions.Logging.ILogger<DockImagePipeline>? logger = null,
+    ISceneGenerator? sceneGenerator = null)
 {
     private readonly Microsoft.Extensions.Logging.ILogger<DockImagePipeline> _logger =
         logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DockImagePipeline>.Instance;
@@ -176,6 +177,24 @@ public sealed class DockImagePipeline(
         else
         {
             readText = await ReadWithOneRetryAsync(view.Id, finalBytes, ct).ConfigureAwait(false);
+            if (path == DockImagePath.Composited
+                && !TryVerifyReads(readText, labels, view.DamageVisible, out var mismatch))
+            {
+                _logger.LogWarning(
+                    "View {ImageId} composited read mismatched the manifest ({Detail}); rebuilding once.",
+                    view.Id, mismatch);
+                finalBytes = DockLabelCompositor.Composite(workBase, labels, view);
+                await File.WriteAllBytesAsync(cachedFile, finalBytes, ct).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
+                sha = VisionReadCache.Sha256Hex(finalBytes);
+                readText = await ReadWithOneRetryAsync(view.Id, finalBytes, ct).ConfigureAwait(false);
+                if (!TryVerifyReads(readText, labels, view.DamageVisible, out mismatch))
+                {
+                    throw new InvalidOperationException(
+                        $"View {view.Id}: composited read mismatched the label manifest after one retry: {mismatch}; refusing to cache it.");
+                }
+            }
+
             readCache.Write(sha, options.ReadPromptVersion, models.ModelName, readText);
             readFromCache = false;
         }
@@ -284,52 +303,83 @@ public sealed class DockImagePipeline(
         message.Length <= max ? message : message[..max] + "...";
 
     public static bool VerifyAgainstManifest(
-        string readText, IReadOnlyList<ResolvedLabel> labels, ViewSpec view)
+        string readText, IReadOnlyList<ResolvedLabel> labels, ViewSpec view) =>
+        TryVerifyReads(readText, labels, view.DamageVisible, out _);
+
+    /// <summary>Field-by-field check of a Spark read against the label
+    /// manifest: read count plus, per carton, carton id, part, PO, lot,
+    /// units, mark, UN number, Class 9, and damage. True when every field
+    /// matches; otherwise false with the carton and field named, so
+    /// callers can record the mismatch and fall back.</summary>
+    public static bool TryVerifyReads(
+        string readText,
+        IReadOnlyList<ResolvedLabel> labels,
+        IReadOnlySet<string> damageVisible,
+        out string mismatchDetail)
     {
         List<JsonElement> reads;
         try
         {
             reads = ParseReads(readText);
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
+            mismatchDetail = $"unparseable read array: {Trim(ex.Message)}";
             return false;
         }
 
         if (reads.Count != labels.Count)
         {
+            mismatchDetail = $"expected {labels.Count} label read(s), found {reads.Count}";
             return false;
         }
 
         foreach (var label in labels)
         {
             var read = reads.FirstOrDefault(element =>
-                string.Equals(element.GetProperty("carton_id").GetString(), label.CartonId, StringComparison.Ordinal));
+                element.ValueKind == JsonValueKind.Object
+                && element.TryGetProperty("carton_id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                && string.Equals(id.GetString(), label.CartonId, StringComparison.Ordinal));
             if (read.ValueKind == JsonValueKind.Undefined)
             {
+                mismatchDetail = $"no read for carton {label.CartonId}";
                 return false;
             }
 
-            if (!StringEquals(read, "part", label.Part)
-                || !StringEquals(read, "po_number", label.PoNumber)
-                || !StringEquals(read, "lot_code", label.Lot)
-                || !IntEquals(read, "units_per_carton", label.Units)
-                || !BoolEquals(read, "mark_present", label.MarkPresent)
-                || !BoolEquals(read, "mark_legible", label.MarkPresent)
-                || !StringEquals(read, "un_number", "UN3480")
-                || !BoolEquals(read, "class9_visible", true)
-                || !BoolEquals(read, "damage_visible", view.DamageVisible.Contains(label.CartonId)))
+            var damaged = damageVisible.Contains(label.CartonId);
+            if (!ExpectString(read, label.CartonId, "part", label.Part, out mismatchDetail)
+                || !ExpectString(read, label.CartonId, "po_number", label.PoNumber, out mismatchDetail)
+                || !ExpectString(read, label.CartonId, "lot_code", label.Lot, out mismatchDetail)
+                || !ExpectInt(read, label.CartonId, "units_per_carton", label.Units, out mismatchDetail)
+                || !ExpectBool(read, label.CartonId, "mark_present", label.MarkPresent, out mismatchDetail)
+                || !ExpectBool(read, label.CartonId, "mark_legible", label.MarkPresent, out mismatchDetail)
+                || !ExpectString(read, label.CartonId, "un_number", "UN3480", out mismatchDetail)
+                || !ExpectBool(read, label.CartonId, "class9_visible", true, out mismatchDetail))
             {
                 return false;
             }
 
-            var noteNull = !read.TryGetProperty("damage_note", out var note) || note.ValueKind == JsonValueKind.Null;
-            if (view.DamageVisible.Contains(label.CartonId) == noteNull && view.DamageVisible.Contains(label.CartonId))
+            // Expected damage verifies through the note: a damaged carton
+            // must carry a damage note, and the flag is only checked for
+            // cartons expected clean.
+            if (!damaged
+                && !ExpectBool(read, label.CartonId, "damage_visible", false, out mismatchDetail))
             {
+                return false;
+            }
+
+            var noteNull = !read.TryGetProperty("damage_note", out var note)
+                || note.ValueKind is not JsonValueKind.String
+                || string.IsNullOrWhiteSpace(note.GetString());
+            if (damaged && noteNull)
+            {
+                mismatchDetail = $"{label.CartonId}: damage_note is blank, the manifest requires a damage note";
                 return false;
             }
         }
 
+        mismatchDetail = string.Empty;
         return true;
     }
 
@@ -352,18 +402,52 @@ public sealed class DockImagePipeline(
         return doc.RootElement.EnumerateArray().Select(element => element.Clone()).ToList();
     }
 
-    private static bool StringEquals(JsonElement read, string key, string? expected) =>
-        read.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
-        && string.Equals(value.GetString(), expected, StringComparison.Ordinal);
+    private static bool ExpectString(
+        JsonElement read, string cartonId, string key, string? expected, out string detail)
+    {
+        var actual = read.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+        if (string.Equals(actual, expected, StringComparison.Ordinal))
+        {
+            detail = string.Empty;
+            return true;
+        }
 
-    private static bool IntEquals(JsonElement read, string key, int expected) =>
-        read.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number
-        && value.TryGetInt32(out var actual) && actual == expected;
+        detail = $"{cartonId}: {key} reads '{actual ?? "<missing>"}', the manifest has '{expected}'";
+        return false;
+    }
 
-    private static bool BoolEquals(JsonElement read, string key, bool expected) =>
-        read.TryGetProperty(key, out var value)
-        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
-        && (value.ValueKind == JsonValueKind.True) == expected;
+    private static bool ExpectInt(
+        JsonElement read, string cartonId, string key, int expected, out string detail)
+    {
+        if (read.TryGetProperty(key, out var value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt32(out var actual)
+            && actual == expected)
+        {
+            detail = string.Empty;
+            return true;
+        }
+
+        detail = $"{cartonId}: {key} does not read {expected}";
+        return false;
+    }
+
+    private static bool ExpectBool(
+        JsonElement read, string cartonId, string key, bool expected, out string detail)
+    {
+        if (read.TryGetProperty(key, out var value)
+            && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            && (value.ValueKind == JsonValueKind.True) == expected)
+        {
+            detail = string.Empty;
+            return true;
+        }
+
+        detail = $"{cartonId}: {key} reads {!expected}, the manifest has {expected}";
+        return false;
+    }
 
     private static string EditPrompt(ViewSpec view, IReadOnlyList<ResolvedLabel> labels, string poNumber)
     {
@@ -454,6 +538,720 @@ public sealed class DockImagePipeline(
     {
         var marker = cachedFile + ".reason";
         return File.Exists(marker) ? File.ReadAllText(marker) : null;
+    }
+
+    public const string NoLiveScenesMessage = "live scenes unavailable: MetaImages not configured";
+
+    public const string LiveFacePromptTemplate =
+        "Locate every cardboard carton front face in this dock photo. " +
+        "Return a JSON array with exactly {0} objects, one per face, each with exactly these keys: " +
+        "x, y, w, h (fractions of image width and height, origin top-left). " +
+        "Cover every face once; never guess. Return ONLY the JSON array, no other text.";
+
+    private static readonly IReadOnlySet<SimulatedProblemKind> NoProblems =
+        new HashSet<SimulatedProblemKind>();
+
+    /// <summary>Library build: dock photos for any ASN carton count from
+    /// the scene catalog at <paramref name="options"/> specs path. Labels
+    /// come straight from the ASN (every carton reads mark-present unless
+    /// a problem says otherwise); problems add missing marks, damage cues,
+    /// and hidden faces. Composite-only: each photo is read back and
+    /// checked field by field, rebuilt plus retried once on mismatch, and
+    /// a second mismatch throws naming the carton and field.</summary>
+    public async Task<DockImageSet> BuildLibraryAsync(
+        AsnDto asn, string poNumber, IReadOnlyList<SimulatedProblem> problems,
+        DockImageOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(asn);
+        ArgumentNullException.ThrowIfNull(problems);
+        ArgumentNullException.ThrowIfNull(options);
+        if (string.IsNullOrWhiteSpace(poNumber))
+        {
+            throw new InvalidOperationException("Dock images need the PO number the ERP minted; it cannot be blank.");
+        }
+
+        if (!string.Equals(asn.PoNumber, poNumber, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"ASN {asn.AsnNumber} is for PO {asn.PoNumber}, not {poNumber}; labels must follow the ASN.");
+        }
+
+        if (asn.Cartons.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"ASN {asn.AsnNumber} carries no cartons; there is nothing to photograph.");
+        }
+
+        var scenes = LoadScenes(options.ImageSpecsPath);
+        var problemMap = ProblemMap(asn, problems);
+        var chunks = AssignScenes(scenes, asn.Cartons);
+        var readCache = new VisionReadCache(options.ReadCacheDir);
+        Directory.CreateDirectory(options.OutputDir);
+        Directory.CreateDirectory(options.ImageCacheDir);
+        var results = new List<DockImageResult>();
+        var chunkNo = 0;
+        foreach (var chunk in chunks)
+        {
+            chunkNo++;
+            var imageId = chunks.Count == 1 ? chunk.Scene.Id : $"{chunk.Scene.Id}-P{chunkNo}";
+            results.Add(await BuildLibraryViewAsync(
+                chunk, imageId, problemMap, poNumber, options, readCache, ct).ConfigureAwait(false));
+        }
+
+        return new DockImageSet(poNumber, results);
+    }
+
+    /// <summary>Close-up for any carton on the ASN: finds the carton's
+    /// library face, cuts the surrounding crop at the scene's close-up
+    /// scale, and draws one large label (the IMG-04 relabel pattern).
+    /// Hidden cartons are refused: they appear in no view.</summary>
+    public async Task<DockImageResult> BuildCloseupAsync(
+        AsnDto asn, string poNumber, string cartonId,
+        IReadOnlyList<SimulatedProblem> problems, DockImageOptions options,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(asn);
+        ArgumentNullException.ThrowIfNull(problems);
+        ArgumentNullException.ThrowIfNull(options);
+        if (string.IsNullOrWhiteSpace(poNumber))
+        {
+            throw new InvalidOperationException("Dock images need the PO number the ERP minted; it cannot be blank.");
+        }
+
+        if (!string.Equals(asn.PoNumber, poNumber, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"ASN {asn.AsnNumber} is for PO {asn.PoNumber}, not {poNumber}; labels must follow the ASN.");
+        }
+
+        var carton = asn.Cartons.FirstOrDefault(c =>
+            string.Equals(c.CartonId, cartonId, StringComparison.Ordinal));
+        if (carton is null)
+        {
+            throw new InvalidOperationException(
+                $"Carton {cartonId} is not on ASN {asn.AsnNumber}; no close-up shows it.");
+        }
+
+        var problemMap = ProblemMap(asn, problems);
+        var kinds = problemMap.TryGetValue(cartonId, out var k) ? k : NoProblems;
+        if (kinds.Contains(SimulatedProblemKind.Hidden))
+        {
+            throw new InvalidOperationException(
+                $"Carton {cartonId} is hidden on ASN {asn.AsnNumber}; no close-up shows it.");
+        }
+
+        var scenes = LoadScenes(options.ImageSpecsPath);
+        var chunks = AssignScenes(scenes, asn.Cartons);
+        DockScene? scene = null;
+        DockSceneFace? face = null;
+        foreach (var chunk in chunks)
+        {
+            for (var i = 0; i < chunk.Cartons.Count; i++)
+            {
+                if (string.Equals(chunk.Cartons[i].CartonId, cartonId, StringComparison.Ordinal))
+                {
+                    scene = chunk.Scene;
+                    face = chunk.Scene.Faces[i];
+                    break;
+                }
+            }
+
+            if (scene is not null)
+            {
+                break;
+            }
+        }
+
+        if (scene is null || face is null)
+        {
+            throw new InvalidOperationException(
+                $"Carton {cartonId} found no library face on ASN {asn.AsnNumber}.");
+        }
+
+        var baseBytes = await File.ReadAllBytesAsync(
+            Path.Combine(options.BasesDir, scene.Base), ct).ConfigureAwait(false);
+        var cropW = Math.Min(1.0, face.W * 2.6);
+        var cropH = Math.Min(1.0, face.H * 2.6);
+        var cropX = Math.Clamp(face.X + face.W / 2 - cropW / 2, 0, 1 - cropW);
+        var cropY = Math.Clamp(face.Y + face.H / 2 - cropH / 2, 0, 1 - cropH);
+        var workBase = DockLabelCompositor.Crop(
+            baseBytes, new CropSpec(cropX, cropY, cropW, cropH, scene.CloseupScale));
+        var label = new ResolvedLabel(
+            carton.CartonId, carton.ItemId, carton.UnitsPerCarton, carton.LotRef,
+            !kinds.Contains(SimulatedProblemKind.MissingMark),
+            0.25, 0.30, 0.50, 0.40, poNumber);
+        var labels = new List<ResolvedLabel> { label };
+        var damage = kinds.Contains(SimulatedProblemKind.Crushed)
+            ? new List<DamageCue> { new(carton.CartonId, 0.25, 0.30, 0.50, 0.40) }
+            : new List<DamageCue>();
+        var damageVisible = kinds.Contains(SimulatedProblemKind.Crushed)
+            ? new HashSet<string>([carton.CartonId], StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+
+        var imageId = $"{scene.Id}-CU-{SanitizeImageId(cartonId)}";
+        Directory.CreateDirectory(options.OutputDir);
+        Directory.CreateDirectory(options.ImageCacheDir);
+        var readCache = new VisionReadCache(options.ReadCacheDir);
+        var cacheKey = VisionReadCache.Sha256Hex(
+            Encoding.UTF8.GetBytes(CanonicalLibraryKey(
+                imageId, workBase, labels, damageVisible, [], poNumber)));
+        var cachedFile = Path.Combine(options.ImageCacheDir, cacheKey + ".jpg");
+        var outFile = Path.Combine(options.OutputDir, options.FilePrefix + imageId + ".jpg");
+        byte[] finalBytes;
+        if (File.Exists(cachedFile))
+        {
+            finalBytes = await File.ReadAllBytesAsync(cachedFile, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            finalBytes = DockLabelCompositor.CompositeLibrary(workBase, labels, damage, [], imageId);
+            await File.WriteAllBytesAsync(cachedFile, finalBytes, ct).ConfigureAwait(false);
+            WritePathMarker(cachedFile, DockImagePath.Composited);
+            WriteReasonMarker(cachedFile, null);
+        }
+
+        await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
+        var (bytes, sha, readText, readFromCache) = await ReadVerifyLibraryAsync(
+            imageId, "Close-up", () => DockLabelCompositor.CompositeLibrary(
+                workBase, labels, damage, [], imageId),
+            finalBytes, cachedFile, outFile, labels, damageVisible,
+            readCache, options, ct).ConfigureAwait(false);
+        _ = bytes;
+        return new DockImageResult(
+            imageId, outFile, sha, DockImagePath.Composited, 0, readFromCache, readText, null);
+    }
+
+    /// <summary>Live path: generates one text-free pallet photo for the
+    /// ASN count, locates the carton faces, draws the ASN labels, and
+    /// reads them back against the manifest. Success returns the photo
+    /// set; ANY failure returns a null set with the reason, so the caller
+    /// can fall back to a library scene and record why.</summary>
+    public async Task<(DockImageSet? Set, string? FailureReason)> TryBuildLiveSceneAsync(
+        AsnDto asn, string poNumber, IReadOnlyList<SimulatedProblem> problems,
+        DockImageOptions options, CancellationToken ct = default)
+    {
+        if (sceneGenerator is null)
+        {
+            return (null, NoLiveScenesMessage);
+        }
+
+        if (asn is null)
+        {
+            return (null, "Live scene needs an ASN; got none.");
+        }
+
+        if (string.IsNullOrWhiteSpace(poNumber))
+        {
+            return (null, "Live scene needs the PO number the ERP minted; it cannot be blank.");
+        }
+
+        if (!string.Equals(asn.PoNumber, poNumber, StringComparison.Ordinal))
+        {
+            return (null, $"ASN {asn.AsnNumber} is for PO {asn.PoNumber}, not {poNumber}; labels must follow the ASN.");
+        }
+
+        if (asn.Cartons.Count == 0)
+        {
+            return (null, $"ASN {asn.AsnNumber} carries no cartons; there is nothing to photograph.");
+        }
+
+        IReadOnlyDictionary<string, IReadOnlySet<SimulatedProblemKind>> problemMap;
+        try
+        {
+            problemMap = ProblemMap(asn, problems ?? Array.Empty<SimulatedProblem>());
+        }
+        catch (InvalidOperationException ex)
+        {
+            return (null, ex.Message);
+        }
+
+        byte[] sceneBytes;
+        try
+        {
+            using var genCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            genCts.CancelAfter(TimeSpan.FromMinutes(5));
+            sceneBytes = await sceneGenerator.GenerateSceneAsync(
+                asn.Cartons.Count, genCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            _logger.LogWarning(
+                ex, "Live scene generation for ASN {Asn} failed; caller falls back to a library scene.",
+                asn.AsnNumber);
+            return (null, $"live scene generation failed: {Trim(ex.Message)}");
+        }
+
+        if (!DockLabelCompositor.Decodes(sceneBytes))
+        {
+            return (null, "live scene generation returned undecodable bytes");
+        }
+
+        string faceText;
+        try
+        {
+            using var faceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            faceCts.CancelAfter(TimeSpan.FromMinutes(5));
+            var located = await models.CompleteAsync(
+                new ModelRequest(
+                    string.Format(LiveFacePromptTemplate, asn.Cartons.Count),
+                    MaxTokens: 4000, ImageJpeg: sceneBytes),
+                faceCts.Token).ConfigureAwait(false);
+            faceText = located.Text;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            _logger.LogWarning(
+                ex, "Live scene face locate for ASN {Asn} failed; caller falls back to a library scene.",
+                asn.AsnNumber);
+            return (null, $"live scene face locate failed: {Trim(ex.Message)}");
+        }
+
+        IReadOnlyList<FaceBox> found;
+        try
+        {
+            found = ParseFaces(faceText);
+        }
+        catch (JsonException ex)
+        {
+            return (null, $"live scene face locate did not parse: {Trim(ex.Message)}");
+        }
+
+        if (found.Count != asn.Cartons.Count)
+        {
+            return (null, $"live scene shows {found.Count} carton face(s) for {asn.Cartons.Count} carton(s); refusing a partial scene");
+        }
+
+        var ordered = found.OrderBy(f => f.Y).ThenBy(f => f.X).ToList();
+        var labels = new List<ResolvedLabel>();
+        var damage = new List<DamageCue>();
+        var occlude = new List<FaceRect>();
+        var damageVisible = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < asn.Cartons.Count; i++)
+        {
+            var carton = asn.Cartons[i];
+            var face = ordered[i];
+            var kinds = problemMap.TryGetValue(carton.CartonId, out var k) ? k : NoProblems;
+            if (kinds.Contains(SimulatedProblemKind.Hidden))
+            {
+                occlude.Add(new FaceRect(face.X, face.Y, face.W, face.H));
+                continue;
+            }
+
+            labels.Add(new ResolvedLabel(
+                carton.CartonId, carton.ItemId, carton.UnitsPerCarton, carton.LotRef,
+                !kinds.Contains(SimulatedProblemKind.MissingMark),
+                face.X, face.Y, face.W, face.H, poNumber));
+            if (kinds.Contains(SimulatedProblemKind.Crushed))
+            {
+                damage.Add(new DamageCue(carton.CartonId, face.X, face.Y, face.W, face.H));
+                damageVisible.Add(carton.CartonId);
+            }
+        }
+
+        const string imageId = "LIVE-01";
+        Directory.CreateDirectory(options.OutputDir);
+        Directory.CreateDirectory(options.ImageCacheDir);
+        var readCache = new VisionReadCache(options.ReadCacheDir);
+        var outFile = Path.Combine(options.OutputDir, options.FilePrefix + imageId + ".jpg");
+        byte[] finalBytes;
+        try
+        {
+            finalBytes = DockLabelCompositor.CompositeLibrary(sceneBytes, labels, damage, occlude, imageId);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            return (null, $"live scene compositing failed: {Trim(ex.Message)}");
+        }
+
+        await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
+        var sha = VisionReadCache.Sha256Hex(finalBytes);
+
+        string readText;
+        try
+        {
+            readText = await ReadWithOneRetryAsync(imageId, finalBytes, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            return (null, $"live scene read-back failed: {Trim(ex.Message)}");
+        }
+
+        if (!TryVerifyReads(readText, labels, damageVisible, out var mismatch))
+        {
+            _logger.LogWarning(
+                "Live scene {ImageId} read-back mismatched the manifest ({Detail}); rebuilding once.",
+                imageId, mismatch);
+            try
+            {
+                finalBytes = DockLabelCompositor.CompositeLibrary(sceneBytes, labels, damage, occlude, imageId);
+                await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
+                sha = VisionReadCache.Sha256Hex(finalBytes);
+                readText = await ReadWithOneRetryAsync(imageId, finalBytes, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+            {
+                return (null, $"live scene read-back failed: {Trim(ex.Message)}");
+            }
+
+            if (!TryVerifyReads(readText, labels, damageVisible, out mismatch))
+            {
+                return (null, $"live scene read-back mismatched the manifest: {mismatch}");
+            }
+        }
+
+        readCache.Write(sha, options.ReadPromptVersion, models.ModelName, readText);
+        _logger.LogInformation(
+            "Live scene {ImageId} for ASN {Asn} verified {Labels} label(s).",
+            imageId, asn.AsnNumber, labels.Count);
+        return (new DockImageSet(
+            poNumber,
+            [new DockImageResult(imageId, outFile, sha, DockImagePath.Composited, 0, false, readText, null)]), null);
+    }
+
+    private async Task<DockImageResult> BuildLibraryViewAsync(
+        LibraryChunk chunk,
+        string imageId,
+        IReadOnlyDictionary<string, IReadOnlySet<SimulatedProblemKind>> problemMap,
+        string poNumber,
+        DockImageOptions options,
+        VisionReadCache readCache,
+        CancellationToken ct)
+    {
+        var scene = chunk.Scene;
+        var baseBytes = await File.ReadAllBytesAsync(
+            Path.Combine(options.BasesDir, scene.Base), ct).ConfigureAwait(false);
+        var labels = new List<ResolvedLabel>();
+        var damage = new List<DamageCue>();
+        var occlude = new List<FaceRect>();
+        var damageVisible = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < chunk.Cartons.Count; i++)
+        {
+            var carton = chunk.Cartons[i];
+            var face = scene.Faces[i];
+            var kinds = problemMap.TryGetValue(carton.CartonId, out var k) ? k : NoProblems;
+            if (kinds.Contains(SimulatedProblemKind.Hidden))
+            {
+                occlude.Add(new FaceRect(face.X, face.Y, face.W, face.H));
+                continue;
+            }
+
+            labels.Add(new ResolvedLabel(
+                carton.CartonId, carton.ItemId, carton.UnitsPerCarton, carton.LotRef,
+                !kinds.Contains(SimulatedProblemKind.MissingMark),
+                face.X, face.Y, face.W, face.H, poNumber));
+            if (kinds.Contains(SimulatedProblemKind.Crushed))
+            {
+                damage.Add(new DamageCue(carton.CartonId, face.X, face.Y, face.W, face.H));
+                damageVisible.Add(carton.CartonId);
+            }
+        }
+
+        var cacheKey = VisionReadCache.Sha256Hex(
+            Encoding.UTF8.GetBytes(CanonicalLibraryKey(
+                imageId, baseBytes, labels, damageVisible, occlude, poNumber)));
+        var cachedFile = Path.Combine(options.ImageCacheDir, cacheKey + ".jpg");
+        var outFile = Path.Combine(options.OutputDir, options.FilePrefix + imageId + ".jpg");
+        byte[] finalBytes;
+        if (File.Exists(cachedFile))
+        {
+            finalBytes = await File.ReadAllBytesAsync(cachedFile, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            finalBytes = DockLabelCompositor.CompositeLibrary(baseBytes, labels, damage, occlude, imageId);
+            await File.WriteAllBytesAsync(cachedFile, finalBytes, ct).ConfigureAwait(false);
+            WritePathMarker(cachedFile, DockImagePath.Composited);
+            WriteReasonMarker(cachedFile, null);
+        }
+
+        await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
+        var (bytes, sha, readText, readFromCache) = await ReadVerifyLibraryAsync(
+            imageId, "Library view",
+            () => DockLabelCompositor.CompositeLibrary(baseBytes, labels, damage, occlude, imageId),
+            finalBytes, cachedFile, outFile, labels, damageVisible,
+            readCache, options, ct).ConfigureAwait(false);
+        _ = bytes;
+        return new DockImageResult(
+            imageId, outFile, sha, DockImagePath.Composited, 0, readFromCache, readText, null);
+    }
+
+    private async Task<(byte[] Bytes, string Sha, string ReadText, bool ReadFromCache)> ReadVerifyLibraryAsync(
+        string imageId,
+        string viewNoun,
+        Func<byte[]> rebuild,
+        byte[] finalBytes,
+        string cachedFile,
+        string outFile,
+        IReadOnlyList<ResolvedLabel> labels,
+        IReadOnlySet<string> damageVisible,
+        VisionReadCache readCache,
+        DockImageOptions options,
+        CancellationToken ct)
+    {
+        var sha = VisionReadCache.Sha256Hex(finalBytes);
+        var cached = readCache.TryRead(sha, options.ReadPromptVersion);
+        if (cached is not null)
+        {
+            return (finalBytes, sha, cached.Text, true);
+        }
+
+        var readText = await ReadWithOneRetryAsync(imageId, finalBytes, ct).ConfigureAwait(false);
+        if (!TryVerifyReads(readText, labels, damageVisible, out var mismatch))
+        {
+            _logger.LogWarning(
+                "{Noun} {ImageId} composited read mismatched the manifest ({Detail}); rebuilding once.",
+                viewNoun, imageId, mismatch);
+            finalBytes = rebuild();
+            await File.WriteAllBytesAsync(cachedFile, finalBytes, ct).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
+            sha = VisionReadCache.Sha256Hex(finalBytes);
+            readText = await ReadWithOneRetryAsync(imageId, finalBytes, ct).ConfigureAwait(false);
+            if (!TryVerifyReads(readText, labels, damageVisible, out mismatch))
+            {
+                throw new InvalidOperationException(
+                    $"{viewNoun} {imageId}: composited read mismatched the label manifest after one retry: {mismatch}; refusing to cache it.");
+            }
+        }
+
+        readCache.Write(sha, options.ReadPromptVersion, models.ModelName, readText);
+        return (finalBytes, sha, readText, false);
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlySet<SimulatedProblemKind>> ProblemMap(
+        AsnDto asn, IReadOnlyList<SimulatedProblem> problems)
+    {
+        var asnIds = new HashSet<string>(
+            asn.Cartons.Select(c => c.CartonId), StringComparer.Ordinal);
+        var map = new Dictionary<string, HashSet<SimulatedProblemKind>>(StringComparer.Ordinal);
+        foreach (var problem in problems)
+        {
+            if (!asnIds.Contains(problem.CartonId))
+            {
+                throw new InvalidOperationException(
+                    $"Problem {problem.Kind} names carton {problem.CartonId}, which is not on ASN {asn.AsnNumber}.");
+            }
+
+            map.TryAdd(problem.CartonId, new HashSet<SimulatedProblemKind>());
+            map[problem.CartonId].Add(problem.Kind);
+        }
+
+        foreach (var (cartonId, kinds) in map)
+        {
+            if (kinds.Contains(SimulatedProblemKind.Hidden) && kinds.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"Carton {cartonId} is hidden, so it cannot also carry another problem.");
+            }
+        }
+
+        return map.ToDictionary(
+            kv => kv.Key, kv => (IReadOnlySet<SimulatedProblemKind>)kv.Value, StringComparer.Ordinal);
+    }
+
+    /// <summary>Loads the scene catalog: ids, counts, bases, ordered faces,
+    /// close-up scales. Anything malformed is refused with the scene named.</summary>
+    public static IReadOnlyList<DockScene> LoadScenes(string scenesPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(scenesPath));
+        if (!doc.RootElement.TryGetProperty("scenes", out var list)
+            || list.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException(
+                $"Scene catalog {scenesPath} has no 'scenes' array.");
+        }
+
+        var scenes = new List<DockScene>();
+        foreach (var spec in list.EnumerateArray())
+        {
+            var id = spec.TryGetProperty("id", out var idJson)
+                && idJson.ValueKind == JsonValueKind.String ? idJson.GetString() : null;
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new InvalidOperationException(
+                    $"Scene catalog {scenesPath} has a scene without an id.");
+            }
+
+            if (!spec.TryGetProperty("counts", out var countsJson)
+                || countsJson.ValueKind != JsonValueKind.Array
+                || countsJson.GetArrayLength() == 0
+                || countsJson.EnumerateArray().Any(c =>
+                    c.ValueKind != JsonValueKind.Number || !c.TryGetInt32(out var n) || n <= 0))
+            {
+                throw new InvalidOperationException(
+                    $"Scene catalog {scenesPath} scene {id} needs a non-empty counts array of positive integers.");
+            }
+
+            var counts = countsJson.EnumerateArray().Select(c => c.GetInt32()).ToList();
+            var baseFile = spec.TryGetProperty("base", out var baseJson)
+                && baseJson.ValueKind == JsonValueKind.String ? baseJson.GetString() : null;
+            if (string.IsNullOrWhiteSpace(baseFile))
+            {
+                throw new InvalidOperationException(
+                    $"Scene catalog {scenesPath} scene {id} names no base file.");
+            }
+
+            if (!spec.TryGetProperty("faces", out var facesJson)
+                || facesJson.ValueKind != JsonValueKind.Array
+                || facesJson.GetArrayLength() == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Scene catalog {scenesPath} scene {id} lists no faces.");
+            }
+
+            var faces = new List<DockSceneFace>();
+            var position = 0;
+            foreach (var faceJson in facesJson.EnumerateArray())
+            {
+                if (!TryGetDouble(faceJson, "x", out var x)
+                    || !TryGetDouble(faceJson, "y", out var y)
+                    || !TryGetDouble(faceJson, "w", out var w)
+                    || !TryGetDouble(faceJson, "h", out var h)
+                    || !faceJson.TryGetProperty("index", out var indexJson)
+                    || indexJson.ValueKind != JsonValueKind.Number
+                    || !indexJson.TryGetInt32(out var index))
+                {
+                    throw new InvalidOperationException(
+                        $"Scene catalog {scenesPath} scene {id} has a face without an integer index and numeric x, y, w, h.");
+                }
+
+                if (index != position)
+                {
+                    throw new InvalidOperationException(
+                        $"Scene catalog {scenesPath} scene {id} faces are not ordered by index (position {position} carries index {index}).");
+                }
+
+                if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > 1 || y + h > 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Scene catalog {scenesPath} scene {id} face {index} falls outside the photo.");
+                }
+
+                faces.Add(new DockSceneFace(index, x, y, w, h));
+                position++;
+            }
+
+            if (!spec.TryGetProperty("closeupScale", out var scaleJson)
+                || scaleJson.ValueKind != JsonValueKind.Number
+                || !scaleJson.TryGetInt32(out var scale)
+                || scale < 1)
+            {
+                throw new InvalidOperationException(
+                    $"Scene catalog {scenesPath} scene {id} needs a closeupScale of at least 1.");
+            }
+
+            scenes.Add(new DockScene(id, counts, baseFile, faces, scale));
+        }
+
+        if (scenes.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"Scene catalog {scenesPath} lists no scenes.");
+        }
+
+        return scenes;
+    }
+
+    /// <summary>Maps ASN cartons onto scenes: exact or nearest-larger scene
+    /// per chunk, first faces in carton order; counts above the largest
+    /// scene split into several views. Every positive count yields photos.</summary>
+    public static IReadOnlyList<LibraryChunk> AssignScenes(
+        IReadOnlyList<DockScene> scenes, IReadOnlyList<AsnCarton> cartons)
+    {
+        if (scenes.Count == 0)
+        {
+            throw new InvalidOperationException("No library scenes to photograph with.");
+        }
+
+        if (cartons.Count == 0)
+        {
+            throw new InvalidOperationException("No cartons to photograph.");
+        }
+
+        var byCapacity = scenes.OrderBy(s => s.Faces.Count).ToList();
+        var chunks = new List<LibraryChunk>();
+        var rest = cartons.ToList();
+        while (rest.Count > 0)
+        {
+            var scene = byCapacity.FirstOrDefault(s => s.Faces.Count >= rest.Count) ?? byCapacity[^1];
+            var take = Math.Min(scene.Faces.Count, rest.Count);
+            chunks.Add(new LibraryChunk(scene, rest.Take(take).ToList()));
+            rest = rest.Skip(take).ToList();
+        }
+
+        return chunks;
+    }
+
+    /// <summary>Parses the face-locate answer: a JSON array of fractional
+    /// boxes. Anything malformed is refused with the reason.</summary>
+    public static IReadOnlyList<FaceBox> ParseFaces(string text)
+    {
+        var faces = new List<FaceBox>();
+        foreach (var element in ParseReads(text))
+        {
+            if (element.ValueKind != JsonValueKind.Object
+                || !TryGetDouble(element, "x", out var x)
+                || !TryGetDouble(element, "y", out var y)
+                || !TryGetDouble(element, "w", out var w)
+                || !TryGetDouble(element, "h", out var h))
+            {
+                throw new JsonException("Face locate entry needs numeric x, y, w, h.");
+            }
+
+            if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > 1 || y + h > 1)
+            {
+                throw new JsonException($"Face box ({x}, {y}, {w}, {h}) falls outside the photo.");
+            }
+
+            faces.Add(new FaceBox(x, y, w, h));
+        }
+
+        return faces;
+    }
+
+    private static bool TryGetDouble(JsonElement element, string key, out double value)
+    {
+        value = 0;
+        return element.TryGetProperty(key, out var json)
+            && json.ValueKind == JsonValueKind.Number
+            && json.TryGetDouble(out value);
+    }
+
+    private static string SanitizeImageId(string cartonId) =>
+        new(cartonId.Select(ch =>
+            char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' ? ch : '_').ToArray());
+
+    private static string CanonicalLibraryKey(
+        string imageId,
+        byte[] baseBytes,
+        IReadOnlyList<ResolvedLabel> labels,
+        IReadOnlySet<string> damageIds,
+        IReadOnlyList<FaceRect> occlude,
+        string poNumber)
+    {
+        var key = new StringBuilder();
+        key.Append(imageId).Append('|').Append(VisionReadCache.Sha256Hex(baseBytes)).Append('|').Append(poNumber);
+        foreach (var label in labels)
+        {
+            key.Append('|').Append(label.CartonId).Append(',').Append(label.Part).Append(',').Append(label.Units)
+                .Append(',').Append(label.Lot).Append(',').Append(label.MarkPresent ? 'M' : 'm')
+                .Append(',').Append(label.X.ToString("F4")).Append(',').Append(label.Y.ToString("F4"))
+                .Append(',').Append(label.W.ToString("F4")).Append(',').Append(label.H.ToString("F4"));
+        }
+
+        key.Append("|D:");
+        foreach (var id in damageIds.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            key.Append(id).Append(',');
+        }
+
+        key.Append("|H:");
+        foreach (var hidden in occlude)
+        {
+            key.Append(hidden.X.ToString("F4")).Append(',').Append(hidden.Y.ToString("F4"))
+                .Append(',').Append(hidden.W.ToString("F4")).Append(',').Append(hidden.H.ToString("F4")).Append(';');
+        }
+
+        return key.ToString();
     }
 
     private static IReadOnlyList<ViewSpec> LoadSpecs(string path)
@@ -567,4 +1365,110 @@ public sealed class DockImagePipeline(
     public sealed record ResolvedLabel(
         string CartonId, string Part, int Units, string Lot, bool MarkPresent,
         double X, double Y, double W, double H, string PoNumber);
+}
+
+/// <summary>Problem kinds one shipment may pin on its cartons so the
+/// photos show a hold: a missing lithium mark, a crushed face, or a
+/// face that appears in no view.</summary>
+public enum SimulatedProblemKind
+{
+    MissingMark,
+    Crushed,
+    Hidden
+}
+
+/// <summary>One named problem on one ASN carton.</summary>
+public sealed record SimulatedProblem(string CartonId, SimulatedProblemKind Kind);
+
+/// <summary>One library scene face: label box as fractions of image
+/// width and height, origin top-left, ordered by index.</summary>
+public sealed record DockSceneFace(int Index, double X, double Y, double W, double H);
+
+/// <summary>One library scene from the catalog: base photo plus faces.</summary>
+public sealed record DockScene(
+    string Id, IReadOnlyList<int> Counts, string Base,
+    IReadOnlyList<DockSceneFace> Faces, int CloseupScale);
+
+/// <summary>One photo's share of an ASN: the scene plus the cartons on
+/// its first faces in ASN order.</summary>
+public sealed record LibraryChunk(DockScene Scene, IReadOnlyList<AsnCarton> Cartons);
+
+/// <summary>One located carton face: fractional box in photo coords.</summary>
+public sealed record FaceBox(double X, double Y, double W, double H);
+
+/// <summary>Text-free pallet photo generation for the live path. Tests
+/// inject fakes; the Meta implementation posts one generation call.</summary>
+public interface ISceneGenerator
+{
+    string GeneratorName { get; }
+
+    /// <summary>Generates one text-free pallet photo showing exactly
+    /// <paramref name="cartonCount"/> cartons. Throws on transport or
+    /// payload failures; the live path turns those into a fallback
+    /// reason, never a silent pass.</summary>
+    Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default);
+}
+
+public sealed record MetaSceneOptions(string BaseUrl, string SceneModel, string ApiKey);
+
+/// <summary>Meta image generation for live scenes. Model and credentials
+/// arrive via options (host binds MetaImages:SceneModel, defaulting to
+/// MetaImages:ImageModel, plus BaseUrl and ApiKey).</summary>
+public sealed class MetaSceneGenerator(HttpClient http, MetaSceneOptions options) : ISceneGenerator
+{
+    public string GeneratorName => "meta-images-generations";
+
+    public static string ScenePrompt(int cartonCount) =>
+        "Photorealistic warehouse dock photograph, straight-on view of a wooden pallet " +
+        $"stacked with exactly {cartonCount} plain brown cardboard shipping cartons, " +
+        "every visible carton face completely blank with no text, no labels, no logos, " +
+        "no markings, soft daylight, concrete floor, blurred dock door background, no people.";
+
+    public async Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default)
+    {
+        if (cartonCount <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot generate a pallet photo for {cartonCount} cartons.");
+        }
+
+        var endpoint = options.BaseUrl.TrimEnd('/') + "/images/generations";
+        using var message = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        message.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
+        message.Content = new StringContent(
+            JsonSerializer.Serialize(new { model = options.SceneModel, prompt = ScenePrompt(cartonCount), n = 1 }),
+            Encoding.UTF8,
+            "application/json");
+
+        using var response = await http.SendAsync(message, ct).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"Image generation failed at {endpoint} (HTTP {(int)response.StatusCode}): {(body.Length <= 300 ? body : body[..300] + "...")}");
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var first = doc.RootElement.GetProperty("data").EnumerateArray().First();
+            if (first.TryGetProperty("b64_json", out var b64) && !string.IsNullOrWhiteSpace(b64.GetString()))
+            {
+                return Convert.FromBase64String(b64.GetString()!);
+            }
+
+            if (first.TryGetProperty("url", out var url) && !string.IsNullOrWhiteSpace(url.GetString()))
+            {
+                return await http.GetByteArrayAsync(url.GetString(), ct).ConfigureAwait(false);
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException($"Image generation at {endpoint} returned an unparseable payload: {ex.Message}");
+        }
+
+        throw new InvalidOperationException(
+            $"Image generation at {endpoint} returned neither b64_json nor url: {(body.Length <= 300 ? body : body[..300] + "...")}");
+    }
 }

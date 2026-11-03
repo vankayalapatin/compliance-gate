@@ -125,7 +125,10 @@ public static class BaselineRestore
         return
         [
             $"Saved ERP database restored ({new FileInfo(liveErpPath).Length} bytes).",
-            $"Live workspace wiped ({wiped} file(s) removed), {copied} saved file(s) copied in.",
+            $"Live workspace wiped ({CountWords(wiped, "file")} removed), {CountWords(copied, "saved file")} copied in.",
         ];
     }
+
+    private static string CountWords(int count, string noun) =>
+        count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 }

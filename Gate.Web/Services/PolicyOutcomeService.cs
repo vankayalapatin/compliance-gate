@@ -6,6 +6,7 @@
 // the runner judges everything else; refusals surface with context.
 using Gate.Agent;
 using Gate.Contracts;
+using Gate.Web.ViewModels;
 
 namespace Gate.Web.Services;
 
@@ -280,21 +281,21 @@ public sealed class PolicyOutcomeService
         if (decision is null)
         {
             return new ReadyResult(false,
-                new PolicyOutcome(false, $"Decision {decisionId} not found on memo '{memoId}'.", []), file);
+                new PolicyOutcome(false, $"That decision is no longer on memo '{memoId}'.", []), file);
         }
 
         if (decision.Kind != kind)
         {
             return new ReadyResult(false,
                 new PolicyOutcome(false,
-                    $"Decision {decisionId} is {decision.Kind}, not a {kind} card.", []), file);
+                    $"That card is {ActivityLines.KindWords(decision.Kind)}, not a {ActivityLines.KindWords(kind)} card.", []), file);
         }
 
         if (decision.Status != DecisionStatus.Pending)
         {
             return new ReadyResult(false,
                 new PolicyOutcome(false,
-                    $"Decision {decisionId} is already {decision.Status} (by {decision.DecidedBy ?? "unknown"}).", []), file);
+                    $"{decision.Title} is already {ErpStatusWords.Of(decision.Status).ToLowerInvariant()} (by {ActorLabels.Display(decision.DecidedBy)}).", []), file);
         }
 
         return new ReadyResult(true, new PolicyOutcome(true, string.Empty, []), file);
@@ -307,7 +308,7 @@ public sealed class PolicyOutcomeService
             var file = await _memos.ReadAsync(memoId, ct).ConfigureAwait(false);
             var decision = file?.Decisions.FirstOrDefault(d =>
                 string.Equals(d.DecisionId, decisionId, StringComparison.Ordinal));
-            return decision?.Status.ToString() ?? "unknown";
+            return decision is null ? "unknown" : ErpStatusWords.Of(decision.Status).ToLowerInvariant();
         }
         catch (Exception ex)
         {

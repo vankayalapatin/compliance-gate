@@ -331,8 +331,8 @@ public sealed class WhatIfGatherListReadsTests
 
         var row = Assert.Single(rows.Where(r => r.DocumentType == MemoWhatIfGather.InvoiceDocumentType));
         Assert.Equal(5m, row.Quantity);
-        var caveat = Assert.Single(caveats.Where(c => c.Contains("invoice row(s)", StringComparison.Ordinal)));
-        Assert.Contains("1 invoice row(s)", caveat, StringComparison.Ordinal);
+        var caveat = Assert.Single(caveats.Where(c => c.Contains("invoice row", StringComparison.Ordinal)));
+        Assert.Contains("1 invoice row", caveat, StringComparison.Ordinal);
         Assert.Contains("V-B/SUP-G2-J", caveat, StringComparison.Ordinal);
     }
 
@@ -407,8 +407,8 @@ public sealed class WhatIfGatherListReadsTests
         var row = Assert.Single(rows.Where(r => r.DocumentType == MemoWhatIfGather.PaymentDocumentType));
         Assert.Equal(payment.PaymentNumber, row.DocumentNumber);
         Assert.Equal(5m, row.Quantity);
-        var caveat = Assert.Single(caveats.Where(c => c.Contains("payment row(s)", StringComparison.Ordinal)));
-        Assert.Contains("1 payment row(s)", caveat, StringComparison.Ordinal);
+        var caveat = Assert.Single(caveats.Where(c => c.Contains("payment row", StringComparison.Ordinal)));
+        Assert.Contains("1 payment row", caveat, StringComparison.Ordinal);
         Assert.Contains(payment.PaymentNumber, caveat, StringComparison.Ordinal);
     }
 
@@ -567,7 +567,7 @@ public sealed class WhatIfGatherListReadsTests
         public Task<PurchaseRequisition> CreatePrAsync(string requester, string source, string createdBy, IReadOnlyList<PurchaseRequisitionLine> lines, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
         public Task SubmitForApprovalAsync(string documentType, string documentNumber, string routedTo, string submittedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<ApprovalDto> RecordApprovalAsync(string documentType, string documentNumber, string actedBy, bool approved, string? comment, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PurchaseOrder> CreatePoAsync(string prNumber, string vendorId, string source, string createdBy, string idempotencyKey, IReadOnlyList<PoOrderLine>? lines = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<VendorConfirmation> RecordVendorConfirmationAsync(string poNumber, DateOnly confirmDate, string source, string createdBy, IReadOnlyList<VendorConfirmLine> lines, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<AsnDto> CreateAsnAsync(string? asnNumber, string poNumber, string source, string createdBy, IReadOnlyList<AsnCarton> cartons, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();
         public Task UpdateSalesOrderStatusAsync(string soNumber, SalesOrderStatus status, string actedBy, string idempotencyKey, CancellationToken ct = default) => throw new NotImplementedException();

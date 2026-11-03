@@ -111,6 +111,9 @@ public static class ActivityLines
         CaseNextStep.RaisePr => "Raising the request",
         CaseNextStep.ScreenVendors => "Screening vendors",
         CaseNextStep.AwardSupplier => "Awarding the supplier",
+        CaseNextStep.ProposeSplit => "Proposing a split",
+        CaseNextStep.CreateSplitChildren => "Placing the split orders",
+        CaseNextStep.AwaitSplitChildren => "Split orders",
         CaseNextStep.CreatePo => "Placing the order",
         CaseNextStep.SubmitPoApproval => "Submitting the approval",
         CaseNextStep.DraftPayment => "Drafting the payment",
@@ -129,7 +132,7 @@ public static class ActivityLines
 
     public static string KindWords(DecisionKind kind) => kind switch
     {
-        DecisionKind.PrApproval => "Request approval",
+        DecisionKind.PrApproval => "Purchase request approval",
         DecisionKind.PoApproval => "Purchase order approval",
         DecisionKind.InvoiceApproval => "Invoice approval",
         DecisionKind.PaymentApproval => "Payment approval",
@@ -141,6 +144,7 @@ public static class ActivityLines
         DecisionKind.VendorIdentity => "Vendor check",
         DecisionKind.PolicyApproval => "Policy approval",
         DecisionKind.PolicyQuestion => "Policy question",
+        DecisionKind.SplitApproval => "Split approval",
         _ => "Review",
     };
 
@@ -318,10 +322,8 @@ public static class ActivityLines
             CaseEventKind.ShortfallComputed => $"Stock check done for {file.Case.ItemId} on order {so}.",
             CaseEventKind.PrCreated => $"Request {doc} raised for order {so}.",
             CaseEventKind.PrSubmitted => $"Request {doc} sent for approval.",
-            CaseEventKind.VendorScreened => e.RuleId is null
-                ? $"A vendor passed screening for order {so}."
-                : $"A vendor failed screening for order {so}: {e.RuleId}.",
-            CaseEventKind.VendorBlocked => $"A vendor failed screening for order {so}: {e.RuleId ?? "blocked"}.",
+            CaseEventKind.VendorScreened => ScreenedLine(file, e, lookups),
+            CaseEventKind.VendorBlocked => BlockedLine(file, e, lookups),
             CaseEventKind.SupplierAwarded => file.Case.AwardedVendorId is null
                 ? $"Order {so} buying awarded to a supplier."
                 : $"Order {so} buying awarded to {VendorName(lookups, file.Case.AwardedVendorId)}.",
@@ -347,12 +349,34 @@ public static class ActivityLines
             CaseEventKind.VendorEmailed => $"Emailed about invoice {InvoiceShort(lookups, doc)}.",
             CaseEventKind.VendorReplied => $"Supplier replied about invoice {InvoiceShort(lookups, doc)}.",
             CaseEventKind.AgentRefused => e.Summary,
-            CaseEventKind.Note => NoteLine(e),
+            CaseEventKind.Note => NoteLine(file, e, lookups),
             // Human approval and review outcomes render from the decisions
             // themselves, which carry who decided and when.
             CaseEventKind.PrRejected or CaseEventKind.ReviewClosed => null,
             _ => null,
         };
+    }
+
+    /// <summary>Screening line naming the vendor and the blocking rule:
+    /// "CinderVolt Energy blocked by CORP-02 for order SO-1001." Passes
+    /// name the vendor with no rule.</summary>
+    public static string ScreenedLine(CaseFile file, CaseEvent e, ActivityLookups lookups)
+    {
+        var vendorId = OriginCapMath.TryParseScreenedVendor(e.Summary);
+        var vendor = vendorId is null ? "A vendor" : VendorName(lookups, vendorId);
+        return e.RuleId is null
+            ? $"{vendor} passed screening for order {file.Case.SoNumber}."
+            : $"{vendor} blocked by {e.RuleId} for order {file.Case.SoNumber}.";
+    }
+
+    /// <summary>Legacy vendor-block line, same naming as screening.</summary>
+    public static string BlockedLine(CaseFile file, CaseEvent e, ActivityLookups lookups)
+    {
+        var vendorId = OriginCapMath.TryParseBlockedVendor(e.Summary);
+        var vendor = vendorId is null ? "A vendor" : VendorName(lookups, vendorId);
+        return e.RuleId is null
+            ? $"{vendor} blocked for order {file.Case.SoNumber}."
+            : $"{vendor} blocked by {e.RuleId} for order {file.Case.SoNumber}.";
     }
 
     /// <summary>Approval-event line: human approvals defer to their decision
@@ -379,7 +403,7 @@ public static class ActivityLines
             : $"{docWords} {e.DocumentNumber} auto-approved by policy.";
     }
 
-    public static string? NoteLine(CaseEvent e)
+    public static string? NoteLine(CaseFile file, CaseEvent e, ActivityLookups lookups)
     {
         // Meta notes stay out of the feed: the candidate dump, aborted-turn
         // traces (failures surface through outcomes), and payment-run
@@ -389,6 +413,17 @@ public static class ActivityLines
             || e.Summary.StartsWith(CasePicker.PaymentNotDueMarker, StringComparison.Ordinal))
         {
             return null;
+        }
+
+        // Award rejections name the vendor, not the id.
+        var rejectedId = OriginCapMath.TryParseBlockedVendor(e.Summary);
+        if (rejectedId is not null && e.RuleId is not null)
+        {
+            var marker = $"{e.RuleId}: ";
+            var reason = e.Summary.Contains(marker, StringComparison.Ordinal)
+                ? e.Summary[(e.Summary.IndexOf(marker, StringComparison.Ordinal) + marker.Length)..]
+                : e.Summary;
+            return $"{VendorName(lookups, rejectedId)} blocked by {e.RuleId} for order {file.Case.SoNumber}: {reason}";
         }
 
         return e.Summary;
@@ -411,6 +446,20 @@ public static class ActivityLines
 
         var verdict = d.Status == DecisionStatus.Approved ? "approved" : "rejected";
         var doc = DocPhrase(lookups, d.DocumentType, d.DocumentNumber);
+        // Reviews decide the review, not the document: "Del approved dock
+        // review for receipt RCT-1035", never "approved receipt RCT-1035".
+        // Review lines carry no amount: the review is not about money.
+        if (d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview or DecisionKind.ApReview
+            or DecisionKind.BankVerification or DecisionKind.VendorIdentity
+            or DecisionKind.ExceptionApproval or DecisionKind.PolicyQuestion
+            or DecisionKind.SplitApproval)
+        {
+            var review = doc.Length == 0
+                ? KindWords(d.Kind).ToLowerInvariant()
+                : $"{KindWords(d.Kind).ToLowerInvariant()} for {doc}";
+            return $"{ActorLabels.Display(d.DecidedBy)} {verdict} {review}.";
+        }
+
         var what = doc.Length == 0 ? KindWords(d.Kind).ToLowerInvariant() : doc;
         var amount = d.Amount is null ? string.Empty : $" for {Money(d.Amount.Value, d.Currency)}";
         return $"{ActorLabels.Display(d.DecidedBy)} {verdict} {what}{amount}.";

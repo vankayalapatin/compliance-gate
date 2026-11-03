@@ -55,4 +55,12 @@ public static class RuleCatalog
 
         return rule;
     }
+
+    /// <summary>Null when the id is not a catalog rule (tool names, match
+    /// codes). Screens use this so unknown ids render honestly instead of
+    /// throwing.</summary>
+    public static RuleDefinition? TryFind(string? ruleId) =>
+        string.IsNullOrWhiteSpace(ruleId)
+            ? null
+            : Rules.FirstOrDefault(r => r.RuleId == ruleId);
 }

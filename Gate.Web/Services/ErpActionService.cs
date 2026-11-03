@@ -238,7 +238,7 @@ public sealed class ErpActionService
         }
 
         await _erp.UpdateSalesOrderStatusAsync(key, status, actor, NewKey(), ct).ConfigureAwait(false);
-        return new ErpOutcome(true, $"Sales order {key} set to {status}.");
+        return new ErpOutcome(true, $"Sales order {key} set to {ErpStatusWords.Of(status).ToLowerInvariant()}.");
     }
 
     private async Task<ErpOutcome> MoveLotAsync(
@@ -376,7 +376,7 @@ public sealed class ErpActionService
         try
         {
             var po = await _erp.CreatePoAsync(
-                prNumber.Trim(), vendorId.Trim(), RecordSource.Human, actedBy.Trim(), NewKey(), ct)
+                prNumber.Trim(), vendorId.Trim(), RecordSource.Human, actedBy.Trim(), NewKey(), ct: ct)
                 .ConfigureAwait(false);
             return new ErpOutcome(true, $"Purchase order {po.PoNumber} created.", po.PoNumber);
         }

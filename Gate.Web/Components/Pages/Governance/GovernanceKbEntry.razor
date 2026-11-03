@@ -1,6 +1,7 @@
 @page "/governance/kb/{Version}/{Section}/{EntryId}"
 @rendermode InteractiveServer
 @using Gate.Agent
+@using Gate.Compliance
 @using Gate.Contracts
 @using Gate.Web.Components.Governance
 @using Gate.Web.Services
@@ -55,6 +56,13 @@
                     <span class="gate-label">Audit:</span>
                     @AuditLine(_detail.Entry)
                 </p>
+                @if (IsItemsSection())
+                {
+                    <p class="gate-row">
+                        <span class="gate-label">ERP item:</span>
+                        <a href="/@ErpRoutes.RecordHref("item", EntryId)">@EntryId</a>
+                    </p>
+                }
                 @if (!string.Equals(_detail.SnapshotVersion, _detail.CurrentVersion, StringComparison.Ordinal))
                 {
                     <p class="gate-row">
@@ -64,7 +72,7 @@
                 }
             </section>
             <section class="gate-card">
-                <p class="gate-card-title">Used by (@_detail.UsedBy.Proposals.Count proposal(s), @_detail.UsedBy.Activations.Count activation(s))</p>
+                <p class="gate-card-title">Used by (@CaseChain.CountWords(_detail.UsedBy.Proposals.Count, "proposal"), @CaseChain.CountWords(_detail.UsedBy.Activations.Count, "activation"))</p>
                 @if (_detail.UsedBy.Proposals.Count == 0 && _detail.UsedBy.Activations.Count == 0)
                 {
                     <p class="gate-meta">No proposal or activation cites this entry.</p>
@@ -131,9 +139,12 @@
     }
 
     private string Subtitle() =>
-        _detail is null
-            ? "Loading…"
-            : $"Pinned at {KbDisplay.Version(_detail.SnapshotVersion)} · current {KbDisplay.Version(_detail.CurrentVersion)}.";
+        _loadError is not null ? "Failed to load." :
+        _detail is null ? "Loading…" :
+        $"Pinned at {KbDisplay.Version(_detail.SnapshotVersion)} · current {KbDisplay.Version(_detail.CurrentVersion)}.";
+
+    private bool IsItemsSection() =>
+        string.Equals(Section, KbCitations.Items, StringComparison.Ordinal);
 
     // Audit stamps with no visibly-empty halves: each stamp renders only
     // the halves the entry carries; a stamp with neither shows unset.

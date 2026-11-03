@@ -11,12 +11,15 @@ public sealed class GovernanceNavTests
     [Fact]
     public void ComplianceLinksAreExact()
     {
+        // Exceptions stays routable but is not listed in the sidebar.
         Assert.Equal(
-            ["rules", "memos", "exceptions"],
+            ["rules", "memos"],
             GovernanceModules.ComplianceLinks.Select(l => l.Slug).ToList());
         Assert.Equal(
-            ["Rules", "Memos", "Exceptions"],
+            ["Rules", "Memos"],
             GovernanceModules.ComplianceLinks.Select(l => l.Title).ToList());
+        Assert.True(GovernanceModules.IsUnlistedCompliance("exceptions"));
+        Assert.False(GovernanceModules.IsUnlistedCompliance("rules"));
     }
 
     [Fact]

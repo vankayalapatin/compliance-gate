@@ -17,7 +17,9 @@ public sealed record DecisionCardVm(
     IReadOnlyList<string> EvidenceCaptions,
     IReadOnlyList<string> ImageFileNames,
     string? ErpSummary,
-    IReadOnlyList<CartonFigureVm> CartonFigures);
+    IReadOnlyList<CartonFigureVm> CartonFigures,
+    string? RuleLine = null,
+    IReadOnlyList<ScreeningRowVm>? ScreeningRows = null);
 
 /// <summary>One held or reviewed carton on a dock decision card: the full
 /// photo the model read (vision reads carry no positions, so never a crop)
@@ -28,6 +30,32 @@ public sealed record CartonFigureVm(
     string? ImageFileName,
     string Caption,
     string? Read);
+
+/// <summary>Raw dock reads render formatted, never as a JSON blob: JSON
+/// pretty-prints, anything else trims. Null stays null.</summary>
+public static class DockReadFormat
+{
+    public static string? Pretty(string? cached)
+    {
+        if (string.IsNullOrWhiteSpace(cached))
+        {
+            return null;
+        }
+
+        var trimmed = cached.Trim();
+        try
+        {
+            using var parsed = System.Text.Json.JsonDocument.Parse(trimmed);
+            return System.Text.Json.JsonSerializer.Serialize(
+                parsed.RootElement,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return trimmed;
+        }
+    }
+}
 
 /// <summary>One SO-to-payment chain step for the Cases surface. IsCurrent
 /// marks the step the case stage points at; at most one step per chain.</summary>
@@ -59,6 +87,7 @@ public static class CaseChain
             CaseStage.Created or CaseStage.ShortfallComputed => SoLabel,
             CaseStage.PrSubmitted or CaseStage.PrApproved => PrLabel,
             CaseStage.VendorScreened or CaseStage.PoPlaced or CaseStage.PoAcknowledged => PoLabel,
+            CaseStage.SplitOrdered => PoLabel,
             CaseStage.AsnRecorded => AsnLabel,
             CaseStage.ReceiptPosted or CaseStage.DockChecked => ReceiptLabel,
             CaseStage.InvoiceMatched => InvoicesLabel,
@@ -78,6 +107,9 @@ public static class CaseChain
             .Select(s => s with { IsCurrent = current is not null && s.Label == current })
             .ToList();
     }
+
+    public static string CountWords(int count, string noun) =>
+        DisplayWords.Plural(count, noun);
 
     /// <summary>List-page strip from the case refs only (no ERP reads).
     /// Statuses are presence-based; the detail page enriches from the ERP.</summary>
@@ -102,11 +134,11 @@ public static class CaseChain
                 ? new(InvoicesLabel, null, "none", null)
                 : new(InvoicesLabel,
                     string.Join("; ", kase.Invoices.Select(i => $"{i.VendorId}/{i.SupplierInvoiceNumber}")),
-                    $"{kase.Invoices.Count} invoice(s)", null),
+                    CountWords(kase.Invoices.Count, "invoice"), null),
             kase.PaymentNumbers.Count == 0
                 ? new(PaymentsLabel, null, "none", null)
                 : new(PaymentsLabel, string.Join("; ", kase.PaymentNumbers),
-                    $"{kase.PaymentNumbers.Count} payment(s)", null),
+                    CountWords(kase.PaymentNumbers.Count, "payment"), null),
         };
         return MarkCurrent(steps, kase.Stage);
     }
@@ -181,7 +213,7 @@ public static class AgentSummary
                 d.RequestedAt,
                 $"Waiting on {d.RequestedTo}: {d.Title}",
                 d.RuleId,
-                d.Reason ?? $"Needs a {d.Kind} decision from {d.RequestedTo}."));
+                d.Reason ?? $"Needs {ActivityLines.KindWords(d.Kind).ToLowerInvariant()} from {d.RequestedTo}."));
         }
 
         if (kase.BlockedByRuleId is not null)
@@ -201,7 +233,7 @@ public static class AgentSummary
         var line = $"{CaseEventLabels.Label(e.Kind)} — {e.Summary}";
         if (e.Amount is not null)
         {
-            line += $" ({e.Amount} {e.Currency ?? "currency missing"})";
+            line += $" ({ErpFormat.Money(e.Amount.Value, e.Currency)})";
         }
 
         return line;
@@ -263,8 +295,40 @@ public static class CaseDisplay
             CaseStage.Resolved => "resolved",
             CaseStage.Closed => "closed",
             CaseStage.Cancelled => "cancelled",
+            CaseStage.SplitOrdered => "split ordered",
             _ => stage.ToString(),
         };
+}
+
+/// <summary>One screened candidate: vendor, country, unit price, result,
+/// and the rule plus one reason sentence. Awarded marks the winner.</summary>
+public sealed record ScreeningRowVm(
+    string VendorId,
+    string VendorName,
+    string Country,
+    string Price,
+    bool Passed,
+    string Result,
+    string Reason,
+    bool Awarded);
+
+/// <summary>One split child on its parent's page: the approved line (vendor
+/// plus quantity) with the child's own order and stage. Vendor and quantity
+/// come from the approved plan, never re-read.</summary>
+public sealed record SplitChildVm(
+    string CaseId,
+    string VendorName,
+    decimal Quantity,
+    string? PoNumber,
+    string Stage);
+
+/// <summary>Split-plan words for cards: final country shares in one line,
+/// percents in the fixed no-space shape, like the sentences.</summary>
+public static class SplitFormat
+{
+    public static string Shares(IReadOnlyList<SplitCountryShare> shares) =>
+        string.Join(", ", shares.Select(s =>
+            $"{s.Country} {(s.Share * 100).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%"));
 }
 
 public sealed record CaseDetailVm(
@@ -276,19 +340,47 @@ public sealed record CaseDetailVm(
     IReadOnlyList<VendorEmail> Mail,
     AgentSummaryVm Summary,
     IReadOnlyList<MathLineVm> MathLines,
-    ScorecardVm Scorecard);
+    ScorecardVm Scorecard,
+    IReadOnlyList<ScreeningRowVm> ScreeningRows,
+    IReadOnlyDictionary<string, string> RuleLines,
+    IReadOnlyList<SplitChildVm> SplitChildren);
 
-/// <summary>Human-readable timeline labels. New batch-3 event kinds get
-/// clear phrases; every other kind keeps its enum name.</summary>
+/// <summary>Human-readable timeline labels. Every event kind gets a
+/// clear phrase; no screen renders a raw enum name.</summary>
 public static class CaseEventLabels
 {
     public static string Label(CaseEventKind kind) =>
         kind switch
         {
+            CaseEventKind.OrderReceived => "Order received",
+            CaseEventKind.ShortfallComputed => "Shortfall computed",
+            CaseEventKind.PrCreated => "Request raised",
+            CaseEventKind.PrSubmitted => "Request submitted",
+            CaseEventKind.PrApproved => "Request approved",
+            CaseEventKind.PrRejected => "Request rejected",
+            CaseEventKind.VendorScreened => "Vendor screened",
+            CaseEventKind.VendorBlocked => "Vendor blocked",
+            CaseEventKind.PoCreated => "Order placed",
+            CaseEventKind.PoApproved => "Order approved",
+            CaseEventKind.VendorAcknowledged => "Supplier acknowledged",
+            CaseEventKind.AsnRecorded => "Shipment recorded",
+            CaseEventKind.ReceiptPosted => "Receipt posted",
+            CaseEventKind.DockEvaluated => "Dock checked",
+            CaseEventKind.HoldSet => "Hold set",
+            CaseEventKind.HoldReleased => "Hold released",
+            CaseEventKind.ReviewOpened => "Review opened",
+            CaseEventKind.ReviewClosed => "Review closed",
+            CaseEventKind.InvoiceCreated => "Invoice recorded",
+            CaseEventKind.InvoiceMatched => "Invoice matched",
+            CaseEventKind.PaymentRequested => "Payment requested",
+            CaseEventKind.PaymentPosted => "Payment posted",
+            CaseEventKind.CustomerNotified => "Customer notified",
+            CaseEventKind.Note => "Note",
             CaseEventKind.VendorEmailed => "Vendor emailed",
             CaseEventKind.VendorReplied => "Vendor replied",
+            CaseEventKind.SupplierAwarded => "Supplier awarded",
             CaseEventKind.AgentRefused => "Agent refused",
-            _ => kind.ToString(),
+            _ => "Update",
         };
 }
 
@@ -310,16 +402,25 @@ public static class RecordLabels
 }
 
 /// <summary>Display names for stored actors. The loader-era "system" actor
-/// never renders as a person: it shows as the unset placeholder.</summary>
+/// never renders as a person: it shows as the unset placeholder. The
+/// agent's stored id renders as "Agent", never the internal id.</summary>
 public static class ActorLabels
 {
     public const string Unset = "—";
+    public const string Agent = "Agent";
 
-    public static string Display(string? actor) =>
-        string.IsNullOrWhiteSpace(actor)
-        || string.Equals(actor.Trim(), "system", StringComparison.OrdinalIgnoreCase)
-            ? Unset
+    public static string Display(string? actor)
+    {
+        if (string.IsNullOrWhiteSpace(actor)
+            || string.Equals(actor.Trim(), "system", StringComparison.OrdinalIgnoreCase))
+        {
+            return Unset;
+        }
+
+        return string.Equals(actor.Trim(), RecordSource.P2pAgent, StringComparison.OrdinalIgnoreCase)
+            ? Agent
             : actor.Trim();
+    }
 }
 
 /// <summary>Stored approval comments for display. Loader-era "scenario

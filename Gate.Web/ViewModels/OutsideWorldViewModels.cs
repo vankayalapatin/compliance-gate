@@ -12,12 +12,14 @@ namespace Gate.Web.ViewModels;
 
 /// <summary>One ASN carton row in the supplier inbox. Ship-plan defaults
 /// derive from the runtime PO lines plus item pack sizes; the human edits
-/// every row before sending.</summary>
+/// every row before sending. Problem is the simulated carton problem picked
+/// for the row (a DockProblemKinds wire name, or null for none).</summary>
 public sealed record AsnCartonForm(
     string CartonId,
     string ItemId,
     int UnitsPerCarton,
-    string LotRef);
+    string LotRef,
+    string? Problem = null);
 
 /// <summary>Supplier ASN submission: the supplier declares what shipped. A
 /// null list means no cartons were picked (a refusal, never a guess).</summary>
@@ -208,6 +210,7 @@ public static class OutsideWorldLabels
     public const string InvoiceFlow = "supplier invoice";
     public const string InvoicePhotoFlow = "invoice photos";
     public const string ReplyFlow = "vendor reply";
+    public const string RebuildFlow = "dock view rebuild";
 
     /// <summary>Replaces known endpoint calls ("POST /simulation/..." or the
     /// bare path) with their friendly flow names. Unknown text passes
@@ -223,6 +226,7 @@ public static class OutsideWorldLabels
             ("/simulation/supplier/asn", AsnFlow),
             ("/simulation/supplier/ack", AckFlow),
             ("/simulation/dock/reshot", ReshotFlow),
+            ("/simulation/dock/rebuild-views", RebuildFlow),
             ("/simulation/dock/photos", DockFlow),
             ("/simulation/supplier/invoice-photo", InvoicePhotoFlow),
             ("/simulation/supplier/invoice", InvoiceFlow),

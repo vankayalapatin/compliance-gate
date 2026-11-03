@@ -42,8 +42,10 @@ public sealed class AgentSparkLiveTests
         var erp = SeededErp.Create();
         var cached = new CachedModelClient(spark, cacheDir);
         var compliance = new ComplianceEngine();
+        // Single-vendor award pinned here; the split switch stays off.
         var runner = new CaseRunner(erp, new P2pAgent(erp, cached, compliance), cached,
-            compliance, new DockEvaluatorAdapter(), caseDir);
+            compliance, new DockEvaluatorAdapter(), caseDir,
+            splitProposals: new SplitProposals { IsOn = false });
 
         var cases = await runner.OnOrderWebhookAsync(new OrderWebhookInput(
             "live", "SO-1001", "planner",

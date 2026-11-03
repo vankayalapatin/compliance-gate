@@ -29,6 +29,10 @@ internal static class VisionFiles
 
     public static string ImageSpecsPath() => Path.Combine(RepoRoot(), "assets", "image-specs.json");
 
+    public static string DockScenesPath() => Path.Combine(RepoRoot(), "assets", "dock-scenes", "scenes.json");
+
+    public static string DockScenesBasesDir() => Path.Combine(RepoRoot(), "assets", "dock-scenes", "bases");
+
     public static string ScenarioPath(string name = "demo-v1") =>
         Path.Combine(RepoRoot(), "scenarios", name + ".json");
 

@@ -27,6 +27,7 @@ public sealed class SimulationUiService
     public const string DockPhotosPath = "/simulation/dock/photos";
     public const string ReshotPath = "/simulation/dock/reshot";
     public const string ReshotImagePath = "/simulation/dock/reshot-image";
+    public const string RebuildViewsPath = "/simulation/dock/rebuild-views";
     public const string InvoicePath = "/simulation/supplier/invoice";
     public const string InvoicePhotoPath = "/simulation/supplier/invoice-photo";
     public const string EmailReplyPath = "/simulation/supplier/email-reply";
@@ -131,7 +132,7 @@ public sealed class SimulationUiService
             cases = (await _cases.ListAsync(ct).ConfigureAwait(false))
                 .OrderBy(f => f.Case.CaseId, StringComparer.Ordinal)
                 .Select(f => new CaseOption(
-                    f.Case.CaseId, f.Case.SoNumber, f.Case.ItemId, f.Case.Stage.ToString(),
+                    f.Case.CaseId, f.Case.SoNumber, f.Case.ItemId, CaseDisplay.StageSummary(f.Case.Stage),
                     f.Case.PoNumber))
                 .ToList();
         }
@@ -363,6 +364,7 @@ public sealed class SimulationUiService
         }
 
         var cartons = new List<AsnCartonInput>();
+        var problems = new List<DockProblemInput>();
         foreach (var carton in submission.Cartons)
         {
             if (string.IsNullOrWhiteSpace(carton.CartonId))
@@ -385,17 +387,35 @@ public sealed class SimulationUiService
                 return Refusal($"ASN carton {carton.CartonId} needs the supplier lot ref.");
             }
 
+            string? problem = null;
+            if (!DockProblemKinds.IsNone(carton.Problem))
+            {
+                if (!DockProblemKinds.TryParse(carton.Problem, out var canonical))
+                {
+                    return Refusal(
+                        $"ASN carton {carton.CartonId} names an unknown carton problem '{carton.Problem}'; " +
+                        $"pick {DockProblemKinds.DescribeOptions()}.");
+                }
+
+                problem = canonical;
+            }
+
             cartons.Add(new AsnCartonInput(
                 carton.CartonId.Trim(), carton.ItemId.Trim(),
                 carton.UnitsPerCarton, carton.LotRef.Trim()));
+            if (problem is not null)
+            {
+                problems.Add(new DockProblemInput(carton.CartonId.Trim(), problem));
+            }
         }
 
-        var input = new SupplierAsnInput(
+        var input = new SupplierAsnWithProblemsRequest(
             submission.CaseId.Trim(),
             submission.AsnNumber?.Trim() ?? string.Empty,
             submission.PackingSlipNumber.Trim(),
             cartons,
-            FreshKey());
+            FreshKey(),
+            problems);
         return await PostAsync(AsnPath, input, ParseAsn, ct).ConfigureAwait(false);
     }
 
@@ -451,6 +471,77 @@ public sealed class SimulationUiService
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
             return new MintedReshotImageVm(false, null, $"Close-up minting failed: {ex.Message}.");
+        }
+    }
+
+    /// <summary>Rebuilds the case's dock views with simulated problems:
+    /// posts the case plus the picked carton problems and returns the
+    /// rebuilt file names to send through the normal dock photo flow.
+    /// Refusals (no case, no problems, unknown kind) happen before any
+    /// POST; endpoint failures surface with the reason.</summary>
+    public async Task<RebuiltDockViewsVm> RebuildDockViewsAsync(
+        string? caseId, IReadOnlyList<DockProblemForm>? problems, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(caseId))
+        {
+            return new RebuiltDockViewsVm(false, [], "Case is required to rebuild dock views.");
+        }
+
+        var picked = new List<DockProblemForm>();
+        foreach (var problem in problems ?? [])
+        {
+            if (problem is null || DockProblemKinds.IsNone(problem.Kind))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(problem.CartonId))
+            {
+                return new RebuiltDockViewsVm(false, [], "Every simulated problem needs a carton id.");
+            }
+
+            if (!DockProblemKinds.TryParse(problem.Kind, out var canonical))
+            {
+                return new RebuiltDockViewsVm(
+                    false, [],
+                    $"Unknown carton problem '{problem.Kind}' for carton {problem.CartonId.Trim()}; " +
+                    $"pick {DockProblemKinds.DescribeOptions()}.");
+            }
+
+            picked.Add(new DockProblemForm(problem.CartonId.Trim(), canonical));
+        }
+
+        if (picked.Count == 0)
+        {
+            return new RebuiltDockViewsVm(false, [], "Pick at least one simulated problem to rebuild the views with.");
+        }
+
+        try
+        {
+            var sent = JsonSerializer.Serialize(
+                new
+                {
+                    caseId = caseId.Trim(),
+                    problems = picked.Select(p => new { cartonId = p.CartonId, kind = p.Kind }).ToList(),
+                },
+                JsonOpts);
+            using var content = new StringContent(sent, System.Text.Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(RebuildViewsPath, content, ct).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new RebuiltDockViewsVm(false, [], $"Dock view rebuild refused: {ErrorText(body)}.");
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            var files = StringArray(doc.RootElement, "images");
+            return files.Count == 0
+                ? new RebuiltDockViewsVm(false, [], "Dock view rebuild returned no views; nothing was rebuilt.")
+                : new RebuiltDockViewsVm(true, files, $"Rebuilt {files.Count} view(s): {string.Join(", ", files)}.");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return new RebuiltDockViewsVm(false, [], $"Dock view rebuild failed: {ex.Message}.");
         }
     }
 
@@ -891,7 +982,7 @@ public sealed class SimulationUiService
     private static InboxPoVm ToInboxPo(PurchaseOrder order) =>
         new(
             order.PoNumber, order.VendorId, order.PaymentTermsId,
-            order.ApprovalStatus.ToString(), order.DocStatus.ToString(),
+            ErpStatusWords.Of(order.ApprovalStatus), ErpStatusWords.Of(order.DocStatus),
             order.Currency,
             order.Lines.Select(l => new InboxPoLineVm(
                 l.PoLineRef, l.ItemId, l.QtyOrdered, l.UnitPrice, l.LineAmount)).ToList(),

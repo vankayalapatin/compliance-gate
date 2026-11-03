@@ -64,6 +64,9 @@ public sealed class ReplayService
     {
         var steps = new List<string>();
         var warnings = new List<string>();
+        static string CountWords(int count, string one, string? many = null) =>
+            count == 1 ? $"1 {one}" : $"{count} {many ?? one + "s"}";
+
         void Step(string text)
         {
             steps.Add(text);
@@ -85,7 +88,7 @@ public sealed class ReplayService
 
             var modelCache = ModelCachePaths.ResolveDir();
             var modelEntries = Directory.Exists(modelCache) ? Directory.GetFiles(modelCache, "*.json").Length : 0;
-            Step($"Model cache holds {modelEntries} entr(y/ies); vision cache holds {_photos.CachedReadCount()} read(s).");
+            Step($"Model cache holds {CountWords(modelEntries, "entry", "entries")}; vision cache holds {CountWords(_photos.CachedReadCount(), "read")}.");
             if (modelEntries == 0)
             {
                 warnings.Add("Model cache is empty; Ask-why will refuse every question until answers are cached outside offline-answers mode.");

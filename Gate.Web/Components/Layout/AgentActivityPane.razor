@@ -51,13 +51,10 @@ else
                 {
                     <div class="gate-bubble-row @(line.Side == ActivitySide.Person ? "person" : "agent")">
                         <div class="gate-bubble @(line.Refused ? "refused" : "")">
+                            @line.Text
                             @if (!string.Equals(line.Href, group.CaseHref, StringComparison.Ordinal))
                             {
-                                <a href="@line.Href">@line.Text</a>
-                            }
-                            else
-                            {
-                                @line.Text
+                                <span> <a href="@line.Href">See purchase history</a></span>
                             }
                         </div>
                         <p class="gate-bubble-time">@ActivityLines.Stamp(line.At)</p>
@@ -127,7 +124,7 @@ else
             // Keep the last good render; the service already degrades
             // single failures to placeholder lines, so reaching here means
             // something unexpected. Never break the page for the pane.
-            _model ??= new AgentActivityVm("Idle.", [], []);
+            _model ??= new AgentActivityVm("Idle", [], []);
         }
     }
 

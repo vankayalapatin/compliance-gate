@@ -45,6 +45,51 @@ public sealed class ErpControlTests
     }
 
     [Fact]
+    public async Task PartialOrdersKeepRequestOpenUntilFullyOrdered()
+    {
+        var erp = SeededErp.Create();
+        var pr = await erp.CreatePrAsync("planner", RecordSource.P2pAgent, "planner",
+            [new PurchaseRequisitionLine(SeededErp.Battery, 1200, "EA")], Idem());
+        await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "planner", Idem());
+        await erp.RecordApprovalAsync("PR", pr.PrNumber, "approver", true, "ok", Idem());
+
+        var first = await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.Human, "planner", Idem(),
+            [new PoOrderLine(SeededErp.Battery, 800)]);
+        Assert.Equal(800m, Assert.Single(first.Lines).QtyOrdered);
+        Assert.Equal(PrStatus.PartiallyOrdered, (await erp.GetPrAsync(pr.PrNumber))?.Status);
+
+        var second = await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.Human, "planner", Idem(),
+            [new PoOrderLine(SeededErp.Battery, 400)]);
+        Assert.Equal(400m, Assert.Single(second.Lines).QtyOrdered);
+        Assert.Equal(PrStatus.Closed, (await erp.GetPrAsync(pr.PrNumber))?.Status);
+    }
+
+    [Fact]
+    public async Task OrderingMoreThanRequestedIsRefused()
+    {
+        var erp = SeededErp.Create();
+        var pr = await erp.CreatePrAsync("planner", RecordSource.P2pAgent, "planner",
+            [new PurchaseRequisitionLine(SeededErp.Battery, 100, "EA")], Idem());
+        await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "planner", Idem());
+        await erp.RecordApprovalAsync("PR", pr.PrNumber, "approver", true, "ok", Idem());
+
+        await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.Human, "planner", Idem(),
+            [new PoOrderLine(SeededErp.Battery, 60)]);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.Human, "planner", Idem(),
+                [new PoOrderLine(SeededErp.Battery, 50)]));
+        Assert.Contains("40 left", ex.Message, StringComparison.Ordinal);
+
+        await erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.Human, "planner", Idem(),
+            [new PoOrderLine(SeededErp.Battery, 40)]);
+        Assert.Equal(PrStatus.Closed, (await erp.GetPrAsync(pr.PrNumber))?.Status);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.CreatePoAsync(pr.PrNumber, "V-B", RecordSource.Human, "planner", Idem()));
+    }
+
+    [Fact]
     public async Task OverLimitApprovalRefused()
     {
         var erp = SeededErp.Create();

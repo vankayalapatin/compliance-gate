@@ -14,7 +14,23 @@ public sealed record Verdict(
     string RuleId,
     VerdictKind Kind,
     string Reason,
-    string Source);
+    string Source,
+    OriginCapFigures? OriginCap = null);
+
+/// <summary>Origin-cap share figures behind one CORP-02 verdict, computed by
+/// the engine as (country history + country open + award) / (total history
+/// + total open + award). The award stores them so decided orders show the
+/// evidence as it stood. The item id picks the case item's figures out of
+/// multi-line screenings.</summary>
+public sealed record OriginCapFigures(
+    string ItemId,
+    decimal CountryCells,
+    decimal TotalCells,
+    decimal CountryOpenCells,
+    decimal TotalOpenCells,
+    decimal AwardQty,
+    decimal Cap,
+    decimal Share);
 
 /// <summary>Shared verdict rule ids both sides compare by constant, never
 /// by mirrored literals. Compliance emits them; the agent filters on them.</summary>
@@ -27,17 +43,36 @@ public static class ComplianceVerdictIds
 public interface IComplianceEngine
 {
     /// <summary>Evaluates a vendor for a proposed award. The engine computes
-    /// every share itself as (country history + award) / (total history +
-    /// award) from the trailing-12-month rows; callers never pass shares.
-    /// Document packs (BAT-LI, ELEC) apply to critical parts only; for
-    /// non-critical parts those rules return not-applicable passes so the
-    /// straight-through path needs no pack documents.</summary>
+    /// every share itself as (country history + country open + award) /
+    /// (total history + total open + award) from the trailing-12-month
+    /// rows plus the open-order rows; callers never pass shares. Open
+    /// orders default to none. Document packs (BAT-LI, ELEC) apply to
+    /// critical parts only; for non-critical parts those rules return
+    /// not-applicable passes so the straight-through path needs no pack
+    /// documents.</summary>
     Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor,
         ItemDto item,
         IReadOnlyList<VendorDocumentDto> documents,
         ProposedAward award,
         IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<OpenOrderQty>? openOrders = null,
+        CancellationToken ct = default);
+
+    /// <summary>Headroom for one supplier: the largest whole-carton quantity
+    /// at or below the request at which every vendor-gate verdict passes
+    /// with the rest of the request already open (last position). Open
+    /// orders join history in the cap numerator and denominator. Binding
+    /// names the rule failing just above headroom (null when the full
+    /// request passes).</summary>
+    Task<VendorHeadroom> HeadroomAsync(
+        VendorDto vendor,
+        ItemDto item,
+        IReadOnlyList<VendorDocumentDto> documents,
+        decimal requestedQty,
+        IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<VolumeHistory> openOrders,
+        int cartonSize,
         CancellationToken ct = default);
 
     /// <summary>Pre-pay gate over holds plus quarantine plus open reviews

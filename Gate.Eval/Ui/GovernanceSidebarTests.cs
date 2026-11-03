@@ -37,7 +37,6 @@ public sealed class GovernanceSidebarTests
         {
             GovernanceRoutes.RulesHref,
             GovernanceRoutes.MemosHref,
-            GovernanceRoutes.ExceptionsHref,
             GovernanceRoutes.KbSpaceHref("treasury"),
             GovernanceRoutes.KbSpaceHref("docks"),
             GovernanceRoutes.VersionsHref,
@@ -67,7 +66,6 @@ public sealed class GovernanceSidebarTests
     [Theory]
     [InlineData("rules", "governance/rules", "governance/kb/treasury")]
     [InlineData("memos", "governance/memos", "governance/versions")]
-    [InlineData("exceptions", "governance/exceptions", "governance/kb/treasury")]
     public void CurrentComplianceKeyOpensComplianceOnly(string key, string visible, string hidden)
     {
         using var ctx = new TestContext();

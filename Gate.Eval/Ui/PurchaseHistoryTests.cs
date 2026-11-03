@@ -42,7 +42,7 @@ public sealed class PurchaseHistoryTests
             history.Where(h => h.Country == "CN").Sum(h => h.Cells),
             history.Sum(h => h.Cells), 1200m, 0.60m,
             page.Rows.Count == 0 ? "none" : OriginCapMath.HistoryHref(SeededErp.Battery),
-            "erp/record/pr/PR-1");
+            "erp/record/pr/PR-1", "battery cells");
         Assert.NotNull(line);
         Assert.Contains(OriginCapMath.Cells(page.GrandTotal), line.PlainText);
         Assert.Contains(
@@ -103,8 +103,8 @@ public sealed class PurchaseHistoryTests
                 pr.PrNumber, null, null, null, [], [], OriginCapMath.OriginCapRuleId, "Award blocked."),
             [
                 new CaseEvent("e1", "CASE-M1", now.AddMinutes(-5), RecordSource.P2pAgent,
-                    CaseEventKind.VendorBlocked,
-                    $"Vendor V-A blocked: {OriginCapMath.OriginCapRuleId}: share exceeded.",
+                    CaseEventKind.VendorScreened,
+                    $"Vendor V-A failed screening: {OriginCapMath.OriginCapRuleId}.",
                     OriginCapMath.OriginCapRuleId, null, null, null, null, null),
             ],
             []));
@@ -114,9 +114,9 @@ public sealed class PurchaseHistoryTests
 
         Assert.NotNull(detail);
         var line = Assert.Single(detail.MathLines);
-        Assert.Contains("China share", line.PlainText);
-        Assert.Contains("(5,900+1,200)/(10,000+1,200)=63.4%", line.PlainText);
-        Assert.Contains("CinderVolt Energy Ltd is blocked", line.PlainText);
+        Assert.Contains("CinderVolt Energy Ltd (China) is blocked.", line.PlainText);
+        Assert.Contains("China's share would be 7,100 of 11,200 battery cells: 63.4%", line.PlainText);
+        Assert.Contains("CORP-02 caps any one country at 60%", line.PlainText);
         Assert.Contains(line.Segments, s => s.Text == "5,900" && s.Href == line.HistoryHref);
     }
 
@@ -144,8 +144,8 @@ public sealed class PurchaseHistoryTests
                 pr.PrNumber, "PO-Z1", "ASN-Z1", "RCT-Z1", [], [], OriginCapMath.OriginCapRuleId, "Award blocked."),
             [
                 new CaseEvent("e1", "CASE-Z1", now.AddMinutes(-5), RecordSource.P2pAgent,
-                    CaseEventKind.VendorBlocked,
-                    $"Vendor V-Z blocked: {OriginCapMath.OriginCapRuleId}: share exceeded.",
+                    CaseEventKind.VendorScreened,
+                    $"Vendor V-Z failed screening: {OriginCapMath.OriginCapRuleId}.",
                     OriginCapMath.OriginCapRuleId, null, null, null, null, null),
             ],
             []));
@@ -161,9 +161,11 @@ public sealed class PurchaseHistoryTests
         var group = Assert.Single(vm.Recent);
         Assert.Equal("Copper coil for SO-77", group.HeaderText);
         var entry = Assert.Single(group.Lines);
-        Assert.Contains("Sweden share", entry.Text);
-        Assert.Contains("(7,000+1,000)/(10,000+1,000)=72.7%", entry.Text);
-        Assert.Contains("Zed Parts AB is blocked", entry.Text);
+        Assert.Equal(
+            "Zed Parts AB (Sweden) is blocked. In the last 12 months we bought 10,000 copper coils, " +
+            "and 7,000 came from Sweden. This order adds 1,000 more, so Sweden's share would be 8,000 " +
+            "of 11,000 copper coils: 72.7%. CORP-02 caps any one country at 60%.",
+            entry.Text);
         Assert.Equal(OriginCapMath.HistoryHref("COIL-3"), entry.Href);
     }
 

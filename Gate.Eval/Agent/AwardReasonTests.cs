@@ -25,7 +25,8 @@ public sealed class AwardReasonTests
         var compliance = new RecordingComplianceEngine();
         var dir = TempDir();
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), dir);
+            compliance, new DockEvaluatorAdapter(), dir,
+            splitProposals: new SplitProposals { IsOn = false });
         return new Harness(erp, runner, models, dir);
     }
 
@@ -77,6 +78,30 @@ public sealed class AwardReasonTests
         Assert.Contains("V-B", award.Summary, StringComparison.Ordinal);
         Assert.Contains("V-A", award.Summary, StringComparison.Ordinal);
         Assert.Contains(ComplianceEngine.CorpOriginCapId, award.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefusedAwardNamesWhatWasTriedAndWhatCameNext()
+    {
+        var h = Create();
+        var caseId = await OpenApprovedPrCaseAsync(h);
+        h.Models.QueueToolCalls("screen", ("c3", AgentTools.ScreenVendors, Args(caseId)));
+        h.Models.QueueToolCalls("Award V-A.", ("c4", AgentTools.AwardSupplier, AwardArgs(caseId, "V-A")));
+        h.Models.QueueToolCalls("Award V-B; V-A blocked by CORP-02.",
+            ("c5", AgentTools.AwardSupplier, AwardArgs(caseId, "V-B")));
+        h.Models.QueueToolCalls("create", ("c6", AgentTools.CreatePo, Args(caseId)));
+        h.Models.QueueToolCalls("submit", ("c7", AgentTools.SubmitPoApproval, Args(caseId)));
+
+        await h.Runner.AdvanceAsync(caseId);
+
+        var file = Load(h, caseId);
+        var refused = file.Events.Single(e => e.Kind == CaseEventKind.AgentRefused);
+        Assert.Contains("V-A", refused.Summary, StringComparison.Ordinal);
+        Assert.Contains("refused", refused.Summary, StringComparison.Ordinal);
+        Assert.Equal("V-A", refused.DocumentNumber);
+        var award = file.Events.Single(e => e.Kind == CaseEventKind.SupplierAwarded);
+        Assert.Contains("V-B", award.Summary, StringComparison.Ordinal);
+        Assert.Contains("Tried V-A first", award.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -166,7 +191,7 @@ public sealed class AwardReasonTests
         var file = CaseStore.Load(dir, caseId)!;
         Assert.Equal("V-B", file.Case.AwardedVendorId);
         var award = file.Events.Single(e => e.Kind == CaseEventKind.SupplierAwarded);
-        Assert.Contains("C# executed the pick", award.Summary, StringComparison.Ordinal);
+        Assert.Contains("takes the award", award.Summary, StringComparison.Ordinal);
         Assert.Contains("V-A", award.Summary, StringComparison.Ordinal);
         Assert.Contains(ComplianceEngine.CorpOriginCapId, award.Summary, StringComparison.Ordinal);
         var turns = CaseTranscript.ReadTurns(dir, caseId);

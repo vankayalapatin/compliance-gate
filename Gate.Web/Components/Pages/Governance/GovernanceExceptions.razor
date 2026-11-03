@@ -47,8 +47,8 @@
                             <td><a href="cases/@row.CaseId">@row.CaseId</a></td>
                             <td>@(row.Vendor ?? "—")</td>
                             <td>@(row.RuleId ?? "—")</td>
-                            <td>@row.RequestedTo</td>
-                            <td>@(row.DecidedBy ?? "—")</td>
+                            <td>@ActorLabels.Display(row.RequestedTo)</td>
+                            <td>@ActorLabels.Display(row.DecidedBy)</td>
                             <td>@(row.DecidedAt ?? "—")</td>
                             <td><span class="gate-badge @(row.Outcome == "Approved" ? "gate-badge-dark" : "")">@row.Outcome</span></td>
                             <td>@(row.Reason ?? "—")</td>
@@ -73,7 +73,9 @@
     }
 
     private string Subtitle() =>
-        _rows is null ? "Loading…" : $"{_rows.Count} exception decision(s) across cases.";
+        _loadError is not null ? "Failed to load." :
+        _rows is null ? "Loading…" :
+        $"{CaseChain.CountWords(_rows.Count, "exception decision")} across cases.";
 
     private async Task ReloadAsync()
     {

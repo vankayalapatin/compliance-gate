@@ -553,6 +553,13 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
             .ConfigureAwait(false);
     }
 
+    public async Task<decimal?> GetVendorPriceAsync(string vendorId, string itemId, CancellationToken ct = default)
+    {
+        using var db = _factory.CreateDbContext();
+        var row = await db.VendorPrices.FindAsync([vendorId, itemId], ct).ConfigureAwait(false);
+        return row?.UnitPrice;
+    }
+
     public async Task<decimal> GetVendorVolumeShareAsync(string vendorId, string itemId, CancellationToken ct = default)
     {
         using var db = _factory.CreateDbContext();
@@ -564,6 +571,12 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
     {
         using var db = _factory.CreateDbContext();
         return await VolumeHistoryForAsync(db, itemId, ct).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<OpenOrderQty>> GetOpenOrderQuantitiesAsync(string itemId, CancellationToken ct = default)
+    {
+        using var db = _factory.CreateDbContext();
+        return await OpenOrdersForAsync(db, itemId, null, ct).ConfigureAwait(false);
     }
 
     private static async Task<IReadOnlyList<VolumeHistory>> VolumeHistoryForAsync(
@@ -597,6 +610,46 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
                 if (lineItem == itemId) result.Add(new VolumeHistory($"Receipt {receipt.ReceiptNumber}", country, line.QtyReceived));
             }
         }
+        return result;
+    }
+
+    /// <summary>Open, not-yet-received PO quantity for an item: ordered minus
+    /// received on every PO line whose PO is neither closed nor cancelled.
+    /// The PO under check is excluded so an approval re-check never counts
+    /// the line's own quantity twice (once open, once as the award).</summary>
+    private static async Task<IReadOnlyList<OpenOrderQty>> OpenOrdersForAsync(
+        ErpDbContext db, string itemId, string? excludePoNumber, CancellationToken ct)
+    {
+        var closed = new[] { nameof(PoDocStatus.Closed), nameof(PoDocStatus.Cancelled) };
+        var result = new List<OpenOrderQty>();
+        var pos = await db.PurchaseOrders.OrderBy(p => p.PoNumber).ToListAsync(ct).ConfigureAwait(false);
+        foreach (var po in pos)
+        {
+            if (closed.Contains(po.DocStatus))
+            {
+                continue;
+            }
+
+            if (excludePoNumber is not null && po.PoNumber == excludePoNumber)
+            {
+                continue;
+            }
+
+            var vendor = await db.Vendors.FindAsync([po.VendorId], ct).ConfigureAwait(false);
+            var country = vendor?.CountryOfOrigin ?? "OTHER";
+            var lines = await db.PurchaseOrderLines
+                .Where(l => l.PoNumber == po.PoNumber && l.ItemId == itemId)
+                .ToListAsync(ct).ConfigureAwait(false);
+            foreach (var line in lines)
+            {
+                var open = line.QtyOrdered - line.QtyReceived;
+                if (open > 0)
+                {
+                    result.Add(new OpenOrderQty($"PO {po.PoNumber}", country, open));
+                }
+            }
+        }
+
         return result;
     }
 
@@ -723,6 +776,17 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
             .Where(s => s.VendorId == vendorId && s.SupplierInvoiceNumber == supplierInvoiceNumber)
             .OrderBy(s => s.PaymentNumber).ThenBy(s => s.RowId).ToListAsync(ct).ConfigureAwait(false);
         return rows.Select(s => new Settlement(s.VendorId, s.SupplierInvoiceNumber, s.PaymentNumber, s.SettledAmount, s.RemainingBalance)).ToList();
+    }
+
+    public async Task<IReadOnlyList<HeldRelease>> GetHeldReleasesAsync(string vendorId, string supplierInvoiceNumber, CancellationToken ct = default)
+    {
+        using var db = _factory.CreateDbContext();
+        var rows = await db.HeldReleases
+            .Where(r => r.VendorId == vendorId && r.SupplierInvoiceNumber == supplierInvoiceNumber)
+            .OrderBy(r => r.ReleasedAt).ThenBy(r => r.RowId).ToListAsync(ct).ConfigureAwait(false);
+        return rows.Select(r => new HeldRelease(
+            r.VendorId, r.SupplierInvoiceNumber, r.PoLineRef, r.Quantity, r.ReleasedBy,
+            DateTimeOffset.Parse(r.ReleasedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind))).ToList();
     }
 
     public async Task<IReadOnlyList<HoldDto>> GetOpenHoldsAsync(string? documentNumber, CancellationToken ct = default)

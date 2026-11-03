@@ -3,6 +3,7 @@
 // adapter at runtime. Missing documents surface as notes; nothing is
 // silently omitted.
 using Gate.Agent;
+using Gate.Compliance;
 using Gate.Contracts;
 using Gate.Web.ViewModels;
 
@@ -16,6 +17,7 @@ public sealed class CaseViewService
     private readonly ILogger<CaseViewService> _log;
     private readonly ModelSpendTracker? _spend;
     private readonly CountryNames? _countries;
+    private readonly P2pAgent? _screening;
 
     public CaseViewService(
         IErpAdapter erp,
@@ -23,7 +25,8 @@ public sealed class CaseViewService
         DockPhotoService photos,
         ILogger<CaseViewService> log,
         ModelSpendTracker? spend = null,
-        CountryNames? countries = null)
+        CountryNames? countries = null,
+        P2pAgent? screening = null)
     {
         _erp = erp;
         _cases = cases;
@@ -31,6 +34,7 @@ public sealed class CaseViewService
         _log = log;
         _spend = spend;
         _countries = countries;
+        _screening = screening;
     }
 
     public async Task<IReadOnlyList<DecisionCardVm>> ListDecisionCardsAsync(CancellationToken ct = default)
@@ -91,10 +95,10 @@ public sealed class CaseViewService
             images.Add(image);
             try
             {
-                var read = _photos.TryCachedRead(image);
-                captions.Add(read is null
+                var pretty = DockReadFormat.Pretty(_photos.TryCachedRead(image));
+                captions.Add(pretty is null
                     ? $"Photo {image}: no cached read."
-                    : $"Photo {image} cached read: {read}");
+                    : $"Photo {image} cached read:\n{pretty}");
             }
             catch (Exception ex)
             {
@@ -114,8 +118,168 @@ public sealed class CaseViewService
             summary = $"ERP lookup failed: {ex.Message}";
         }
 
+        string? ruleLine;
+        try
+        {
+            ruleLine = await RuleLineAsync(decision, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Rule line failed for decision {DecisionId}.", decision.DecisionId);
+            ruleLine = null;
+        }
+
+        // PR/PO approvers see the screening table on the card: who was
+        // considered, at what price, and why this vendor won.
+        IReadOnlyList<ScreeningRowVm>? screening = null;
+        if (decision.Kind is DecisionKind.PrApproval or DecisionKind.PoApproval)
+        {
+            try
+            {
+                screening = await ScreeningTableAsync(kase.CaseId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Card screening table failed for case {CaseId}.", kase.CaseId);
+            }
+        }
+
         return new DecisionCardVm(
-            decision, kase.SoNumber, kase.ItemId, kase.Stage, captions, images, summary, figures);
+            decision, kase.SoNumber, kase.ItemId, kase.Stage, captions, images, summary, figures, ruleLine, screening);
+    }
+
+    /// <summary>One row per screened candidate for a case, or empty when
+    /// screening has not run or the screening agent is unavailable.</summary>
+    public async Task<IReadOnlyList<ScreeningRowVm>> ScreeningTableAsync(
+        string caseId, CancellationToken ct = default)
+    {
+        if (_screening is null)
+        {
+            return [];
+        }
+
+        CaseFile? file;
+        try
+        {
+            file = await _cases.ReadAsync(caseId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Screening table lookup failed for case {CaseId}.", caseId);
+            return [];
+        }
+
+        return file is null
+            ? []
+            : await VendorScreeningTable.RowsAsync(
+                _erp, _screening, file, _log, _countries?.Map, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Rule line for one decision card: rule id, pack version, and
+    /// name plus the reason — or, for a plain approval with no rule, the
+    /// routing in words ("Over Maya's $5,000 limit, so it goes to Dana
+    /// (Del covering)."). Never a bare double dash.</summary>
+    public async Task<string?> RuleLineAsync(Decision decision, CancellationToken ct = default)
+    {
+        if (decision.RuleId is not null)
+        {
+            var reason = decision.Reason ?? "no reason recorded";
+            var rule = RuleCatalog.TryFind(decision.RuleId);
+            return rule is null
+                ? $"{decision.RuleId} — {reason}"
+                : $"{rule.RuleId} ({rule.PackVersion}): {rule.Title} — {reason}";
+        }
+
+        if (decision.Kind is not (DecisionKind.PrApproval or DecisionKind.PoApproval
+            or DecisionKind.InvoiceApproval or DecisionKind.PaymentApproval))
+        {
+            return decision.Reason;
+        }
+
+        string? requester = null;
+        try
+        {
+            requester = decision.DocumentType switch
+            {
+                "PR" => (await _erp.GetPrAsync(decision.DocumentNumber!, ct).ConfigureAwait(false))?.Requester,
+                "PO" => await PoRequesterAsync(decision.DocumentNumber, ct).ConfigureAwait(false),
+                "Invoice" => await InvoiceRequesterAsync(decision.DocumentNumber, ct).ConfigureAwait(false),
+                "Payment" => (await _erp.GetPaymentAsync(decision.DocumentNumber!, ct).ConfigureAwait(false))?.CreatedBy,
+                _ => null,
+            };
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Rule line requester lookup failed for decision {DecisionId}.", decision.DecisionId);
+        }
+
+        if (requester is null || decision.Amount is null)
+        {
+            return decision.Reason ?? "Needs a human approval.";
+        }
+
+        UserDto? user;
+        try
+        {
+            user = await _erp.GetUserAsync(requester, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Rule line user lookup failed for {User}.", requester);
+            user = null;
+        }
+
+        if (user is null)
+        {
+            return decision.Reason ?? "Needs a human approval.";
+        }
+
+        string? covering = null;
+        try
+        {
+            var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+            covering = (await _erp.GetDelegationsAsync(ct).ConfigureAwait(false))
+                .Where(d => string.Equals(d.FromUser, decision.RequestedTo, StringComparison.OrdinalIgnoreCase)
+                    && today >= d.Start && today <= d.End)
+                .Select(d => d.ToUser)
+                .FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Rule line delegation lookup failed for decision {DecisionId}.", decision.DecisionId);
+        }
+
+        var tail = covering is null ? "." : $" ({covering} covering).";
+        return decision.Amount.Value > user.SigningLimit
+            ? $"Over {requester}'s {ErpFormat.Money(user.SigningLimit, user.LimitCurrency)} limit, " +
+              $"so it goes to {decision.RequestedTo}{tail}"
+            : $"Routed to {decision.RequestedTo}{tail} {decision.Reason ?? "Needs a human approval."}";
+    }
+
+    private async Task<string?> PoRequesterAsync(string? poNumber, CancellationToken ct)
+    {
+        if (poNumber is null)
+        {
+            return null;
+        }
+
+        var po = await _erp.GetPurchaseOrderAsync(poNumber, ct).ConfigureAwait(false);
+        return po is null
+            ? null
+            : (await _erp.GetPrAsync(po.PrNumber, ct).ConfigureAwait(false))?.Requester;
+    }
+
+    private async Task<string?> InvoiceRequesterAsync(string? documentNumber, CancellationToken ct)
+    {
+        if (documentNumber is null)
+        {
+            return null;
+        }
+
+        var parts = documentNumber.Split('/', 2);
+        return parts.Length != 2
+            ? null
+            : (await _erp.GetInvoiceAsync(parts[0], parts[1], ct).ConfigureAwait(false))?.CreatedBy;
     }
 
     /// <summary>One figure for this card's own carton only: the photo the
@@ -147,10 +311,11 @@ public sealed class CaseViewService
             var verdicts = evidence.Verdicts[cartonId]
                 .Where(v => v.Kind != VerdictKind.Pass)
                 .ToList();
-            if (verdicts.Count == 0)
-            {
-                continue;
-            }
+            // One line per carton: each failing verdict as its reason
+            // sentence plus rule, or the pass line when all passed.
+            var caption = verdicts.Count == 0
+                ? $"Carton {cartonId}: passed the dock check."
+                : $"Carton {cartonId}: " + string.Join(" ", verdicts.Select(v => $"{v.Reason} ({v.RuleId})"));
 
             var cartonReads = evidence.Reads
                 .Where(r => string.Equals(r.CartonId, cartonId, StringComparison.Ordinal))
@@ -160,17 +325,17 @@ public sealed class CaseViewService
             var judging = decision.Kind == DecisionKind.DamageReview
                 ? cartonReads.FirstOrDefault(r => r.DamageVisible) ?? cartonReads.FirstOrDefault()
                 : cartonReads.FirstOrDefault();
-            var imageId = judging?.ImageId;
-            var image = _photos.ResolveImageFileName(imageId);
+            var image = _photos.ResolveImageFileName(judging?.ImageId);
             string? read = null;
             if (image is not null)
             {
                 try
                 {
                     var cached = _photos.TryCachedRead(image);
-                    read = cached is null
+                    var pretty = DockReadFormat.Pretty(cached);
+                    read = pretty is null
                         ? $"Photo {image}: no cached read."
-                        : $"Photo {image} cached read: {cached}";
+                        : $"Photo {image} cached read:\n{pretty}";
                 }
                 catch (Exception ex)
                 {
@@ -179,12 +344,7 @@ public sealed class CaseViewService
                 }
             }
 
-            figures.Add(new CartonFigureVm(
-                cartonId,
-                image,
-                $"Carton {cartonId}" + (imageId is null ? string.Empty : $" judged from {imageId}") + ": "
-                + string.Join("; ", verdicts.Select(v => $"{v.Kind} by {v.RuleId} — {v.Reason}")),
-                read));
+            figures.Add(new CartonFigureVm(cartonId, image, caption, read));
         }
 
         return figures;
@@ -201,20 +361,39 @@ public sealed class CaseViewService
         return decision.DocumentType switch
         {
             "PR" => await _erp.GetPrAsync(decision.DocumentNumber, ct).ConfigureAwait(false) is { } pr
-                ? $"PR {pr.PrNumber}: {pr.Status}, {pr.EstimatedAmount} {pr.Currency}, {pr.Lines.Count} line(s)."
+                ? $"PR {pr.PrNumber}: {ErpStatusWords.Of(pr.Status)}, {ErpFormat.Money(pr.EstimatedAmount, pr.Currency)}, {LineWords(pr.Lines.Count)}."
                 : $"PR {decision.DocumentNumber} not found in ERP.",
             "PO" => await _erp.GetPurchaseOrderAsync(decision.DocumentNumber, ct).ConfigureAwait(false) is { } po
-                ? $"PO {po.PoNumber}: approval {po.ApprovalStatus}, doc {po.DocStatus}, {po.Lines.Sum(l => l.LineAmount)} {po.Currency}."
+                ? $"PO {po.PoNumber}: {ErpStatusWords.Of(po.ApprovalStatus)}, document {ErpStatusWords.Of(po.DocStatus).ToLowerInvariant()}, {ErpFormat.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)}."
                 : $"PO {decision.DocumentNumber} not found in ERP.",
             "Invoice" => await DescribeInvoiceAsync(decision.DocumentNumber, ct).ConfigureAwait(false),
             "Payment" => await _erp.GetPaymentAsync(decision.DocumentNumber, ct).ConfigureAwait(false) is { } pay
-                ? $"Payment {pay.PaymentNumber}: {pay.Status}, {pay.Lines.Sum(l => l.Amount)} {pay.Currency}, payee bank {(pay.PayeeBank.Verified ? "verified" : "not verified")}."
+                ? $"Payment {pay.PaymentNumber}: {ErpStatusWords.Of(pay.Status).ToLowerInvariant()}, {ErpFormat.Money(pay.Lines.Sum(l => l.Amount), pay.Currency)}, payee bank {(pay.PayeeBank.Verified ? "verified" : "not verified")}."
                 : $"Payment {decision.DocumentNumber} not found in ERP.",
             "Vendor" or "VendorBank" => await _erp.GetVendorBankAsync(decision.DocumentNumber, ct).ConfigureAwait(false) is { } bank
                 ? $"Vendor {bank.VendorId} bank {bank.AccountRef}: {(bank.Verified ? "verified" : "not verified")}."
                 : $"Vendor bank for {decision.DocumentNumber} not found in ERP.",
             _ => $"Document {decision.DocumentType} {decision.DocumentNumber} (no ERP detail reader).",
         };
+    }
+
+    private static string LineWords(int count) =>
+        count == 1 ? "1 line" : $"{count} lines";
+
+    private async Task<string> VendorNameAsync(string vendorId, CancellationToken ct)
+    {
+        try
+        {
+            var vendors = await _erp.GetVendorsAsync(ct).ConfigureAwait(false);
+            return vendors.FirstOrDefault(
+                v => string.Equals(v.VendorId, vendorId, StringComparison.Ordinal))?.Name
+                ?? vendorId;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Vendor name lookup failed for {Vendor}.", vendorId);
+            return vendorId;
+        }
     }
 
     private async Task<string> DescribeInvoiceAsync(string documentNumber, CancellationToken ct)
@@ -232,7 +411,7 @@ public sealed class CaseViewService
         }
 
         var total = inv.Lines.Sum(l => l.Quantity * l.UnitPrice);
-        return $"Invoice {inv.SupplierInvoiceNumber} ({inv.VendorId}): {inv.Status}, {total} {inv.Currency}, voucher {inv.Voucher ?? "none"}.";
+        return $"Invoice {inv.SupplierInvoiceNumber} from {await VendorNameAsync(inv.VendorId, ct).ConfigureAwait(false)}: {ErpStatusWords.Of(inv.Status).ToLowerInvariant()}, {ErpFormat.Money(total, inv.Currency)}, voucher {inv.Voucher ?? "none"}.";
     }
 
     public async Task<CaseDetailVm?> GetCaseDetailAsync(string caseId, CancellationToken ct = default)
@@ -289,11 +468,90 @@ public sealed class CaseViewService
             _log.LogWarning(ex, "Screening-math lookup failed for case {CaseId}.", kase.CaseId);
         }
 
+        IReadOnlyList<ScreeningRowVm> screening = [];
+        try
+        {
+            screening = await ScreeningTableAsync(kase.CaseId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Screening-table lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
+        var ruleLines = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var decision in file.Decisions)
+        {
+            try
+            {
+                var line = await RuleLineAsync(decision, ct).ConfigureAwait(false);
+                if (line is not null)
+                {
+                    ruleLines[decision.DecisionId] = line;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Rule line failed for decision {DecisionId}.", decision.DecisionId);
+            }
+        }
+
+        IReadOnlyList<SplitChildVm> splitChildren = [];
+        try
+        {
+            splitChildren = await SplitChildrenAsync(file, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Split-children lookup failed for case {CaseId}.", kase.CaseId);
+        }
+
         return new CaseDetailVm(
             kase, chain, file.Events, file.Decisions, holds, mail,
             AgentSummary.Build(kase, file.Events, file.Decisions, holds),
             math.Select(m => m.Line).ToList(),
-            await ScorecardAsync(file, ct).ConfigureAwait(false));
+            await ScorecardAsync(file, ct).ConfigureAwait(false),
+            screening, ruleLines, splitChildren);
+    }
+
+    /// <summary>Split children for a parent's page: each child with its
+    /// approved line plus its own order and stage. Empty for non-parents.
+    /// The plan on the split decision names the lines; children match by
+    /// awarded vendor, in plan order.</summary>
+    private async Task<IReadOnlyList<SplitChildVm>> SplitChildrenAsync(CaseFile file, CancellationToken ct)
+    {
+        var plan = file.Decisions
+            .Where(d => d.Kind == DecisionKind.SplitApproval)
+            .Select(d => d.Split)
+            .FirstOrDefault(p => p is not null);
+        if (plan is null)
+        {
+            return [];
+        }
+
+        var children = (await _cases.ListAsync(ct).ConfigureAwait(false))
+            .Where(f => string.Equals(f.Case.ParentCaseId, file.Case.CaseId, StringComparison.Ordinal))
+            .ToList();
+        if (children.Count == 0)
+        {
+            return [];
+        }
+
+        var rows = new List<SplitChildVm>();
+        foreach (var line in plan.Lines)
+        {
+            var child = children.FirstOrDefault(c =>
+                string.Equals(c.Case.AwardedVendorId, line.VendorId, StringComparison.Ordinal));
+            if (child is null)
+            {
+                continue;
+            }
+
+            rows.Add(new SplitChildVm(
+                child.Case.CaseId, line.VendorName, line.Quantity, child.Case.PoNumber,
+                CaseDisplay.StageSummary(child.Case.Stage)));
+        }
+
+        return rows;
     }
 
     private async Task<ChainStepVm> SoStepAsync(Case kase, CancellationToken ct)
@@ -303,8 +561,8 @@ public sealed class CaseViewService
             var so = await _erp.GetSalesOrderAsync(kase.SoNumber, ct).ConfigureAwait(false);
             return so is null
                 ? new ChainStepVm(CaseChain.SoLabel, kase.SoNumber, "missing", "SO not found in ERP.")
-                : new ChainStepVm(CaseChain.SoLabel, so.SoNumber, so.Status.ToString(),
-                    $"{so.Lines.Count} line(s), {so.Currency}.");
+                : new ChainStepVm(CaseChain.SoLabel, so.SoNumber, ErpStatusWords.Of(so.Status),
+                    $"{LineWords(so.Lines.Count)}, {so.Currency}.");
         }
         catch (Exception ex)
         {
@@ -330,7 +588,8 @@ public sealed class CaseViewService
             return po is null
                 ? new ChainStepVm(CaseChain.PoLabel, kase.PoNumber, "missing", "PO not found in ERP.")
                 : new ChainStepVm(CaseChain.PoLabel, po.PoNumber,
-                    $"{po.ApprovalStatus} / {po.DocStatus}", $"Vendor {po.VendorId}, {po.Currency}.");
+                    $"{ErpStatusWords.Of(po.ApprovalStatus)} / {ErpStatusWords.Of(po.DocStatus)}",
+                    $"Vendor {await VendorNameAsync(po.VendorId, ct).ConfigureAwait(false)}, {po.Currency}.");
         }
         catch (Exception ex)
         {
@@ -352,13 +611,13 @@ public sealed class CaseViewService
         kase.Invoices.Count == 0
             ? new ChainStepVm(CaseChain.InvoicesLabel, null, "none", null)
             : new ChainStepVm(CaseChain.InvoicesLabel, string.Join("; ", kase.Invoices.Select(i => $"{i.VendorId}/{i.SupplierInvoiceNumber}")),
-                $"{kase.Invoices.Count} invoice(s)", "Detail on ERP.");
+                CaseChain.CountWords(kase.Invoices.Count, "invoice"), "Detail on ERP.");
 
     private static ChainStepVm PaymentsStep(Case kase) =>
         kase.PaymentNumbers.Count == 0
             ? new ChainStepVm(CaseChain.PaymentsLabel, null, "none", null)
             : new ChainStepVm(CaseChain.PaymentsLabel, string.Join("; ", kase.PaymentNumbers),
-                $"{kase.PaymentNumbers.Count} payment(s)", "Detail on ERP.");
+                CaseChain.CountWords(kase.PaymentNumbers.Count, "payment"), "Detail on ERP.");
 
     /// <summary>Agent scorecard for one case: transcript counts plus policy
     /// approvals from the ERP documents. Every read degrades to empty on
@@ -459,8 +718,8 @@ public sealed class CaseViewService
 
             try
             {
-                var cached = _photos.TryCachedRead(image);
-                reads.Add(cached is null ? $"{image}: no cached read." : $"{image}: {cached}");
+                var pretty = DockReadFormat.Pretty(_photos.TryCachedRead(image));
+                reads.Add(pretty is null ? $"{image}: no cached read." : $"{image}:\n{pretty}");
             }
             catch (Exception ex)
             {
@@ -469,6 +728,53 @@ public sealed class CaseViewService
         }
 
         return new ReceiptVm(receipt, images, reads);
+    }
+
+    /// <summary>Screening table for a PR/PO record page, found through the
+    /// case carrying that document number. Null when no case links it.</summary>
+    public async Task<ErpLineTable?> ScreeningSectionAsync(
+        string? prNumber, string? poNumber, CancellationToken ct = default)
+    {
+        string? caseId = null;
+        try
+        {
+            var files = await _cases.ListAsync(ct).ConfigureAwait(false);
+            caseId = files
+                .OrderBy(f => f.Case.CaseId, StringComparer.Ordinal)
+                .FirstOrDefault(f =>
+                    (prNumber is not null
+                        && string.Equals(f.Case.PrNumber, prNumber, StringComparison.Ordinal))
+                    || (poNumber is not null
+                        && string.Equals(f.Case.PoNumber, poNumber, StringComparison.Ordinal)))
+                ?.Case.CaseId;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Case lookup failed for screening section {Pr}/{Po}.", prNumber, poNumber);
+            return null;
+        }
+
+        if (caseId is null)
+        {
+            return null;
+        }
+
+        var rows = await ScreeningTableAsync(caseId, ct).ConfigureAwait(false);
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        return new ErpLineTable("Vendor screening",
+            [new("Vendor"), new("Country"), new("Unit price", true), new("Result"), new("Reason")],
+            rows.Select(r => (IReadOnlyList<ErpCell>)
+            [
+                new(r.Awarded ? $"{r.VendorName} (awarded)" : r.VendorName),
+                new(r.Country),
+                new(r.Price, true),
+                new(r.Result),
+                new(r.Reason),
+            ]).ToList());
     }
 
     private async Task<string?> FindCaseIdForReceiptAsync(
@@ -521,9 +827,9 @@ public sealed class CaseViewService
             var verdicts = evidence.Verdicts[cartonId];
             lines.Add(verdicts.All(v => v.Kind == VerdictKind.Pass)
                 ? $"Carton {cartonId}: passed the dock check."
-                : $"Carton {cartonId}: " + string.Join("; ", verdicts
+                : $"Carton {cartonId}: " + string.Join(" ", verdicts
                     .Where(v => v.Kind != VerdictKind.Pass)
-                    .Select(v => $"{v.Kind} by {v.RuleId} — {v.Reason}")));
+                    .Select(v => $"{v.Reason} ({v.RuleId})")));
         }
 
         return lines;

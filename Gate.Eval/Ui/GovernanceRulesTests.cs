@@ -64,7 +64,7 @@ public sealed class GovernanceRulesTests
         Assert.Equal(2, scan.Counts["DOCK-T3"]);
         Assert.Equal(1, scan.Counts["DOCK-T5"]);
         Assert.Equal(1, scan.DockEvaluatedFiles);
-        Assert.Contains("1 case(s)", scan.DockNote);
+        Assert.Contains("1 case", scan.DockNote);
     }
 
     [Fact]
@@ -270,7 +270,7 @@ public sealed class GovernanceRulesTests
         Assert.Equal("2026-03-16", shipped.EffectiveOrAdopted);
         Assert.Single(vm.Rows.Single(r => r.IsCompanyRule).GroundedEntries);
         Assert.Contains("all cases (1 scanned)", vm.ScanLabel);
-        Assert.Contains("1 case(s)", vm.DockNote);
+        Assert.Contains("1 case", vm.DockNote);
         Assert.Empty(vm.Notes);
     }
 

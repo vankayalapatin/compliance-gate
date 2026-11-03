@@ -124,7 +124,7 @@
                     <p class="gate-card-title">Photos and reads</p>
                     @foreach (var read in _record.CachedReads)
                     {
-                        <p class="gate-meta">@read</p>
+                        <p class="gate-meta gate-read">@read</p>
                     }
                     @foreach (var image in _record.ImageFileNames)
                     {
@@ -184,7 +184,7 @@
                                         <option value="">— pick —</option>
                                         @foreach (var option in input.Options)
                                         {
-                                            <option value="@option">@option</option>
+                                            <option value="@option.Value">@option.Label</option>
                                         }
                                     </select>
                                 }

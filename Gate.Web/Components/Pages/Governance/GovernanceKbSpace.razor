@@ -66,7 +66,10 @@
                                 {
                                     var usedBy = UsedByFor(entry);
                                     <tr>
-                                        <td><a href="/@GovernanceRoutes.KbEntryHref(_view.CurrentVersion, sec, entry.EntryId)"><code>@entry.EntryId</code></a></td>
+                                        <td><a href="/@GovernanceRoutes.KbEntryHref(_view.CurrentVersion, sec, entry.EntryId)"><code>@entry.EntryId</code></a>@if (IsItemsSection(sec))
+{
+    <span> · </span><a href="/@ErpRoutes.RecordHref("item", entry.EntryId)">ERP item</a>
+}</td>
                                         <td>@entry.Summary</td>
                                         <td>@(entry.Owner ?? "—")</td>
                                         <td>@(entry.Status ?? "—")</td>
@@ -76,13 +79,9 @@
                                         <td>@StampByAt(entry.ModifiedBy, entry.ModifiedAt)</td>
                                         <td>@ActorLabels.Display(entry.ApprovedBy)</td>
                                         <td>
-                                            @if (usedBy.Proposals.Count == 0 && usedBy.Activations.Count == 0)
+                                            @if (usedBy.Proposals.Count > 0 || usedBy.Activations.Count > 0)
                                             {
-                                                <span class="gate-meta">unused</span>
-                                            }
-                                            else
-                                            {
-                                                <span>@usedBy.Proposals.Count proposal(s), @usedBy.Activations.Count activation(s)</span>
+                                                <span>@CaseChain.CountWords(usedBy.Proposals.Count, "proposal"), @CaseChain.CountWords(usedBy.Activations.Count, "activation")</span>
                                                 @if (usedBy.Rules.Count > 0)
                                                 {
                                                     <span> · rules @(string.Join(", ", usedBy.Rules))</span>
@@ -232,9 +231,9 @@
     }
 
     private string Subtitle() =>
-        _view is null
-            ? "Loading…"
-            : $"Owner {_view.Space.Owner} · {_view.Sections.Count} section(s) · {KbDisplay.Version(_view.CurrentVersion)}.";
+        _loadError is not null ? "Failed to load." :
+        _view is null ? "Loading…" :
+        $"Owner {_view.Space.Owner} · {CaseChain.CountWords(_view.Sections.Count, "section")} · {KbDisplay.Version(_view.CurrentVersion)}.";
 
     private static string StampByAt(string? by, string? at) =>
         by is null && at is null
@@ -243,6 +242,9 @@
 
     private static bool IsWikiSection(string section) =>
         KbCitations.WikiSections.Contains(section, StringComparer.Ordinal);
+
+    private static bool IsItemsSection(string section) =>
+        string.Equals(section, KbCitations.Items, StringComparison.Ordinal);
 
     private KbUsedByVm UsedByFor(KbEntryVm entry) =>
         UsedByIndex.FindUsedBy(entry.Section, entry.EntryId, _memoFiles);

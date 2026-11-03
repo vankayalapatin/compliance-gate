@@ -40,13 +40,21 @@ public sealed record SupplierAckInput(
     string? IdempotencyKey = null);
 
 /// <summary>Supplier ASN for a case PO. The packing-slip number travels with
-/// the ASN, so ASN handling posts the receipt in the same idempotent step.</summary>
+/// the ASN, so ASN handling posts the receipt in the same idempotent step.
+/// Simulated problems ride along for the dock views only; uploads never
+/// take problems.</summary>
 public sealed record SupplierAsnInput(
     string CaseId,
     string AsnNumber,
     string SupplierPackingSlipNumber,
     IReadOnlyList<AsnCartonInput> Cartons,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    IReadOnlyList<SimulatedProblem>? SimulatedProblems = null);
+
+/// <summary>Dock-view rebuild for a case: merge these problems into the
+/// stored set (winning per carton) and rebuild the views. The problem
+/// shape itself is vision-canonical in DockImagePipeline.cs.</summary>
+public sealed record RebuildDockViewsInput(string CaseId, List<SimulatedProblem> Problems);
 
 /// <summary>One supplier invoice line as transcribed (vision or supplier EDI).
 /// PoLineRef may be blank on the tricky missing-fields invoice.</summary>

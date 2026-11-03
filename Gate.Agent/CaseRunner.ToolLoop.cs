@@ -29,6 +29,10 @@ public partial class CaseRunner
     {
         var history = new List<ModelMessage>();
         var refusedStreak = 0;
+        var ruleStreak = 0;
+        var repeatStreak = 0;
+        string? lastIdleSignature = null;
+        var idleTurns = 0;
         for (var turn = 1; turn <= MaxToolTurns; turn++)
         {
             // Presentation pace only: while the Admin toggle is on, pause
@@ -42,7 +46,7 @@ public partial class CaseRunner
             var file = CaseStore.Load(_cacheDir, caseId)
                 ?? throw new InvalidOperationException($"Unknown case {caseId}.");
             var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
-            var (step, reason) = CasePicker.Pick(file, view, payUpToDate);
+            var (step, reason) = CasePicker.Pick(file, view, payUpToDate, _split.IsOn);
             _logger.LogInformation(
                 "Case {CaseId} at {Stage}: next step {Step} ({Reason}).",
                 caseId, file.Case.Stage, step, reason);
@@ -51,14 +55,16 @@ public partial class CaseRunner
                 return new CaseAdvanceOutcome(caseId, file.Case.Stage, step, step == CaseNextStep.Done, reason);
             }
 
-            var legal = CasePicker.LegalTools(file, view, payUpToDate);
-            // Tool turns need headroom: reasoning models can burn a 2000-token
+            var legal = CasePicker.LegalTools(file, view, payUpToDate, _split.IsOn);
+            // Tool turns need output room: reasoning models can burn a small
             // budget thinking (observed on a pay-vs-email turn) and starve the
-            // answer, failing the advance after retry.
+            // answer, failing the advance after retry. The budget arrives
+            // through the constructor (app config); memo and vision budgets
+            // stay on their own values.
             var request = new ModelRequest(
-                AgentTools.BuildTurnPrompt(file, view),
+                AgentTools.BuildTurnPrompt(file, view, legal, step),
                 AgentTools.SystemPrompt,
-                MaxTokens: 4000,
+                MaxTokens: _turnMaxTokens,
                 Tools: AgentTools.Catalog.Where(t => legal.Contains(t.Name)).ToList(),
                 History: history.Count == 0 ? null : history.ToList());
             ModelResult result;
@@ -84,17 +90,76 @@ public partial class CaseRunner
                 await ExecuteDeferredAsync(caseId, file, view, step, turn, result, history, payUpToDate, ct)
                     .ConfigureAwait(false);
                 refusedStreak = 0;
+                ruleStreak = 0;
+                repeatStreak = 0;
+                lastIdleSignature = null;
+                idleTurns = 0;
                 continue;
             }
 
-            var acted = await ExecuteTurnCallsAsync(
+            var (acted, blocked) = await ExecuteTurnCallsAsync(
                 caseId, file, view, step, turn, result, calls, legal, history, payUpToDate, ct)
                 .ConfigureAwait(false);
             refusedStreak = step == CaseNextStep.DraftPayment && !acted ? refusedStreak + 1 : 0;
             if (refusedStreak >= 2)
             {
                 refusedStreak = 0;
+                ruleStreak = 0;
+                repeatStreak = 0;
+                lastIdleSignature = null;
+                idleTurns = 0;
                 await DraftPaymentByRuleAsync(caseId, payUpToDate, ct).ConfigureAwait(false);
+            }
+
+            // Rule fallback, any step. Three ways in: three turns in a row
+            // with refused calls and no executed action; three no-action
+            // turns repeating the identical calls (a repeat read with no
+            // intervening action can only return identical facts); or
+            // eight no-action turns of any mix. An executed action or a
+            // deferred-executed turn resets every count; a reads-only turn
+            // resets the refusal count but keeps the idle counts, so
+            // alternating reads never outwait the breaker.
+            var signature = string.Join(";", calls.Select(c => $"{c.Name}|{c.ArgumentsJson}"));
+            if (acted)
+            {
+                ruleStreak = 0;
+                repeatStreak = 0;
+                lastIdleSignature = null;
+                idleTurns = 0;
+            }
+            else
+            {
+                ruleStreak = blocked ? ruleStreak + 1 : 0;
+                repeatStreak = signature == lastIdleSignature ? repeatStreak + 1 : 1;
+                lastIdleSignature = signature;
+                idleTurns++;
+            }
+
+            // The split step deliberates over read facts (headroom first,
+            // then the plan), so only the refusal breaker applies there;
+            // every other step also trips on repeats and long idles.
+            var deliberative = step == CaseNextStep.ProposeSplit;
+            string? trigger = null;
+            if (ruleStreak >= 3)
+            {
+                trigger = "three refused tries";
+            }
+            else if (!deliberative && repeatStreak >= 3)
+            {
+                trigger = "three identical tries with no action";
+            }
+            else if (!deliberative && idleTurns >= 8)
+            {
+                trigger = "eight tries with no action";
+            }
+
+            if (trigger is not null)
+            {
+                ruleStreak = 0;
+                repeatStreak = 0;
+                lastIdleSignature = null;
+                idleTurns = 0;
+                await FallbackByRuleAsync(caseId, step, payUpToDate, trigger, ct).ConfigureAwait(false);
             }
         }
 
@@ -140,10 +205,11 @@ public partial class CaseRunner
             "Call tools yourself on the next turn."));
     }
 
-    /// <summary>Runs one turn's calls, returning whether any call acted.
-    /// Refused turns return false so the caller can count consecutive agent
-    /// failures; execution errors still abort the advance.</summary>
-    private async Task<bool> ExecuteTurnCallsAsync(
+    /// <summary>Runs one turn's calls, returning whether any call acted
+    /// and whether any call was refused. Refused turns return no action
+    /// so the caller can count consecutive agent failures; execution
+    /// errors still abort the advance.</summary>
+    private async Task<(bool Acted, bool Blocked)> ExecuteTurnCallsAsync(
         string caseId, CaseFile file, CaseErpView view, CaseNextStep step, int turn,
         ModelResult result, IReadOnlyList<ModelToolCall> calls, IReadOnlySet<string> legal,
         List<ModelMessage> history, DateOnly? payUpToDate, CancellationToken ct)
@@ -166,7 +232,7 @@ public partial class CaseRunner
                 results.Add($"{call.Name}: {detail}");
                 if (verdict == ToolCallVerdict.Blocked)
                 {
-                    RecordRefusedAttempt(caseId, call.Name);
+                    RecordRefusedAttempt(caseId, call, detail);
                 }
                 history.Add(new ModelMessage(
                     "tool",
@@ -212,13 +278,16 @@ public partial class CaseRunner
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(turnError).Throw();
         }
 
-        return acted;
+        return (acted, transcriptCalls.Any(c => c.Verdict == ToolCallVerdict.Blocked));
     }
 
     /// <summary>Logs a refused tool call on the timeline in plain words so
-    /// the activity feed shows what the agent tried. The transcript keeps
-    /// the full reason; the tool name rides along for filtering.</summary>
-    private void RecordRefusedAttempt(string caseId, string toolName)
+    /// the activity feed shows what the agent tried, why it was refused,
+    /// and (for awards) which vendor it tried: the tried vendor rides on
+    /// the document ref so the later award can name what came before it.
+    /// The transcript keeps the full reason; the tool name rides along
+    /// for filtering.</summary>
+    private void RecordRefusedAttempt(string caseId, ModelToolCall call, string detail)
     {
         try
         {
@@ -228,11 +297,19 @@ public partial class CaseRunner
                 return;
             }
 
+            var tried = string.Equals(call.Name, AgentTools.AwardSupplier, StringComparison.Ordinal)
+                ? AgentTools.ReadStringArg(call.ArgumentsJson, "vendor_id")
+                : null;
+            var summary = tried is null
+                ? $"Tried to {AgentTools.ToPlainVerb(call.Name)}; refused: {detail}"
+                : $"Tried to award the supplier to {tried}; refused: {detail}";
             var work = new CaseWork(file);
             work.AddEvent(
                 CaseEventKind.AgentRefused,
-                $"Tried to {AgentTools.ToPlainVerb(toolName)}; refused.",
-                ruleId: toolName);
+                summary,
+                ruleId: call.Name,
+                documentType: tried is null ? null : "Vendor",
+                documentNumber: tried);
             work.Save(_cacheDir);
         }
         catch (Exception ex)
@@ -268,6 +345,94 @@ public partial class CaseRunner
             "Case {CaseId}: payment drafted by rule after two refused agent calls.", caseId);
     }
 
+    /// <summary>Three-strikes fallback for any step: C# runs the picked
+    /// step through the same path a model deferral uses, then logs the
+    /// fallback on the timeline in plain words. At the split step the
+    /// fallback is a single-vendor award to the cheapest passing vendor.
+    /// An ERP refusal still aborts loudly: the rule path only replaces a
+    /// flailing agent, never a refusing ERP.</summary>
+    private async Task FallbackByRuleAsync(
+        string caseId, CaseNextStep step, DateOnly? payUpToDate, string trigger, CancellationToken ct)
+    {
+        var file = CaseStore.Load(_cacheDir, caseId)
+            ?? throw new InvalidOperationException($"Unknown case {caseId}.");
+        var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
+        try
+        {
+            if (step == CaseNextStep.ProposeSplit)
+            {
+                await FallbackSplitToSingleAwardAsync(file, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await ExecuteStepAsync(file, view, step, payUpToDate, ct).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Case {CaseId} rule fallback for {Step} failed.", caseId, step);
+            RecordFailureNote(caseId, step, ex);
+            throw;
+        }
+
+        var verb = AgentTools.ToPlainVerb(AgentTools.ToToolName(step) ?? step.ToString());
+        var work = new CaseWork(CaseStore.Load(_cacheDir, caseId) ?? file);
+        work.AddEvent(CaseEventKind.Note,
+            $"After {trigger}, {verb} ran by rule instead.");
+        work.Save(_cacheDir);
+        _logger.LogWarning(
+            "Case {CaseId}: {Step} fell back to the rule path after {Trigger}.", caseId, step, trigger);
+    }
+
+    /// <summary>Split-step fallback: awards the full quantity to the
+    /// cheapest passing vendor by ERP unit price. Passing vendors
+    /// without a price cannot be ordered and are skipped; with no
+    /// priced passing vendor the fallback refuses loudly instead of
+    /// awarding blind. C# never invents a split on its own.</summary>
+    private async Task FallbackSplitToSingleAwardAsync(CaseFile file, CancellationToken ct)
+    {
+        var current = file.Case;
+        if (current.PrNumber is null)
+        {
+            throw new InvalidOperationException($"Case {current.CaseId} has no PR to award.");
+        }
+
+        var raw = await _core.ScreenCandidatesAsync(
+            current.PrNumber, ReadCandidates(file, current.ItemId), ct).ConfigureAwait(false);
+        var (screenings, passing, _) = CorpExceptionFlow.ApplyApprovedExceptions(file, raw);
+        if (passing.Count == 0)
+        {
+            throw new InvalidOperationException("No compliant vendor: PO refused.");
+        }
+
+        string? cheapest = null;
+        var best = 0m;
+        foreach (var vendorId in passing)
+        {
+            var price = await _erp.GetVendorPriceAsync(vendorId, current.ItemId, ct).ConfigureAwait(false);
+            if (price is null)
+            {
+                continue;
+            }
+
+            if (cheapest is null || price.Value < best)
+            {
+                cheapest = vendorId;
+                best = price.Value;
+            }
+        }
+
+        if (cheapest is null)
+        {
+            throw new InvalidOperationException(
+                $"No priced passing vendor for case {current.CaseId}: the rule fallback cannot award.");
+        }
+
+        await AwardSupplierStepAsync(
+            file, cheapest,
+            FallbackAwardReason(cheapest, screenings, "Cheapest passing vendor"), ct).ConfigureAwait(false);
+    }
+
     /// <summary>Validates one tool call against a freshly loaded case plus
     /// view and executes it when legal. Reads run against the snapshot;
     /// before every action the case is re-loaded and re-picked, so a call is
@@ -281,16 +446,19 @@ public partial class CaseRunner
             return (ToolCallVerdict.Blocked, $"Unknown tool '{call.Name}'.", false);
         }
 
+        // Legality before arguments: a call for a tool the step does not
+        // offer is refused with the legal set (steering the next turn),
+        // never coached on arguments for a tool it cannot use.
+        if (!turnLegal.Contains(call.Name))
+        {
+            return (ToolCallVerdict.Blocked, IllegalDetail(caseId, call.Name, turnLegal), false);
+        }
+
         var argCase = AgentTools.ReadStringArg(call.ArgumentsJson, "case_id");
         if (!string.Equals(argCase, caseId, StringComparison.Ordinal))
         {
             return (ToolCallVerdict.Blocked,
                 $"case_id must be '{caseId}'; got '{argCase ?? "missing"}'.", false);
-        }
-
-        if (!turnLegal.Contains(call.Name))
-        {
-            return (ToolCallVerdict.Blocked, IllegalDetail(caseId, call.Name, turnLegal), false);
         }
 
         if (AgentTools.IsReadTool(call.Name))
@@ -302,14 +470,14 @@ public partial class CaseRunner
         var file = CaseStore.Load(_cacheDir, caseId)
             ?? throw new InvalidOperationException($"Unknown case {caseId}.");
         var view = await BuildViewAsync(file, ct).ConfigureAwait(false);
-        var (freshStep, freshReason) = CasePicker.Pick(file, view, payUpToDate);
+        var (freshStep, freshReason) = CasePicker.Pick(file, view, payUpToDate, _split.IsOn);
         if (freshStep.IsWaiting())
         {
             return (ToolCallVerdict.Blocked,
                 $"Case now waits ({freshStep}: {freshReason}); no action runs.", false);
         }
 
-        var freshLegal = CasePicker.LegalTools(file, view, payUpToDate);
+        var freshLegal = CasePicker.LegalTools(file, view, payUpToDate, _split.IsOn);
         if (!freshLegal.Contains(call.Name))
         {
             return (ToolCallVerdict.Blocked, IllegalDetail(caseId, call.Name, freshLegal), false);
@@ -395,6 +563,53 @@ public partial class CaseRunner
             return (ToolCallVerdict.Executed, $"Awarded {file.Case.ItemId} to {vendorId}.", true);
         }
 
+        if (string.Equals(call.Name, AgentTools.ProposeSplit, StringComparison.Ordinal))
+        {
+            var vendorIds = AgentTools.ReadStringArrayArg(call.ArgumentsJson, "vendor_ids");
+            var quantities = AgentTools.ReadNumberArrayArg(call.ArgumentsJson, "quantities");
+            if (vendorIds is null || quantities is null)
+            {
+                return (ToolCallVerdict.Blocked,
+                    "propose_split needs vendor_ids and quantities arrays side by side, in PO creation order.", false);
+            }
+
+            var note = AgentTools.ReadStringArg(call.ArgumentsJson, "note");
+            SplitVerification verification;
+            try
+            {
+                verification = await SplitPlanVerifier.VerifyAsync(
+                    _erp, _compliance, file, ReadCandidates(file, file.Case.ItemId),
+                    vendorIds, quantities, _countryNames, ct, note).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Case {CaseId} propose_split failed.", caseId);
+                RecordFailureNote(caseId, AgentTools.ProposeSplit, ex);
+                throw;
+            }
+
+            if (verification.Plan is null)
+            {
+                return (ToolCallVerdict.Blocked,
+                    $"Split refused: {string.Join(" ", verification.Errors)}", false);
+            }
+
+            Decision card;
+            try
+            {
+                card = await CreateSplitCardAsync(file, verification, note, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Case {CaseId} propose_split card failed.", caseId);
+                RecordFailureNote(caseId, AgentTools.ProposeSplit, ex);
+                throw;
+            }
+
+            return (ToolCallVerdict.Executed,
+                $"Split proposed for {file.Case.ItemId}: decision {card.DecisionId} needs {card.RequestedTo}.", true);
+        }
+
         var mapped = AgentTools.ToStep(call.Name);
         if (mapped is null || mapped != freshStep)
         {
@@ -443,6 +658,12 @@ public partial class CaseRunner
             var state = await BuildPrePayStateAsync(file, ct).ConfigureAwait(false);
             var verdicts = await _compliance.EvaluatePayableAsync(state, ct).ConfigureAwait(false);
             return AgentTools.PrePayJson(state, verdicts);
+        }
+
+        if (string.Equals(name, AgentTools.GetVendorHeadroom, StringComparison.Ordinal))
+        {
+            var facts = await _headroomSource.GetHeadroomAsync(caseId, ct).ConfigureAwait(false);
+            return facts.ToJson();
         }
 
         return AgentTools.MailJson(EmailStore.Load(_cacheDir, caseId));

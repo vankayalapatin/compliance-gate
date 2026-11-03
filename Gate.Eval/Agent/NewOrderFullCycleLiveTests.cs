@@ -160,8 +160,11 @@ public sealed class NewOrderFullCycleLiveTests
         var erp = new InMemoryErpAdapter();
         var caseDir = Path.Combine(tmp, "cases");
         var compliance = new ComplianceEngine();
+        // These cycles pin the pre-split single-vendor flow: the split
+        // switch stays off here so the agent awards one vendor per case.
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), caseDir);
+            compliance, new DockEvaluatorAdapter(), caseDir,
+            splitProposals: new SplitProposals { IsOn = false });
         return new LiveHarness(erp, runner, caseDir, counter, http);
     }
 

@@ -67,6 +67,21 @@ public static class ErpRoutes
 
     public static bool CanCreate(string slug) => CreatableKinds.Contains(slug);
 
+    /// <summary>Per-list New label naming what the button creates.</summary>
+    public static string NewLabelFor(string slug) =>
+        slug switch
+        {
+            "so" => "New sales order",
+            "pr" => "New purchase requisition",
+            "po" => "New purchase order",
+            "invoice" => "New invoice",
+            "payment" => "New payment",
+            "receipt" => "New receipt",
+            "vendor" => "New vendor",
+            "item" => "New item",
+            _ => "New",
+        };
+
     public static string RecordHref(string kind, string key, string? key2 = null) =>
         key2 is null
             ? $"erp/record/{kind}/{Uri.EscapeDataString(key)}"
@@ -79,21 +94,145 @@ public static class ErpRoutes
 }
 
 /// <summary>Clean numbers for ledger columns: money with two decimals plus
-/// currency, quantities without trailing zeros. Invariant culture so the
-/// demo renders identically everywhere.</summary>
+/// currency ($ for USD), quantities with thousands separators and no
+/// trailing zeros, stamps in local time. Invariant culture so every
+/// operator sees the same shape.</summary>
 public static class ErpFormat
 {
+    /// <summary>Number shapes shared with the lower layers: agent prose
+    /// and ledger cells format money identically.</summary>
     public static string Money(decimal amount, string? currency) =>
-        $"{Amount(amount)} {currency ?? "currency missing"}";
+        DisplayWords.Money(amount, currency);
 
     public static string Amount(decimal amount) =>
-        amount.ToString("N2", CultureInfo.InvariantCulture);
+        DisplayWords.Amount(amount);
 
     public static string Qty(decimal qty) =>
-        qty.ToString("0.##", CultureInfo.InvariantCulture);
+        DisplayWords.Qty(qty);
 
     public static string Count(int count) =>
-        count.ToString("N0", CultureInfo.InvariantCulture);
+        DisplayWords.Count(count);
+
+    /// <summary>Local-time stamp for record fields and timelines. Never a
+    /// trailing Z: the reader sees their own clock.</summary>
+    public static string When(DateTimeOffset at) =>
+        DisplayWords.When(at);
+
+    public static string When(DateTimeOffset? at) =>
+        at is null ? "—" : When(at.Value);
+
+    /// <summary>Calendar-day stamp for due and posting dates.</summary>
+    public static string Day(DateOnly day) =>
+        day.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
+}
+
+/// <summary>Plain words for every ERP status enum. Screens never render a
+/// raw enum name.</summary>
+public static class ErpStatusWords
+{
+    public static string Of(SalesOrderStatus status) => status switch
+    {
+        SalesOrderStatus.Created => "Created",
+        SalesOrderStatus.Confirmed => "Confirmed",
+        SalesOrderStatus.PartiallyDelivered => "Partly delivered",
+        SalesOrderStatus.Delivered => "Delivered",
+        SalesOrderStatus.Invoiced => "Invoiced",
+        SalesOrderStatus.Closed => "Closed",
+        SalesOrderStatus.Cancelled => "Cancelled",
+        _ => "Unknown",
+    };
+
+    public static string Of(PrStatus status) => status switch
+    {
+        PrStatus.Draft => "Draft",
+        PrStatus.Submitted => "Submitted",
+        PrStatus.Approved => "Approved",
+        PrStatus.Rejected => "Rejected",
+        PrStatus.PartiallyOrdered => "Partially ordered",
+        PrStatus.Closed => "Closed",
+        PrStatus.Cancelled => "Cancelled",
+        _ => "Unknown",
+    };
+
+    public static string Of(PoApprovalStatus status) => status switch
+    {
+        PoApprovalStatus.Draft => "Draft",
+        PoApprovalStatus.InReview => "In review",
+        PoApprovalStatus.Approved => "Approved",
+        PoApprovalStatus.Confirmed => "Confirmed",
+        PoApprovalStatus.Cancelled => "Cancelled",
+        _ => "Unknown",
+    };
+
+    public static string Of(PoDocStatus status) => status switch
+    {
+        PoDocStatus.Open => "Open",
+        PoDocStatus.PartiallyReceived => "Partly received",
+        PoDocStatus.Received => "Received",
+        PoDocStatus.PartiallyInvoiced => "Partly invoiced",
+        PoDocStatus.Invoiced => "Invoiced",
+        PoDocStatus.Closed => "Closed",
+        PoDocStatus.Cancelled => "Cancelled",
+        _ => "Unknown",
+    };
+
+    public static string Of(ReceiptStatus status) => status switch
+    {
+        ReceiptStatus.Posted => "Posted",
+        _ => "Unknown",
+    };
+
+    public static string Of(InvoiceStatus status) => status switch
+    {
+        InvoiceStatus.Received => "Received",
+        InvoiceStatus.Matched => "Matched",
+        InvoiceStatus.Approved => "Approved",
+        InvoiceStatus.Posted => "Posted",
+        InvoiceStatus.PartiallyPaid => "Partly paid",
+        InvoiceStatus.Paid => "Paid",
+        InvoiceStatus.Closed => "Closed",
+        _ => "Unknown",
+    };
+
+    public static string Of(PaymentStatus status) => status switch
+    {
+        PaymentStatus.Draft => "Draft",
+        PaymentStatus.Submitted => "Submitted",
+        PaymentStatus.Approved => "Approved",
+        PaymentStatus.Posted => "Posted",
+        _ => "Unknown",
+    };
+
+    public static string Of(HoldStatus status) => status switch
+    {
+        HoldStatus.Set => "On hold",
+        HoldStatus.Released => "Released",
+        _ => "Unknown",
+    };
+
+    public static string Of(LineDisposition disposition) => disposition switch
+    {
+        LineDisposition.Accepted => "Accepted",
+        LineDisposition.Held => "Held",
+        _ => "Unknown",
+    };
+
+    public static string Of(InventoryStatus status) => status switch
+    {
+        InventoryStatus.Available => "Available",
+        InventoryStatus.Quarantined => "Quarantined",
+        InventoryStatus.Rejected => "Rejected",
+        InventoryStatus.Consumed => "Consumed",
+        _ => "Unknown",
+    };
+
+    public static string Of(DecisionStatus status) => status switch
+    {
+        DecisionStatus.Pending => "Pending",
+        DecisionStatus.Approved => "Approved",
+        DecisionStatus.Rejected => "Rejected",
+        _ => "Unknown",
+    };
 }
 
 /// <summary>One ledger cell. Numeric cells right-align with tabular figures.
@@ -175,13 +314,17 @@ public sealed record ErpRelatedDoc(
     public string Href => HrefOverride ?? ErpRoutes.RecordHref(Kind, Key, Key2);
 }
 
+/// <summary>One dropdown option: the submitted value plus the plain-words
+/// label the operator sees.</summary>
+public sealed record ErpActionOption(string Value, string Label);
+
 /// <summary>One action input. Options (non-null) renders a dropdown; a null
 /// Options renders a text box. Keys are stable ids the action service reads.</summary>
 public sealed record ErpActionInput(
     string Key,
     string Label,
     bool Required,
-    IReadOnlyList<string>? Options = null);
+    IReadOnlyList<ErpActionOption>? Options = null);
 
 /// <summary>One candidate action on a record. Candidates come from the
 /// document's current state; the ERP still enforces everything and the UI

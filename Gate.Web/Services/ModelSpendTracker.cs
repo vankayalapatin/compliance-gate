@@ -123,7 +123,9 @@ public sealed class ModelSpendTracker
                 CultureInfo.InvariantCulture, $"${metered:N2} (no cap configured)");
         }
 
-        return $"{_liveCalls} live call(s), spend unmetered";
+        return _liveCalls == 1
+            ? "1 live call, spend unmetered"
+            : $"{_liveCalls} live calls, spend unmetered";
     }
 
     /// <summary>One-line spend readout for the Admin page and restore

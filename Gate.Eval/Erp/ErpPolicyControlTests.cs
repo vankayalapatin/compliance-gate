@@ -99,6 +99,77 @@ public sealed class ErpPolicyControlTests
     }
 
     [Fact]
+    public async Task PartialQuantityPassesSourcingOnItsOwn()
+    {
+        var erp = SeededErp.CreateWithPolicy();
+        erp.SeedVolumeHistory(SeededErp.Battery,
+        [
+            new VolumeHistory("V-A CN active", "CN", 5600),
+            new VolumeHistory("V-B MX active", "MX", 4000),
+            new VolumeHistory("Other non-CN", "OTHER", 400),
+        ]);
+        var pr = await ApprovedPrAsync(erp, 1200);
+
+        // Full quantity breaches: (5,600 + 1,200) / (10,000 + 1,200) = 60.7%.
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.CreatePoAsync(pr, "V-A", RecordSource.Human, "planner", Idem()));
+        Assert.StartsWith(ComplianceEngine.CorpOriginCapId, refused.Message, StringComparison.Ordinal);
+
+        // 800 on its own passes: (5,600 + 800) / (10,000 + 800) = 59.3%.
+        var first = await erp.CreatePoAsync(pr, "V-A", RecordSource.Human, "planner", Idem(),
+            [new PoOrderLine(SeededErp.Battery, 800)]);
+        Assert.Equal(800m, Assert.Single(first.Lines).QtyOrdered);
+
+        // The second 400 to the same country sees the open 800 and refuses:
+        // (5,600 + 800 + 400) / (10,000 + 800 + 400) = 60.7%.
+        var second = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.CreatePoAsync(pr, "V-A", RecordSource.Human, "planner", Idem(),
+                [new PoOrderLine(SeededErp.Battery, 400)]));
+        Assert.StartsWith(ComplianceEngine.CorpOriginCapId, second.Message, StringComparison.Ordinal);
+
+        // But 400 from Mexico passes on its own line.
+        var split = await erp.CreatePoAsync(pr, "V-B", RecordSource.Human, "planner", Idem(),
+            [new PoOrderLine(SeededErp.Battery, 400)]);
+        Assert.Equal(400m, Assert.Single(split.Lines).QtyOrdered);
+        Assert.Equal(PrStatus.Closed, (await erp.GetPrAsync(pr))?.Status);
+    }
+
+    [Fact]
+    public async Task FiveSmallOrdersInARowRefuseOnceOpenQuantityCrossesCap()
+    {
+        var erp = SeededErp.CreateWithPolicy();
+        erp.SeedVolumeHistory(SeededErp.Battery,
+        [
+            new VolumeHistory("V-A CN active", "CN", 400),
+            new VolumeHistory("V-B MX active", "MX", 600),
+        ]);
+        var agent = new P2pAgent(erp, new FakeModelClient(), new ComplianceEngine());
+        // 200 cells to CinderVolt per round, nothing received: open orders
+        // join the math, so round 1 passes at 50.0%, round 2 at 57.1%,
+        // and rounds 3-5 refuse at 62.5% on both the agent and person path.
+        for (var round = 1; round <= 5; round++)
+        {
+            var pr = await ApprovedPrAsync(erp, 200);
+            var screenings = await agent.ScreenCandidatesAsync(pr, ["V-A"]);
+            var corp = screenings.Single().Verdicts
+                .Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+            if (round <= 2)
+            {
+                Assert.Equal(VerdictKind.Pass, corp.Kind);
+                var po = await ApprovedPoAsync(erp, pr, "V-A");
+                Assert.Equal("V-A", po.VendorId);
+            }
+            else
+            {
+                Assert.Equal(VerdictKind.Block, corp.Kind);
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    erp.CreatePoAsync(pr, "V-A", RecordSource.Human, "planner", Idem()));
+                Assert.StartsWith(ComplianceEngine.CorpOriginCapId, ex.Message, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
     public async Task LoggedExceptionGrantLetsThatAwardThrough()
     {
         var grant = new PolicyExceptionGrant(

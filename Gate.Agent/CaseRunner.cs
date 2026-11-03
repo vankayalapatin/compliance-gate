@@ -32,6 +32,15 @@ public partial class CaseRunner
     private readonly PresentationPace _pace;
     private readonly IImageLabeler? _imageLabeler;
     private readonly DockImageOptions? _dockImageOptions;
+    private readonly IReadOnlyDictionary<string, string> _countryNames;
+    private readonly SplitProposals _split;
+    private readonly int _turnMaxTokens;
+    private readonly IVendorHeadroomSource _headroomSource;
+    private readonly DockSceneLive _dockSceneLive;
+
+    /// <summary>Default per-turn output budget when no override arrives
+    /// (the app wires its configured value through turnMaxTokens).</summary>
+    private const int DefaultTurnMaxTokens = 16000;
 
     public CaseRunner(
         IErpAdapter erp,
@@ -44,7 +53,12 @@ public partial class CaseRunner
         string? visionReadCacheDir = null,
         PresentationPace? pace = null,
         IImageLabeler? imageLabeler = null,
-        DockImageOptions? dockImageOptions = null)
+        DockImageOptions? dockImageOptions = null,
+        IReadOnlyDictionary<string, string>? countryNames = null,
+        SplitProposals? splitProposals = null,
+        int? turnMaxTokens = null,
+        IVendorHeadroomSource? headroomSource = null,
+        DockSceneLive? dockSceneLive = null)
     {
         _erp = erp;
         _core = core;
@@ -57,6 +71,12 @@ public partial class CaseRunner
         _pace = pace ?? new PresentationPace();
         _imageLabeler = imageLabeler;
         _dockImageOptions = dockImageOptions;
+        _countryNames = countryNames ?? new Dictionary<string, string>();
+        _split = splitProposals ?? new SplitProposals();
+        _turnMaxTokens = turnMaxTokens ?? DefaultTurnMaxTokens;
+        _headroomSource = headroomSource
+            ?? new VendorHeadroomService(erp, compliance, cacheDir);
+        _dockSceneLive = dockSceneLive ?? new DockSceneLive();
     }
 
     /// <summary>Advances the case through the Spark-driven tool loop until it
@@ -122,6 +142,12 @@ public partial class CaseRunner
                 break;
             case CaseNextStep.AwardSupplier:
                 await AwardSupplierStepAsync(file, vendorId: null, reason: null, ct).ConfigureAwait(false);
+                break;
+            case CaseNextStep.ProposeSplit:
+                ProposeSplitDeferred(file);
+                break;
+            case CaseNextStep.CreateSplitChildren:
+                await CreateSplitChildrenStepAsync(file, ct).ConfigureAwait(false);
                 break;
             case CaseNextStep.CreatePo:
                 await CreatePoStepAsync(file, ct).ConfigureAwait(false);
@@ -290,7 +316,7 @@ public partial class CaseRunner
                 [new PurchaseRequisitionLine(current.ItemId, row.Shortfall, unit)],
                 $"{current.CaseId}:pr", ct).ConfigureAwait(false);
             work.AddEvent(CaseEventKind.PrCreated,
-                $"PR {pr.PrNumber} for {row.Shortfall} {unit} of {current.ItemId}, estimated {pr.EstimatedAmount} {pr.Currency}.",
+                $"PR {pr.PrNumber} for {DisplayWords.Qty(row.Shortfall)} {unit} of {current.ItemId}, estimated {DisplayWords.Money(pr.EstimatedAmount, pr.Currency)}.",
                 documentType: "PR", documentNumber: pr.PrNumber);
         }
 
@@ -308,7 +334,7 @@ public partial class CaseRunner
         if (pr.Status == PrStatus.Approved)
         {
             work.AddEvent(CaseEventKind.PrApproved,
-                $"PR {pr.PrNumber} auto-approved under threshold at {pr.EstimatedAmount} {pr.Currency}.",
+                $"PR {pr.PrNumber} auto-approved under threshold at {DisplayWords.Money(pr.EstimatedAmount, pr.Currency)}.",
                 documentType: "PR", documentNumber: pr.PrNumber);
             work.Stage(CaseStage.PrApproved);
             work.Save(_cacheDir);
@@ -488,15 +514,127 @@ public partial class CaseRunner
             why += $" {CorpExceptionFlow.CorpOriginCapRuleId} exception for {winner} granted by {grant.Approver}.";
         }
 
+        var refused = file.Events
+            .Where(e => e.Kind == CaseEventKind.AgentRefused
+                && string.Equals(e.RuleId, AgentTools.AwardSupplier, StringComparison.Ordinal)
+                && string.Equals(e.DocumentType, "Vendor", StringComparison.Ordinal)
+                && !string.IsNullOrWhiteSpace(e.DocumentNumber)
+                && !string.Equals(e.DocumentNumber, winner, StringComparison.Ordinal))
+            .MaxBy(e => e.Timestamp);
+        if (refused?.DocumentNumber is not null)
+        {
+            why += $" (Tried {refused.DocumentNumber} first; it was refused, so the award went to {winner}.)";
+        }
+
         var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false);
         var qty = pr?.Lines.Sum(l => l.Quantity) ?? 0;
         var work = new CaseWork(file);
-        work.AddEvent(CaseEventKind.SupplierAwarded,
-            $"Awarded {current.ItemId} x{qty} to {winner}: {why}",
+        var awarded = work.AddEvent(CaseEventKind.SupplierAwarded,
+            $"Awarded {current.ItemId} x{DisplayWords.Qty(qty)} to {winner}: {why}",
             documentType: "PR", documentNumber: current.PrNumber);
         work.Patch(current with { AwardedVendorId = winner });
+        work.SetSnapshot(await BuildScreeningSnapshotAsync(
+            file, screenings, grants, winner, pr, awarded.Timestamp, ct).ConfigureAwait(false));
         work.Save(_cacheDir);
     }
+
+    /// <summary>Freezes the screening evidence as it stood at the award: one
+    /// row per screened candidate with vendor facts, unit price, the shared
+    /// result and reason words, the full verdicts, and the origin-cap
+    /// sentence built from the verdict's own figures (never recomputed, so
+    /// the sentence always matches the verdict's share). Decided orders
+    /// display this stored copy; only undecided orders re-run live.</summary>
+    private async Task<AwardScreeningSnapshot> BuildScreeningSnapshotAsync(
+        CaseFile file,
+        IReadOnlyList<VendorScreening> screenings,
+        IReadOnlyDictionary<string, CorpExceptionGrant> grants,
+        string? winner,
+        PurchaseRequisition? pr,
+        DateTimeOffset takenAt,
+        CancellationToken ct)
+    {
+        var current = file.Case;
+        var vendors = (await _erp.GetVendorsAsync(ct).ConfigureAwait(false))
+            .ToDictionary(v => v.VendorId, StringComparer.Ordinal);
+        string noun = "units";
+        try
+        {
+            var item = await _erp.GetItemAsync(current.ItemId, ct).ConfigureAwait(false);
+            if (item is not null)
+            {
+                noun = DisplayWords.CountNoun(item.Description);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Screening snapshot for case {CaseId} could not read item {Item}; using the fallback noun.",
+                current.CaseId, current.ItemId);
+        }
+
+        var rows = new List<AwardScreeningRow>();
+        foreach (var screening in screenings)
+        {
+            if (!vendors.TryGetValue(screening.VendorId, out var vendor))
+            {
+                throw new InvalidOperationException(
+                    $"Vendor {screening.VendorId} was screened but is unknown to the ERP; cannot record the award for case {current.CaseId}.");
+            }
+
+            decimal? unit;
+            try
+            {
+                unit = await _erp.GetVendorPriceAsync(screening.VendorId, current.ItemId, ct).ConfigureAwait(false);
+            }
+            catch (NotSupportedException)
+            {
+                unit = null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Screening snapshot for case {CaseId} could not read the price for {Vendor}; storing no price.",
+                    current.CaseId, screening.VendorId);
+                unit = null;
+            }
+
+            var country = DisplayCountry(vendor.CountryOfOrigin);
+            var figures = screening.Verdicts
+                .Where(v => string.Equals(v.RuleId, CorpExceptionFlow.CorpOriginCapRuleId, StringComparison.Ordinal))
+                .Select(v => v.OriginCap)
+                .FirstOrDefault(f => f is not null
+                    && string.Equals(f.ItemId, current.ItemId, StringComparison.Ordinal));
+            rows.Add(new AwardScreeningRow(
+                screening.VendorId,
+                vendor.Name,
+                vendor.CountryOfOrigin,
+                country,
+                unit,
+                pr?.Currency,
+                screening.Passed,
+                ScreeningRowWords.ResultFor(screening.Passed, screening.Verdicts),
+                ScreeningRowWords.ReasonFor(screening.Verdicts, CorpExceptionFlow.CorpOriginCapRuleId),
+                string.Equals(screening.VendorId, winner, StringComparison.Ordinal),
+                screening.Verdicts,
+                figures is null
+                    ? null
+                    : ScreeningSentence.Build(
+                        CorpExceptionFlow.CorpOriginCapRuleId, vendor.Name, country,
+                        figures.CountryCells, figures.TotalCells,
+                        figures.CountryOpenCells, figures.TotalOpenCells,
+                        figures.AwardQty, figures.Cap, noun,
+                        grants.ContainsKey(screening.VendorId))));
+        }
+
+        var awardQty = pr?.Lines
+            .Where(l => string.Equals(l.ItemId, current.ItemId, StringComparison.Ordinal))
+            .Sum(l => l.Quantity) ?? 0;
+        return new AwardScreeningSnapshot(
+            takenAt, current.PrNumber!, current.ItemId, awardQty, winner, rows);
+    }
+
+    private string DisplayCountry(string code) =>
+        _countryNames.TryGetValue(code, out var name) ? name : code;
 
     /// <summary>Screening block rule ids for one vendor: distinct Block
     /// verdicts excluding the ERP-block marker (losers are already blocked
@@ -511,18 +649,18 @@ public partial class CaseRunner
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList();
 
-    /// <summary>Deterministic C#-fallback award prose: names the first passing
-    /// vendor plus every loser with its honest outcome (blocking rule ids for
-    /// blocked candidates, passed-but-not-chosen otherwise).</summary>
+    /// <summary>Deterministic fallback award prose: names the first passing
+    /// vendor plus every other candidate with its honest outcome (blocking
+    /// rule ids for blocked candidates, passed-but-not-chosen otherwise).</summary>
     private static string FallbackAwardReason(
-        string winner, IReadOnlyList<VendorScreening> screenings)
+        string winner, IReadOnlyList<VendorScreening> screenings, string lead = "First passing vendor")
     {
         var losers = screenings
             .Where(s => !string.Equals(s.VendorId, winner, StringComparison.Ordinal))
             .ToList();
         if (losers.Count == 0)
         {
-            return $"C# executed the pick: first passing vendor {winner}.";
+            return $"{lead} {winner} takes the award.";
         }
 
         var clauses = losers.Select(loser =>
@@ -532,7 +670,7 @@ public partial class CaseRunner
                 ? $"{loser.VendorId} blocked by {string.Join(", ", blocks)}"
                 : $"{loser.VendorId} passed but not chosen";
         });
-        return $"C# executed the pick: first passing vendor {winner}. Losers: {string.Join("; ", clauses)}.";
+        return $"{lead} {winner} takes the award. Other candidates: {string.Join("; ", clauses)}.";
     }
 
     /// <summary>Validates a Spark-written award reason names every other
@@ -633,6 +771,7 @@ public partial class CaseRunner
         {
             if (priced is not null && !priced.Contains(vendorId))
             {
+                failures.Add($"{vendorId}: no price for {current.ItemId}");
                 work.AddEvent(CaseEventKind.Note,
                     $"PO skipped for {vendorId}: no price for {current.ItemId}; trying next vendor.",
                     documentType: "PR", documentNumber: current.PrNumber);
@@ -641,6 +780,7 @@ public partial class CaseRunner
 
             if (vendorById.TryGetValue(vendorId, out var vendor) && vendor.IsBlocked)
             {
+                failures.Add($"{vendorId}: vendor is blocked ({vendor.BlockReason})");
                 work.AddEvent(CaseEventKind.Note,
                     $"PO skipped for {vendorId}: vendor is blocked ({vendor.BlockReason}); trying next vendor.",
                     documentType: "PR", documentNumber: current.PrNumber);
@@ -650,17 +790,22 @@ public partial class CaseRunner
             try
             {
                 var po = await _erp.CreatePoAsync(current.PrNumber, vendorId,
-                    RecordSource.P2pAgent, pr.Requester, $"{current.CaseId}:create-po:{vendorId}", ct).ConfigureAwait(false);
+                    RecordSource.P2pAgent, pr.Requester, $"{current.CaseId}:create-po:{vendorId}", ct: ct).ConfigureAwait(false);
                 if (!string.Equals(vendorId, current.AwardedVendorId, StringComparison.Ordinal))
                 {
+                    var cause = failures.FirstOrDefault(f =>
+                        f.StartsWith(current.AwardedVendorId + ":", StringComparison.Ordinal));
                     work.AddEvent(CaseEventKind.SupplierAwarded,
-                        $"Re-awarded {current.ItemId} to {vendorId} (PO could not go to {current.AwardedVendorId}).",
+                        cause is null
+                            ? $"Re-awarded {current.ItemId} to {vendorId} (PO could not go to {current.AwardedVendorId})."
+                            : $"Re-awarded {current.ItemId} to {vendorId} ({cause}).",
                         documentType: "PR", documentNumber: current.PrNumber);
                     work.Patch(work.Current with { AwardedVendorId = vendorId });
+                    work.SetSnapshot(file.ScreeningSnapshot?.WithWinner(vendorId));
                 }
 
                 work.AddEvent(CaseEventKind.PoCreated,
-                    $"PO {po.PoNumber} to {po.VendorId} for {po.Lines.Sum(l => l.LineAmount)} {po.Currency}.",
+                    $"PO {po.PoNumber} to {po.VendorId} for {DisplayWords.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)}.",
                     documentType: "PO", documentNumber: po.PoNumber);
                 work.Patch(work.Current with { PoNumber = po.PoNumber });
                 work.Stage(CaseStage.PoPlaced);
@@ -684,7 +829,188 @@ public partial class CaseRunner
             documentType: "PR", documentNumber: current.PrNumber);
         work.Save(_cacheDir);
         throw new InvalidOperationException(
-            $"No vendor could supply {current.ItemId} x{pr.Lines.Sum(l => l.Quantity)} for case {current.CaseId}.");
+            $"No vendor could supply {current.ItemId} x{DisplayWords.Qty(pr.Lines.Sum(l => l.Quantity))} for case {current.CaseId}.");
+    }
+
+    /// <summary>Deferred split step: the model returned no tool calls, so it
+    /// declined to propose. Records the skip so the case falls through to
+    /// today's single-vendor award instead of proposing forever. C# never
+    /// invents a split on its own.</summary>
+    private void ProposeSplitDeferred(CaseFile file)
+    {
+        var work = new CaseWork(file);
+        work.AddEvent(CaseEventKind.Note,
+            $"Split skipped [{CasePicker.SplitSkippedMarker}]: no proposal; single-vendor award proceeds.");
+        work.Save(_cacheDir);
+    }
+
+    /// <summary>Cards a verified split plan for a person. The plan rides on
+    /// the decision; the full-quantity screenings are stored as the parent's
+    /// evidence with no single winner, exactly what the card shows.</summary>
+    private async Task<Decision> CreateSplitCardAsync(
+        CaseFile file, SplitVerification verification, string? note, CancellationToken ct)
+    {
+        var current = file.Case;
+        var plan = verification.Plan!;
+        var pr = await _erp.GetPrAsync(current.PrNumber!, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"PR {current.PrNumber} vanished before the split card.");
+        var routedTo = await RouteDocumentAsync(
+            plan.SplitTotal, pr.Requester is string requester ? [requester] : [], null, ct).ConfigureAwait(false);
+        var item = await _erp.GetItemAsync(current.ItemId, ct).ConfigureAwait(false);
+        var prose = SplitPlanVerifier.DescribePlan(plan, current.ItemId, DisplayWords.CountNoun(item?.Description));
+        if (!string.IsNullOrWhiteSpace(note))
+        {
+            prose += $" Agent note: {note.Trim()}";
+        }
+        var work = new CaseWork(file);
+        var card = work.FindOrCreateDecision(
+            DecisionKind.SplitApproval, $"Approve split award ({current.PrNumber})", routedTo,
+            "PR", current.PrNumber, plan.SplitTotal, plan.Currency, prose,
+            CorpExceptionFlow.CorpOriginCapRuleId, split: plan);
+        var proposed = work.AddEvent(CaseEventKind.Note,
+            $"Split proposed: {prose} Decision {card.DecisionId} needs {routedTo}.",
+            documentType: "PR", documentNumber: current.PrNumber);
+        work.SetSnapshot(await BuildScreeningSnapshotAsync(
+            file, verification.FullScreenings, verification.Grants, null, pr, proposed.Timestamp, ct).ConfigureAwait(false));
+        work.Save(_cacheDir);
+        return card;
+    }
+
+    /// <summary>Creates one child case per approved split line and places
+    /// their POs in plan order, each passing the ERP's check on its own
+    /// with the earlier lines counted as open. Children run today's
+    /// single-PO flow from placed onward. Idempotent: existing children
+    /// and placed POs are skipped, so a retry finishes a partial run.</summary>
+    private async Task CreateSplitChildrenStepAsync(CaseFile file, CancellationToken ct)
+    {
+        var current = file.Case;
+        var approved = file.Decisions.FirstOrDefault(d =>
+            d.Kind == DecisionKind.SplitApproval && d.Status == DecisionStatus.Approved)
+            ?? throw new InvalidOperationException($"Case {current.CaseId} has no approved split.");
+        var plan = approved.Split
+            ?? throw new InvalidOperationException($"Case {current.CaseId} approved split has no plan.");
+        if (current.PrNumber is null)
+        {
+            throw new InvalidOperationException($"Case {current.CaseId} has no PR to split.");
+        }
+
+        var pr = await _erp.GetPrAsync(current.PrNumber, ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"PR {current.PrNumber} vanished before the split orders.");
+        var parentSnapshot = file.ScreeningSnapshot
+            ?? throw new InvalidOperationException($"Case {current.CaseId} split has no stored screening.");
+        var now = DateTimeOffset.UtcNow;
+        var made = new List<string>();
+        for (var i = 0; i < plan.Lines.Count; i++)
+        {
+            var line = plan.Lines[i];
+            var childId = CaseStore.MintCaseId(current.CaseId, $"split-{i + 1}");
+            var child = CaseStore.Load(_cacheDir, childId);
+            if (child is not null
+                && !string.Equals(child.Case.AwardedVendorId, line.VendorId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Split child {childId} names a different vendor than the approved plan.");
+            }
+
+            if (child is null)
+            {
+                var born = new Case(
+                    childId, current.SoNumber, current.ItemId, current.ScenarioName,
+                    CaseStage.PrApproved, now, now, current.PrNumber, null, null, null,
+                    [], [], null, null, line.VendorId, false, current.CaseId);
+                var screened = file.Events
+                    .Where(e => e.Kind == CaseEventKind.VendorScreened)
+                    .ToList();
+                var birth = new CaseWork(new CaseFile(born, screened, []));
+                birth.AddEvent(CaseEventKind.SupplierAwarded,
+                    $"Split line awarded: {current.ItemId} x{DisplayWords.Qty(line.Quantity)} to {line.VendorId} " +
+                    $"under {current.CaseId} split approved by {approved.DecidedBy}.",
+                    documentType: "PR", documentNumber: current.PrNumber);
+                birth.SetSnapshot(parentSnapshot.WithWinner(line.VendorId));
+                birth.Save(_cacheDir);
+                child = CaseStore.Load(_cacheDir, childId)!;
+            }
+
+            if (child.Case.PoNumber is null)
+            {
+                var po = await _erp.CreatePoAsync(current.PrNumber, line.VendorId,
+                    RecordSource.P2pAgent, pr.Requester, $"{current.CaseId}:split-po:{i + 1}",
+                    [new PoOrderLine(current.ItemId, line.Quantity)], ct).ConfigureAwait(false);
+                var placed = new CaseWork(child);
+                placed.AddEvent(CaseEventKind.PoCreated,
+                    $"PO {po.PoNumber} to {po.VendorId} for {DisplayWords.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)}.",
+                    documentType: "PO", documentNumber: po.PoNumber);
+                placed.Patch(placed.Current with { PoNumber = po.PoNumber });
+                placed.Stage(CaseStage.PoPlaced);
+                placed.Save(_cacheDir);
+            }
+
+            made.Add(childId);
+        }
+
+        var work = new CaseWork(file);
+        work.AddEvent(CaseEventKind.Note,
+            $"Split ordered: {made.Count} child cases ({string.Join(", ", made)}) place the approved lines in plan order.",
+            documentType: "PR", documentNumber: current.PrNumber);
+        work.Stage(CaseStage.SplitOrdered);
+        work.Save(_cacheDir);
+    }
+
+    /// <summary>Settles a split parent once every child reaches a terminal
+    /// stage. All resolved: the parent resolves and, when every other case
+    /// for the order is resolved too, sends the one customer message. Any
+    /// child cancelled or closed: the parent cancels with the reason, since
+    /// the split no longer covers the request.</summary>
+    private async Task TryResolveParentAsync(string parentId, CancellationToken ct)
+    {
+        var parent = CaseStore.Load(_cacheDir, parentId);
+        if (parent is null
+            || parent.Case.Stage is CaseStage.Resolved or CaseStage.Closed or CaseStage.Cancelled)
+        {
+            return;
+        }
+
+        var children = new List<CaseFile>();
+        foreach (var id in CaseStore.ListCaseIds(_cacheDir))
+        {
+            var candidate = CaseStore.Load(_cacheDir, id);
+            if (candidate is not null
+                && string.Equals(candidate.Case.ParentCaseId, parentId, StringComparison.Ordinal))
+            {
+                children.Add(candidate);
+            }
+        }
+
+        if (children.Count == 0
+            || !children.All(c => c.Case.Stage is CaseStage.Resolved or CaseStage.Closed or CaseStage.Cancelled))
+        {
+            return;
+        }
+
+        var work = new CaseWork(parent);
+        var failed = children
+            .Where(c => c.Case.Stage is not CaseStage.Resolved)
+            .Select(c => $"{c.Case.CaseId} ({c.Case.Stage})")
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
+        if (failed.Count > 0)
+        {
+            work.Cancel($"Split incomplete: {string.Join(", ", failed)}; the split no longer covers the request.");
+            work.Save(_cacheDir);
+            return;
+        }
+
+        work.AddEvent(CaseEventKind.Note,
+            $"Split complete: all {children.Count} split orders resolved.");
+        work.Patch(parent.Case with { BlockedByRuleId = null, BlockedReason = null });
+        work.Stage(CaseStage.Resolved);
+        work.Save(_cacheDir);
+
+        var settled = CaseStore.Load(_cacheDir, parentId) ?? parent;
+        if (OrderCasesResolved(settled))
+        {
+            await RecordCustomerNotifiedAsync(settled, ct).ConfigureAwait(false);
+        }
     }
 
     private async Task SubmitPoApprovalStepAsync(CaseFile file, CancellationToken ct)
@@ -726,6 +1052,74 @@ public partial class CaseRunner
             $"PO {po.PoNumber} needs a human approval.");
     }
 
+    /// <summary>Pre-pay gate line in words with amounts: what is held and
+    /// why (holds, quarantine, open reviews), plus what can be paid. Each
+    /// currency gets its own clause; nothing is ever blended.</summary>
+    private async Task<string> PrePayLineAsync(
+        Case current, PrePayState state, IReadOnlyList<Verdict> verdicts, CancellationToken ct)
+    {
+        var heldByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        var payableByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var key in current.Invoices)
+        {
+            var invoice = await _erp.GetInvoiceAsync(key.VendorId, key.SupplierInvoiceNumber, ct).ConfigureAwait(false);
+            if (invoice is null)
+            {
+                continue;
+            }
+
+            var currency = string.IsNullOrWhiteSpace(invoice.Currency) ? "currency missing" : invoice.Currency;
+            heldByCurrency.TryGetValue(currency, out var held);
+            heldByCurrency[currency] = held + invoice.Lines
+                .Where(l => l.Disposition == LineDisposition.Held)
+                .Sum(l => l.Quantity * l.UnitPrice);
+            payableByCurrency.TryGetValue(currency, out var payable);
+            payableByCurrency[currency] = payable + invoice.Lines
+                .Where(l => l.Disposition == LineDisposition.Accepted)
+                .Sum(l => l.Quantity * l.UnitPrice);
+        }
+
+        var causes = new List<string>();
+        causes.AddRange(state.OpenHolds.Select(h =>
+            string.IsNullOrWhiteSpace(h.CartonId) ? $"hold {h.HoldId} is open" : $"{h.CartonId} is on hold"));
+        causes.AddRange(state.QuarantinedLotRefs.Select(lot => $"{lot} is in quarantine"));
+        causes.AddRange(state.OpenReviews.Select(r =>
+            string.IsNullOrWhiteSpace(r.CartonId) ? $"review {r.ReviewId} is open" : $"{r.CartonId} is under review"));
+
+        var verdictText = string.Join("; ", verdicts.Select(v =>
+            $"{v.RuleId} {DisplayWords.Verdict(v.Kind).ToLowerInvariant()}: {v.Reason}"));
+        var parts = new List<string>();
+        foreach (var currency in heldByCurrency.Keys
+            .Concat(payableByCurrency.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal))
+        {
+            heldByCurrency.TryGetValue(currency, out var held);
+            payableByCurrency.TryGetValue(currency, out var payable);
+            var code = string.Equals(currency, "currency missing", StringComparison.Ordinal) ? null : currency;
+            if (held > 0)
+            {
+                parts.Add(causes.Count == 0
+                    ? $"{DisplayWords.Money(held, code)} held."
+                    : $"{DisplayWords.Money(held, code)} held ({string.Join("; ", causes)}).");
+            }
+
+            parts.Add(payable > 0
+                ? held > 0
+                    ? $"The other {DisplayWords.Money(payable, code)} can be paid."
+                    : $"{DisplayWords.Money(payable, code)} can be paid."
+                : "Nothing can be paid yet.");
+        }
+
+        if (parts.Count == 0)
+        {
+            parts.Add("No invoice value on this case yet.");
+        }
+
+        parts.Add(verdictText);
+        return "Pre-pay gate: " + string.Join(" ", parts);
+    }
+
     private async Task DraftPaymentStepAsync(
         CaseFile file, CaseErpView view, DateOnly? payUpToDate, CancellationToken ct)
     {
@@ -735,9 +1129,7 @@ public partial class CaseRunner
         var block = verdicts.FirstOrDefault(v => v.Kind == VerdictKind.Block);
         var work = new CaseWork(file);
         work.AddEvent(CaseEventKind.Note,
-            $"Pre-pay gate over {state.OpenHolds.Count} hold(s), {state.QuarantinedLotRefs.Count} quarantined lot(s), " +
-            $"{state.OpenReviews.Count} open review(s): " +
-            string.Join("; ", verdicts.Select(v => $"{v.RuleId} {v.Kind}: {v.Reason}")),
+            await PrePayLineAsync(current, state, verdicts, ct).ConfigureAwait(false),
             ruleId: block?.RuleId ?? verdicts.FirstOrDefault()?.RuleId,
             documentType: "Payment");
         if (block is not null)
@@ -838,7 +1230,7 @@ public partial class CaseRunner
             || pending.Any(d => d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview);
         work.AddEvent(CaseEventKind.PaymentRequested,
             (partial ? "Partial payment" : "Payment") +
-            $" {draft.PaymentNumber} drafted for {draft.Lines.Sum(l => l.Amount)} {draft.Currency} " +
+            $" {draft.PaymentNumber} drafted for {DisplayWords.Money(draft.Lines.Sum(l => l.Amount), draft.Currency)} " +
             $"(accepted {view.AcceptedTotal}, paid {view.PaidTotal}); held value stays open.",
             ruleId: block?.RuleId, documentType: "Payment", documentNumber: draft.PaymentNumber,
             amount: draft.Lines.Sum(l => l.Amount), currency: draft.Currency);
@@ -847,7 +1239,7 @@ public partial class CaseRunner
             "Payment", draft.PaymentNumber, draft.Lines.Sum(l => l.Amount), draft.Currency,
             partial
                 ? $"Partial pay of accepted value; {block?.RuleId ?? "held lines"} hold the rest."
-                : $"Payment of {draft.Lines.Sum(l => l.Amount)} {draft.Currency}.");
+                : $"Payment of {DisplayWords.Money(draft.Lines.Sum(l => l.Amount), draft.Currency)}.");
         work.Patch(current with { BlockedByRuleId = block?.RuleId, BlockedReason = block?.Reason });
         work.Stage(partial ? CaseStage.PaymentPartial : CaseStage.PaymentRequested);
         work.Save(_cacheDir);
@@ -886,7 +1278,6 @@ public partial class CaseRunner
 
     private async Task FinishCaseStepAsync(CaseFile file, CaseErpView view, CancellationToken ct)
     {
-        _ = ct;
         var work = new CaseWork(file);
         work.AddEvent(CaseEventKind.Note,
             $"Case resolved: paid {view.PaidTotal} of {view.AcceptedTotal} accepted with no open holds or reviews.",
@@ -894,7 +1285,10 @@ public partial class CaseRunner
         work.Patch(file.Case with { BlockedByRuleId = null, BlockedReason = null });
         work.Stage(CaseStage.Resolved);
         work.Save(_cacheDir);
-        await Task.CompletedTask;
+        if (file.Case.ParentCaseId is not null)
+        {
+            await TryResolveParentAsync(file.Case.ParentCaseId, ct).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Builds the pre-pay gate input: ERP open holds for this case,
@@ -996,7 +1390,7 @@ public partial class CaseRunner
         work.AddEvent(CaseEventKind.Note, string.Join(",", vendorIds),
             documentType: CandidatesDocType, documentNumber: itemId);
 
-    private static IReadOnlyList<string> ReadCandidates(CaseFile file, string itemId)
+    internal static IReadOnlyList<string> ReadCandidates(CaseFile file, string itemId)
     {
         var note = file.Events.FirstOrDefault(e => e.Kind == CaseEventKind.Note
             && string.Equals(e.DocumentType, CandidatesDocType, StringComparison.Ordinal)
@@ -1017,6 +1411,7 @@ public partial class CaseRunner
         private Case _current;
         private readonly List<CaseEvent> _events;
         private readonly List<Decision> _decisions;
+        private AwardScreeningSnapshot? _snapshot;
 
         public CaseWork(CaseFile file)
         {
@@ -1024,6 +1419,7 @@ public partial class CaseRunner
             _current = file.Case;
             _events = file.Events.ToList();
             _decisions = file.Decisions.ToList();
+            _snapshot = file.ScreeningSnapshot;
         }
 
         public Case Current => _current;
@@ -1063,7 +1459,8 @@ public partial class CaseRunner
             DecisionKind kind, string title, string requestedTo,
             string? documentType, string? documentNumber,
             decimal? amount = null, string? currency = null, string? reason = null,
-            string? ruleId = null, IReadOnlyList<string>? evidenceRefs = null)
+            string? ruleId = null, IReadOnlyList<string>? evidenceRefs = null,
+            SplitPlan? split = null)
         {
             var existing = _decisions.FirstOrDefault(d =>
                 d.Kind == kind
@@ -1076,7 +1473,7 @@ public partial class CaseRunner
 
             return CreateDecision(
                 kind, title, requestedTo, documentType, documentNumber,
-                amount, currency, reason, ruleId, evidenceRefs);
+                amount, currency, reason, ruleId, evidenceRefs, split);
         }
 
         /// <summary>Always appends a fresh decision card. Vendor-identity
@@ -1087,13 +1484,14 @@ public partial class CaseRunner
             DecisionKind kind, string title, string requestedTo,
             string? documentType, string? documentNumber,
             decimal? amount = null, string? currency = null, string? reason = null,
-            string? ruleId = null, IReadOnlyList<string>? evidenceRefs = null)
+            string? ruleId = null, IReadOnlyList<string>? evidenceRefs = null,
+            SplitPlan? split = null)
         {
             var decision = new Decision(
                 $"{_caseId}-d{_decisions.Count + 1:000}", _caseId, kind, title,
                 DecisionStatus.Pending, requestedTo, DateTimeOffset.UtcNow,
                 null, null, documentType, documentNumber, amount, currency,
-                ruleId, reason, evidenceRefs ?? [], null);
+                ruleId, reason, evidenceRefs ?? [], null, split);
             _decisions.Add(decision);
             return decision;
         }
@@ -1113,10 +1511,14 @@ public partial class CaseRunner
             return updated;
         }
 
+        /// <summary>Stores the award-time screening snapshot: verdicts,
+        /// sentences, and figures as they stood when decided.</summary>
+        public void SetSnapshot(AwardScreeningSnapshot? snapshot) => _snapshot = snapshot;
+
         public void Save(string cacheDir)
         {
             Patch(_current);
-            CaseStore.Save(cacheDir, new CaseFile(_current, _events, _decisions));
+            CaseStore.Save(cacheDir, new CaseFile(_current, _events, _decisions, _snapshot));
         }
     }
 }

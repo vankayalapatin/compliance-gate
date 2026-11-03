@@ -281,7 +281,7 @@ public static class BaselineBuilder
                 await StampApprovalRowAsync("PR", pr.PrNumber, prDay).ConfigureAwait(false);
             }
             await StampPrAsync(pr.PrNumber, prDay, prApproved ? Dana : ErpApprovalActors.AutoApprovePolicy, prApproved ? prApprDay : prDay).ConfigureAwait(false);
-            var po = await _erp.CreatePoAsync(pr.PrNumber, vendor.ExpectedId, RecordSource.Human, Maya, Key($"po-{stamp}"), _ct).ConfigureAwait(false);
+            var po = await _erp.CreatePoAsync(pr.PrNumber, vendor.ExpectedId, RecordSource.Human, Maya, Key($"po-{stamp}"), ct: _ct).ConfigureAwait(false);
             ExpectNumber("PO", po.PoNumber, seq);
             var poApproved = po.ApprovalStatus == PoApprovalStatus.Draft;
             if (poApproved)
@@ -338,7 +338,7 @@ public static class BaselineBuilder
             await _erp.RecordApprovalAsync("PR", pr.PrNumber, Dana, true, null, Key($"prappr-{stamp}"), _ct).ConfigureAwait(false);
             await StampApprovalRowAsync("PR", pr.PrNumber, new DateOnly(2026, 10, 15)).ConfigureAwait(false);
             await StampPrAsync(pr.PrNumber, new DateOnly(2026, 10, 14), Dana, new DateOnly(2026, 10, 15)).ConfigureAwait(false);
-            var po = await _erp.CreatePoAsync(pr.PrNumber, vendor.ExpectedId, RecordSource.Human, Maya, Key($"po-{stamp}"), _ct).ConfigureAwait(false);
+            var po = await _erp.CreatePoAsync(pr.PrNumber, vendor.ExpectedId, RecordSource.Human, Maya, Key($"po-{stamp}"), ct: _ct).ConfigureAwait(false);
             ExpectNumber("PO", po.PoNumber, seq);
             await _erp.SubmitForApprovalAsync("PO", po.PoNumber, Dana, Maya, Key($"posub-{stamp}"), _ct).ConfigureAwait(false);
             await _erp.RecordApprovalAsync("PO", po.PoNumber, Dana, true, null, Key($"poappr-{stamp}"), _ct).ConfigureAwait(false);

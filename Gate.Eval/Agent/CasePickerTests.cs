@@ -106,6 +106,86 @@ public sealed class CasePickerTests
         Assert.Contains(AgentTools.CreatePo, CasePicker.LegalTools(awarded, view));
     }
 
+    private static CaseEvent ScreenedBlocked(string vendorId, string ruleId) =>
+        new("e8", "case-1", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
+            CaseEventKind.VendorScreened, $"Vendor {vendorId} rejected for the award.",
+            ruleId, null, null, null, null, null);
+
+    private static CaseEvent SplitSkippedNote() =>
+        new("e9", "case-1", DateTimeOffset.UtcNow, RecordSource.P2pAgent,
+            CaseEventKind.Note, $"Split skipped [{CasePicker.SplitSkippedMarker}]: no proposal.",
+            null, null, null, null, null, null);
+
+    private static Decision Decided(DecisionKind kind, DecisionStatus status) =>
+        new("d1", "case-1", kind, "title", status, "someone",
+            DateTimeOffset.UtcNow, "someone", DateTimeOffset.UtcNow, "PR", "PR-1", null, null, null,
+            "reason", [], null);
+
+    private static CaseFile BlockedFile() =>
+        File(CaseStage.PrApproved, pr: "PR-1", events: [ScreenedBlocked("V-A", "CORP-02"), Screened("V-B")]);
+
+    [Fact]
+    public void ProposeSplitPickedWhenOriginCapBlocks()
+    {
+        var view = View(prStatus: PrStatus.Approved);
+        Assert.Equal(CaseNextStep.ProposeSplit, CasePicker.Pick(BlockedFile(), view).Step);
+        Assert.Contains(AgentTools.ProposeSplit, CasePicker.LegalTools(BlockedFile(), view));
+    }
+
+    [Fact]
+    public void AwardPickedWhenSwitchOffSkippedOrRejected()
+    {
+        var view = View(prStatus: PrStatus.Approved);
+        Assert.Equal(
+            CaseNextStep.AwardSupplier,
+            CasePicker.Pick(BlockedFile(), view, splitProposals: false).Step);
+        var skipped = File(CaseStage.PrApproved, pr: "PR-1",
+            events: [ScreenedBlocked("V-A", "CORP-02"), Screened("V-B"), SplitSkippedNote()]);
+        Assert.Equal(CaseNextStep.AwardSupplier, CasePicker.Pick(skipped, view).Step);
+        var rejected = File(CaseStage.PrApproved, pr: "PR-1",
+            events: [ScreenedBlocked("V-A", "CORP-02"), Screened("V-B")],
+            decisions: [Decided(DecisionKind.SplitApproval, DecisionStatus.Rejected)]);
+        Assert.Equal(CaseNextStep.AwardSupplier, CasePicker.Pick(rejected, view).Step);
+    }
+
+    [Fact]
+    public void SplitPendingParksAndApprovalCreatesChildren()
+    {
+        var view = View(prStatus: PrStatus.Approved);
+        var pending = File(CaseStage.PrApproved, pr: "PR-1",
+            events: [ScreenedBlocked("V-A", "CORP-02"), Screened("V-B")],
+            decisions: [Pending(DecisionKind.SplitApproval)]);
+        Assert.Equal(CaseNextStep.AwaitDecision, CasePicker.Pick(pending, view).Step);
+        var approved = File(CaseStage.PrApproved, pr: "PR-1",
+            events: [ScreenedBlocked("V-A", "CORP-02"), Screened("V-B")],
+            decisions: [Decided(DecisionKind.SplitApproval, DecisionStatus.Approved)]);
+        Assert.Equal(CaseNextStep.CreateSplitChildren, CasePicker.Pick(approved, view).Step);
+        Assert.Contains(AgentTools.CreateSplitChildren, CasePicker.LegalTools(approved, view));
+    }
+
+    [Fact]
+    public void SplitOrderedWaitsOnChildren()
+    {
+        Assert.Equal(
+            CaseNextStep.AwaitSplitChildren,
+            CasePicker.Pick(File(CaseStage.SplitOrdered, pr: "PR-1"), View()).Step);
+    }
+
+    [Fact]
+    public void SplitChildSkipsCustomerMessage()
+    {
+        var view = View(receipt: true, orderReady: true);
+        var now = DateTimeOffset.UtcNow;
+        var child = new CaseFile(
+            new Case("case-1", "SO-1", "BAT-1", "test", CaseStage.DockChecked, now, now,
+                "PR-1", "PO-1", "ASN-1", "RCT-1", [], [], null, null, "V-A", false, "case-0"),
+            [], []);
+        Assert.NotEqual(CaseNextStep.NotifyCustomer, CasePicker.Pick(child, view).Step);
+        var single = File(CaseStage.DockChecked, pr: "PR-1", po: "PO-1", asn: "ASN-1", receipt: "RCT-1",
+            awarded: "V-A");
+        Assert.Equal(CaseNextStep.NotifyCustomer, CasePicker.Pick(single, view).Step);
+    }
+
     [Fact]
     public void DraftPoWithoutDecisionResubmits()
     {

@@ -34,7 +34,7 @@ else
             <div class="gate-card-head">
                 <p class="gate-card-title"><a href="cases/@file.Case.CaseId">@CaseDisplay.DisplayName(file.Case)</a></p>
                 <div class="gate-card-badges">
-                    <span class="gate-badge">@file.Case.Stage</span>
+                    <span class="gate-badge">@CaseDisplay.StageSummary(file.Case.Stage)</span>
                     @if (file.Case.IsOpeningData)
                     {
                         <span class="gate-chip">opening data</span>

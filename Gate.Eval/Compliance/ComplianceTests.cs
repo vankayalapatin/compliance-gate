@@ -214,4 +214,121 @@ public sealed class ComplianceTests
         Assert.Single(verdicts);
         Assert.Equal(VerdictKind.Pass, verdicts[0].Kind);
     }
+
+    [Fact]
+    public async Task Corp02VerdictCarriesShareFigures()
+    {
+        var vendor = new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
+        // (59 + 10) / (100 + 10) = 62.7%: the stored figures pin the share.
+        var history = new[]
+        {
+            new VolumeHistory("V-A CN active", "CN", 34),
+            new VolumeHistory("Legacy CN inactive", "CN", 25),
+            new VolumeHistory("V-B MX active", "MX", 38),
+            new VolumeHistory("Other non-CN", "OTHER", 3)
+        };
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, new ItemDto("BAT-1", "Test cell", true, 10, "EA"), FullDocs("V-A"), new ProposedAward("BAT-1", 10, "CN"), history);
+        var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        var figures = corp.OriginCap;
+        Assert.NotNull(figures);
+        Assert.Equal("BAT-1", figures.ItemId);
+        Assert.Equal(59m, figures.CountryCells);
+        Assert.Equal(100m, figures.TotalCells);
+        Assert.Equal(10m, figures.AwardQty);
+        Assert.Equal(0.6m, figures.Cap);
+        Assert.Equal(0.627m, Math.Round(figures.Share, 3));
+    }
+
+    [Fact]
+    public async Task Corp02NonCriticalPassCarriesFigures()
+    {
+        var vendor = new VendorDto("V-C", "Formosa Fasteners Co", "US", false, null, "NET0");
+        var history = new[]
+        {
+            new VolumeHistory("V-C US active", "US", 40),
+            new VolumeHistory("Other non-US", "OTHER", 60)
+        };
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, new ItemDto("SCR-9", "Test screw", false, 10, "EA"), [], new ProposedAward("SCR-9", 10, "US"), history);
+        var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Equal(VerdictKind.Pass, corp.Kind);
+        var figures = corp.OriginCap;
+        Assert.NotNull(figures);
+        Assert.Equal("SCR-9", figures.ItemId);
+        Assert.Equal(40m, figures.CountryCells);
+        Assert.Equal(100m, figures.TotalCells);
+        Assert.Equal(10m, figures.AwardQty);
+    }
+
+    [Fact]
+    public async Task Corp02EmptyHistoryPassCarriesNoFigures()
+    {
+        var vendor = new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, new ItemDto("BAT-1", "Test cell", true, 10, "EA"), FullDocs("V-A"), new ProposedAward("BAT-1", 10, "CN"), []);
+        var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Equal(VerdictKind.Pass, corp.Kind);
+        Assert.Null(corp.OriginCap);
+    }
+
+    [Fact]
+    public async Task Corp02CountsOpenOrdersInBothShareAndTotal()
+    {
+        var vendor = new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
+        var history = new[]
+        {
+            new VolumeHistory("V-A CN active", "CN", 34),
+            new VolumeHistory("Legacy CN inactive", "CN", 25),
+            new VolumeHistory("V-B MX active", "MX", 38),
+            new VolumeHistory("Other non-CN", "OTHER", 3)
+        };
+        var open = new[]
+        {
+            new OpenOrderQty("PO PO-1", "CN", 100),
+            new OpenOrderQty("PO PO-2", "MX", 50)
+        };
+        // (59 + 100 + 10) / (100 + 150 + 10) = 65.0%: open orders push past the cap.
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, new ItemDto("BAT-1", "Test cell", true, 10, "EA"), FullDocs("V-A"), new ProposedAward("BAT-1", 10, "CN"), history, open);
+        var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Equal(VerdictKind.Block, corp.Kind);
+        Assert.Contains("65.0%", corp.Reason);
+        Assert.Contains("150 test cells on open orders", corp.Reason);
+        var figures = corp.OriginCap;
+        Assert.NotNull(figures);
+        Assert.Equal(100m, figures.CountryOpenCells);
+        Assert.Equal(150m, figures.TotalOpenCells);
+        Assert.Equal(0.65m, figures.Share);
+    }
+
+    [Fact]
+    public async Task Corp02OpenTotalDilutesShare()
+    {
+        var vendor = new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
+        var history = new[]
+        {
+            new VolumeHistory("V-A CN active", "CN", 60),
+            new VolumeHistory("V-B MX active", "MX", 30),
+            new VolumeHistory("Other non-CN", "OTHER", 10)
+        };
+        var open = new[] { new OpenOrderQty("PO PO-1", "OTHER", 50) };
+        // (60 + 0 + 10) / (100 + 50 + 10) = 43.8%: open orders from
+        // elsewhere dilute through the total — without them this award
+        // blocks at 63.6%.
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, new ItemDto("BAT-1", "Test cell", true, 10, "EA"), FullDocs("V-A"), new ProposedAward("BAT-1", 10, "CN"), history, open);
+        var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Equal(VerdictKind.Pass, corp.Kind);
+        Assert.Contains("43.8%", corp.Reason);
+        Assert.Contains("50 test cells on open orders", corp.Reason);
+    }
+
+    [Fact]
+    public async Task Corp02OpenOrdersAloneEngageTheCap()
+    {
+        var vendor = new VendorDto("V-A", "CinderVolt Energy Ltd", "CN", false, null, "NET0");
+        var open = new[] { new OpenOrderQty("PO PO-1", "CN", 200) };
+        // No received history, but 200 open: (0 + 200 + 100) / (0 + 200 + 100)
+        // = 100%, a real verdict instead of the not-applicable pass.
+        var verdicts = await _engine.EvaluateVendorAsync(vendor, new ItemDto("BAT-1", "Test cell", true, 10, "EA"), FullDocs("V-A"), new ProposedAward("BAT-1", 100, "CN"), [], open);
+        var corp = verdicts.Single(v => v.RuleId == ComplianceEngine.CorpOriginCapId);
+        Assert.Equal(VerdictKind.Block, corp.Kind);
+        Assert.Contains("100.0%", corp.Reason);
+    }
 }

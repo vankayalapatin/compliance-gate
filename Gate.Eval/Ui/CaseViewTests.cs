@@ -94,7 +94,9 @@ public sealed class CaseViewTests
         var cards = await service.ListDecisionCardsAsync();
 
         var card = Assert.Single(cards);
-        Assert.Contains(card.EvidenceCaptions, c => c.Contains("CTN-1") && c.Contains("passed the dock check"));
+        var figure = Assert.Single(card.CartonFigures);
+        Assert.Contains("CTN-1", figure.Caption);
+        Assert.Contains("passed the dock check", figure.Caption);
     }
 
     [Fact]

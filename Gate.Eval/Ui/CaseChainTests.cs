@@ -107,7 +107,7 @@ public sealed class CaseChainTests
         Assert.Equal(2, summary.Did.Count);
         Assert.Contains("PR raised", summary.Did[0]);
         Assert.Contains("PO placed", summary.Did[1]);
-        Assert.Contains("100 TST", summary.Did[1]);
+        Assert.Contains("100.00 TST", summary.Did[1]);
     }
 
     [Fact]

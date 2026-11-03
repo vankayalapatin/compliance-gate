@@ -370,7 +370,7 @@ public sealed class DecisionOutcomeTests
 
         Assert.True(retry.Ok, retry.Message);
         Assert.False(retry.AdvanceFailed, retry.Message);
-        Assert.Contains("Case advanced to", retry.Message);
+        Assert.Contains("The case is now", retry.Message);
         var pos = await h.Erp.GetPurchaseOrdersAsync();
         var po = Assert.Single(pos);
         Assert.Equal("V-TEST", po.VendorId);

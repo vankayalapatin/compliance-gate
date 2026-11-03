@@ -83,6 +83,14 @@ public sealed record MintedReshotImageVm(
     string? FileName,
     string Message);
 
+/// <summary>Outcome of rebuilding dock views with simulated problems: the
+/// rebuilt file names to send through the normal dock photo flow, plus how
+/// the rebuild went.</summary>
+public sealed record RebuiltDockViewsVm(
+    bool Ok,
+    IReadOnlyList<string> FileNames,
+    string Message);
+
 /// <summary>Reply-as-vendor prefill from the case mail thread (or the case PO
 /// vendor when no thread exists yet). Nulls mean no suggestion; the human
 /// types the value.</summary>

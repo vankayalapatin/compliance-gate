@@ -92,3 +92,13 @@ neighbours. Spark: one read per photo at 4000 max tokens (6-label reads
 truncated at 2000), results to `accuracy-by-carton.csv` plus
 `spark-report.md` (170/170 after the label revision). Manual checks:
 `manual-check.md` (10 dent photos plus a per-base placement spot check).
+
+## Dock scenes
+
+`dock-scenes/`: text-free pallet photos with known face positions, so
+every shipment gets dock photos whatever its ASN count (see
+`dock-scenes/README.md`). The pipeline draws ASN labels on the library
+scene for the count, renders named problems per carton (missing mark,
+crushed, hidden), and reads every photo back against the manifest; the
+live path generates one photo per shipment and falls back to the
+library with the reason recorded.

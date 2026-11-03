@@ -16,8 +16,16 @@ public sealed class AskWhyReplayTests
     {
         public Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
             VendorDto vendor, ItemDto item, IReadOnlyList<VendorDocumentDto> documents,
-            ProposedAward award, IReadOnlyList<VolumeHistory> history, CancellationToken ct = default) =>
+            ProposedAward award, IReadOnlyList<VolumeHistory> history,
+            IReadOnlyList<OpenOrderQty>? openOrders = null, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Verdict>>([]);
+
+        public Task<VendorHeadroom> HeadroomAsync(
+            VendorDto vendor, ItemDto item, IReadOnlyList<VendorDocumentDto> documents,
+            decimal requestedQty, IReadOnlyList<VolumeHistory> history,
+            IReadOnlyList<VolumeHistory> openOrders, int cartonSize,
+            CancellationToken ct = default) =>
+            throw new NotSupportedException("Ask-why replay never reads headroom.");
 
         public Task<IReadOnlyList<Verdict>> EvaluatePaymentAsync(
             PrePayState state, CancellationToken ct = default) =>

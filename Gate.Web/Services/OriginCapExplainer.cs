@@ -1,8 +1,11 @@
-// Origin-cap explainer: gathers one case's screening-math inputs from the
-// platform db and the ERP adapter at render time. Vendors blocked under the
-// origin-cap rule get a math line each; anything unreadable (vendor, PR,
-// history, rule config) skips that line with a log entry, never a throw,
-// so the feed and the case page always render.
+// Origin-cap explainer: one case's screening-math sentences for the feed
+// and the case page. Decided orders render the stored award-time
+// sentences with only the link targets resolving live; only orders not
+// yet decided gather inputs from the platform db and the ERP adapter at
+// render time. Every screened vendor gets the same sentence shape,
+// blocked or passing; anything unreadable (vendor, PR, history, rule
+// config) skips that line with a log entry, never a throw, so the feed
+// and the case page always render.
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -19,15 +22,63 @@ public static class OriginCapExplainer
         IReadOnlyDictionary<string, string>? countryNames = null,
         CancellationToken ct = default)
     {
-        var blocked = file.Events
-            .Where(e => e.Kind is CaseEventKind.VendorBlocked or CaseEventKind.Note
-                && string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal)
-                && e.Summary.StartsWith("Vendor ", StringComparison.Ordinal))
+        // Origin-cap sentences only: vendors blocked by the origin-cap rule
+        // plus vendors who passed screening entirely. Vendors blocked by
+        // other rules tell their story in the screening table instead.
+        var screened = file.Events
+            .Where(e => e.Kind == CaseEventKind.VendorScreened
+                && e.Summary.StartsWith("Vendor ", StringComparison.Ordinal)
+                && (e.RuleId is null
+                    || string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal)))
             .OrderBy(e => e.Timestamp)
             .ToList();
-        if (blocked.Count == 0 || file.Case.PrNumber is null)
+        if (screened.Count == 0 || file.Case.PrNumber is null)
         {
             return [];
+        }
+
+        // Decided orders render the stored sentences verbatim: the figures
+        // are the award's, only the hrefs resolve live. The event filter
+        // still applies, so vendors blocked by other rules keep telling
+        // their story in the screening table instead of here.
+        if (file.ScreeningSnapshot is not null)
+        {
+            var stored = file.ScreeningSnapshot.Rows
+                .Where(r => r.Math is not null)
+                .ToDictionary(r => r.VendorId, r => r.Math!, StringComparer.Ordinal);
+            var storedHistoryHref = OriginCapMath.HistoryHref(file.ScreeningSnapshot.ItemId);
+            var storedQtyHref = ErpRoutes.RecordHref("pr", file.ScreeningSnapshot.PrNumber);
+            var kept = new List<OriginCapLine>();
+            foreach (var e in screened)
+            {
+                var vendorId = OriginCapMath.TryParseScreenedVendor(e.Summary);
+                if (vendorId is null
+                    || kept.Any(l => string.Equals(l.VendorId, vendorId, StringComparison.Ordinal))
+                    || !stored.TryGetValue(vendorId, out var math))
+                {
+                    continue;
+                }
+
+                kept.Add(new OriginCapLine(vendorId, OriginCapMath.FromStored(math, storedHistoryHref, storedQtyHref)));
+            }
+
+            return kept;
+        }
+
+        // The count noun comes from the item description; a missing item
+        // still yields lines with the fallback noun.
+        string noun = "units";
+        try
+        {
+            var item = await erp.GetItemAsync(file.Case.ItemId, ct).ConfigureAwait(false);
+            if (item is not null)
+            {
+                noun = DisplayWords.CountNoun(item.Description);
+            }
+        }
+        catch (Exception ex)
+        {
+            log?.LogWarning(ex, "Screening math for case {CaseId} could not read item {Item}.", file.Case.CaseId, file.Case.ItemId);
         }
 
         Dictionary<string, VendorDto> vendors;
@@ -50,6 +101,17 @@ public static class OriginCapExplainer
         catch (Exception ex)
         {
             log?.LogWarning(ex, "Screening math for case {CaseId} could not read volume history.", file.Case.CaseId);
+            return [];
+        }
+
+        IReadOnlyList<OpenOrderQty> open;
+        try
+        {
+            open = await erp.GetOpenOrderQuantitiesAsync(file.Case.ItemId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            log?.LogWarning(ex, "Screening math for case {CaseId} could not read open orders.", file.Case.CaseId);
             return [];
         }
 
@@ -86,10 +148,17 @@ public static class OriginCapExplainer
             .Sum(l => l.Quantity);
         var historyHref = OriginCapMath.HistoryHref(file.Case.ItemId);
         var qtyHref = ErpRoutes.RecordHref("pr", pr.PrNumber);
+        var excused = file.Decisions
+            .Where(d => d.Kind == DecisionKind.ExceptionApproval
+                && d.Status == DecisionStatus.Approved
+                && string.Equals(d.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal)
+                && d.DocumentNumber is not null)
+            .Select(d => d.DocumentNumber!)
+            .ToHashSet(StringComparer.Ordinal);
         var lines = new List<OriginCapLine>();
-        foreach (var e in blocked)
+        foreach (var e in screened)
         {
-            var vendorId = OriginCapMath.TryParseBlockedVendor(e.Summary);
+            var vendorId = OriginCapMath.TryParseScreenedVendor(e.Summary);
             if (vendorId is null)
             {
                 log?.LogWarning(
@@ -111,12 +180,26 @@ public static class OriginCapExplainer
                 continue;
             }
 
+            // Shares need a real denominator: without history or open
+            // orders the sentence would divide by the award alone and
+            // misstate the outcome.
+            var totalOpen = open.Sum(o => o.Cells);
+            if (total + totalOpen <= 0)
+            {
+                continue;
+            }
+
             var countryCells = history
                 .Where(h => string.Equals(h.Country, vendor.CountryOfOrigin, StringComparison.OrdinalIgnoreCase))
                 .Sum(h => h.Cells);
+            var countryOpen = open
+                .Where(o => string.Equals(o.Country, vendor.CountryOfOrigin, StringComparison.OrdinalIgnoreCase))
+                .Sum(o => o.Cells);
             var line = OriginCapMath.Build(
                 OriginCapMath.OriginCapRuleId, vendor.Name, vendor.CountryOfOrigin,
-                countryCells, total, qty, cap, historyHref, qtyHref, countryNames);
+                countryCells, total, qty, cap, historyHref, qtyHref, noun, countryNames,
+                excused.Contains(vendorId, StringComparer.Ordinal),
+                countryOpen, totalOpen);
             if (line is null)
             {
                 continue;

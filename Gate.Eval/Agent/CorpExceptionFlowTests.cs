@@ -49,7 +49,8 @@ public sealed class CorpExceptionFlowTests
         var dir = TempDir("gate-corp-exception-test");
         var runner = new CaseRunner(
             erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), dir);
+            compliance, new DockEvaluatorAdapter(), dir,
+            splitProposals: new SplitProposals { IsOn = false });
         return new Harness(erp, models, compliance, runner, dir);
     }
 

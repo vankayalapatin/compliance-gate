@@ -30,6 +30,7 @@ public enum PrStatus
     Submitted,
     Approved,
     Rejected,
+    PartiallyOrdered,
     Closed,
     Cancelled
 }
@@ -168,10 +169,26 @@ public sealed record VolumeHistory(
     string Country,
     decimal Cells);
 
+/// <summary>One row of open, not-yet-received PO quantity in cells: ordered
+/// minus received on POs that are neither closed nor cancelled. Raw rows
+/// only; the cap counts them with received history, never alone. The read
+/// returns one row per open PO line, the source naming the PO.</summary>
+public sealed record OpenOrderQty(
+    string Source,
+    string Country,
+    decimal Cells);
+
 public sealed record PurchaseRequisitionLine(
     string ItemId,
     decimal Quantity,
     string Unit);
+
+/// <summary>One partial order line for PO creation: the item plus the
+/// quantity to order now, which must not exceed what the request still
+/// has left. A null line list orders the whole request, as before.</summary>
+public sealed record PoOrderLine(
+    string ItemId,
+    decimal Quantity);
 
 public sealed record PurchaseRequisition(
     string PrNumber,

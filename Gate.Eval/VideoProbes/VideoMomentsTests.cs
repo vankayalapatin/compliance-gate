@@ -172,9 +172,11 @@ public sealed class VideoMomentsTests
 
         var vendors = await h.Erp.GetVendorsAsync();
         Assert.False(vendors.Single(v => v.VendorId == VideoProbeData.VendorCv).IsBlocked);
+        // 60 cells: with the case's 30-cell open Meridian order diluting the
+        // total, (236 + 60) / (400 + 30 + 60) = 60.4% still breaches.
         var probePr = await h.Erp.CreatePrAsync(
             VideoProbeData.PlannerId, RecordSource.Human, VideoProbeData.PlannerId,
-            [new PurchaseRequisitionLine(VideoProbeData.Battery, 30, "EA")],
+            [new PurchaseRequisitionLine(VideoProbeData.Battery, 60, "EA")],
             Guid.NewGuid().ToString("N"));
         Assert.Equal(PrStatus.Draft, probePr.Status);
         await h.Erp.SubmitForApprovalAsync(

@@ -79,6 +79,30 @@ public static class CaseStore
         File.WriteAllText(DockFilePath(cacheDir, evidence.CaseId), JsonSerializer.Serialize(evidence, JsonOpts));
     }
 
+    /// <summary>Staged dock-problem sidecar: the simulated problems for the
+    /// case's dock views, persisted next to the case file as
+    /// &lt;CaseId&gt;.problems.json. A sidecar file; never a case file.</summary>
+    public static string ProblemsFilePath(string cacheDir, string caseId) =>
+        Path.Combine(cacheDir, caseId + ".problems.json");
+
+    public static DockProblems? LoadProblems(string cacheDir, string caseId)
+    {
+        var path = ProblemsFilePath(cacheDir, caseId);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<DockProblems>(File.ReadAllText(path), JsonOpts)
+            ?? throw new InvalidOperationException($"Problems file {path} did not parse as DockProblems.");
+    }
+
+    public static void SaveProblems(string cacheDir, DockProblems problems)
+    {
+        Directory.CreateDirectory(cacheDir);
+        File.WriteAllText(ProblemsFilePath(cacheDir, problems.CaseId), JsonSerializer.Serialize(problems, JsonOpts));
+    }
+
     public static CaseFile? Load(string cacheDir, string caseId)
     {
         var path = CaseFilePath(cacheDir, caseId);
@@ -105,14 +129,16 @@ public static class CaseStore
 
         // Mail files (<CaseId>.mail.json), vendor-identity pendings
         // (<CaseId>.vendor-identity.json), dock evidence sidecars
-        // (<CaseId>.dock.json), and memo files (<MemoId>.memo.json) share
-        // the dir but are not cases.
+        // (<CaseId>.dock.json), dock-problem sidecars
+        // (<CaseId>.problems.json), and memo files (<MemoId>.memo.json)
+        // share the dir but are not cases.
         return Directory.GetFiles(cacheDir, "*.json")
             .Select(Path.GetFileNameWithoutExtension)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Where(id => !id!.EndsWith(".mail", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".vendor-identity", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".dock", StringComparison.Ordinal))
+            .Where(id => !id!.EndsWith(".problems", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".memo", StringComparison.Ordinal))
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList()!;
@@ -133,4 +159,12 @@ public sealed record DockEvidence(
     string CaseId,
     IReadOnlyList<DockCartonRead> Reads,
     IReadOnlyDictionary<string, IReadOnlyList<Verdict>> Verdicts,
+    DateTimeOffset RecordedAt);
+
+/// <summary>Staged dock problems for one case: which carton views carry a
+/// staged problem and how. Persisted as a sidecar file
+/// (&lt;CaseId&gt;.problems.json) so older case files without one still load.</summary>
+public sealed record DockProblems(
+    string CaseId,
+    IReadOnlyList<SimulatedProblem> Problems,
     DateTimeOffset RecordedAt);

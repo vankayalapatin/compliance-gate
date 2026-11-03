@@ -33,7 +33,7 @@
                     <select class="gate-select" id="portal-po" value="@_poNumber" @onchange="OnPoChanged">
                         @foreach (var po in _pos.Pos)
                         {
-                            <option value="@po.PoNumber">@po.PoNumber · @po.ApprovalStatus / @po.DocStatus · @po.Total @po.Currency</option>
+                            <option value="@po.PoNumber">@po.PoNumber · @po.ApprovalStatus / @po.DocStatus · @ErpFormat.Money(po.Total, po.Currency)</option>
                         }
                     </select>
                 </div>
@@ -81,14 +81,14 @@
                             <tr>
                                 <td>@line.PoLineRef</td>
                                 <td>@line.ItemId</td>
-                                <td class="gate-num">@line.QtyOrdered</td>
-                                <td class="gate-num">@line.UnitPrice @po.Currency</td>
-                                <td class="gate-num">@line.LineAmount @po.Currency</td>
+                                <td class="gate-num">@ErpFormat.Qty(line.QtyOrdered)</td>
+                                <td class="gate-num">@ErpFormat.Money(line.UnitPrice, po.Currency)</td>
+                                <td class="gate-num">@ErpFormat.Money(line.LineAmount, po.Currency)</td>
                             </tr>
                         }
                     </tbody>
                 </table>
-                <p class="gate-row"><span class="gate-label">Total:</span> <span class="gate-num">@po.Total @po.Currency</span></p>
+                <p class="gate-row"><span class="gate-label">Total:</span> <span class="gate-num">@ErpFormat.Money(po.Total, po.Currency)</span></p>
             }
         </section>
 
@@ -184,6 +184,13 @@
                     <input class="gate-input" value="@row.ItemId" @onchange="e => row.ItemId = e.Value?.ToString() ?? string.Empty" placeholder="item" aria-label="Item" />
                     <input class="gate-input" type="number" min="0" step="1" value="@row.Units" @onchange="e => row.Units = ParseInt(e.Value?.ToString())" placeholder="units per carton" aria-label="Units per carton" />
                     <input class="gate-input" value="@row.LotRef" @onchange="e => row.LotRef = e.Value?.ToString() ?? string.Empty" placeholder="supplier lot ref" aria-label="Supplier lot ref" />
+                    <span class="gate-row">Simulated problem</span>
+                    <select class="gate-select" value="@(row.Problem ?? string.Empty)" @onchange="e => row.Problem = e.Value?.ToString()" aria-label="Simulated carton problem">
+                        @foreach (var option in DockProblemKinds.PickerOptions)
+                        {
+                            <option value="@option.Value">@option.Label</option>
+                        }
+                    </select>
                     <div class="gate-actions">
                         <button class="gate-btn" disabled="@_busy" @onclick="() => _asnCartons.Remove(row)">Remove</button>
                     </div>
@@ -313,7 +320,7 @@
                         </div>
                     }
                 </div>
-                <p class="gate-meta">@mail.EmailId · from @mail.From · to @mail.To · sent @mail.SentAt.ToString("u")@(mail.InReplyTo is null ? "" : $" · in reply to {mail.InReplyTo}")@(mail.InvoiceRef is null ? "" : $" · invoice {mail.InvoiceRef}")</p>
+                <p class="gate-meta">from @ActorLabels.Display(mail.From) · to @ActorLabels.Display(mail.To) · sent @ErpFormat.When(mail.SentAt)@(mail.InReplyTo is null ? "" : $" · in reply to {mail.InReplyTo}")@(mail.InvoiceRef is null ? "" : $" · invoice {mail.InvoiceRef}")</p>
                 <p class="gate-row">@mail.Body</p>
             </section>
         }
@@ -431,6 +438,7 @@
         public string ItemId { get; set; } = string.Empty;
         public int Units { get; set; }
         public string LotRef { get; set; } = string.Empty;
+        public string? Problem { get; set; }
     }
 
     private sealed class InvRow
@@ -697,7 +705,9 @@
                 _inbox?.CaseId ?? string.Empty,
                 _asnNumber,
                 _slip,
-                _asnCartons.Select(c => new AsnCartonForm(c.CartonId, c.ItemId, c.Units, c.LotRef)).ToList()));
+                _asnCartons.Select(c => new AsnCartonForm(
+                    c.CartonId, c.ItemId, c.Units, c.LotRef,
+                    string.IsNullOrWhiteSpace(c.Problem) ? null : c.Problem)).ToList()));
             if (_asnOutcome.Ok)
             {
                 var posted = _asnOutcome;

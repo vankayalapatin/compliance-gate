@@ -59,8 +59,9 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         IReadOnlyList<VendorDocumentDto> documents,
         ProposedAward award,
         IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<OpenOrderQty>? openOrders = null,
         CancellationToken ct = default) =>
-        EvaluateVendorWithExceptionAsync(vendor, item, documents, award, history, null, ct);
+        EvaluateVendorWithExceptionAsync(vendor, item, documents, award, history, null, ct, openOrders);
 
     /// <summary>Document-rule check behind screening consequences: true
     /// when the catalog carries the rule with a document kind. Unknown ids
@@ -73,7 +74,8 @@ public sealed partial class ComplianceEngine : IComplianceEngine
 
     /// <summary>Vendor gate with an optional CORP-02 logged exception. The
     /// exception only excuses CORP-02, and only when it names this vendor,
-    /// carries a named approver, and records a reason.</summary>
+    /// carries a named approver, and records a reason. Open orders join
+    /// the cap math; none means no open quantity.</summary>
     public Task<IReadOnlyList<Verdict>> EvaluateVendorWithExceptionAsync(
         VendorDto vendor,
         ItemDto item,
@@ -81,7 +83,8 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         ProposedAward award,
         IReadOnlyList<VolumeHistory> history,
         CorpExceptionApproval? exception,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<OpenOrderQty>? openOrders = null)
     {
         if (!string.Equals(item.ItemId, award.ItemId, StringComparison.Ordinal))
         {
@@ -100,7 +103,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("ELEC-01")));
         verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("ELEC-02")));
         verdicts.Add(EvaluateScreening(vendor));
-        verdicts.Add(EvaluateOriginCap(vendor.VendorId, item, award, history, exception));
+        verdicts.Add(EvaluateOriginCap(vendor.VendorId, item, award, history, exception, openOrders ?? []));
 
         return Task.FromResult<IReadOnlyList<Verdict>>(verdicts);
     }
@@ -145,44 +148,76 @@ public sealed partial class ComplianceEngine : IComplianceEngine
     }
 
     private Verdict EvaluateOriginCap(
-        string vendorId, ItemDto item, ProposedAward award, IReadOnlyList<VolumeHistory> history, CorpExceptionApproval? exception)
+        string vendorId, ItemDto item, ProposedAward award,
+        IReadOnlyList<VolumeHistory> history, CorpExceptionApproval? exception,
+        IReadOnlyList<OpenOrderQty> openOrders)
     {
-        if (!item.IsCritical)
-        {
-            return new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"CORP-02 caps critical battery volume only; {award.ItemId} is not critical, so the cap is not applicable.", _corp.PolicySource);
-        }
-
         var total = history.Sum(h => h.Cells);
-        if (total <= 0)
-        {
-            // No trailing history for this part: CORP-02 has no denominator.
-            // Passes as not applicable so history-free parts (e.g. SCR-9 via
-            // Vendor C) keep their straight-through path. The empty-history
-            // human-review boundary from the scenario plan is still open.
-            return new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"No 12-month volume history for {award.ItemId}; country-of-origin cap not applicable.", _corp.PolicySource);
-        }
-
         var countryCells = history
             .Where(h => string.Equals(h.Country, award.Country, StringComparison.OrdinalIgnoreCase))
             .Sum(h => h.Cells);
-        var share = (countryCells + award.Quantity) / (total + award.Quantity);
+        var totalOpen = openOrders.Sum(o => o.Cells);
+        var countryOpen = openOrders
+            .Where(o => string.Equals(o.Country, award.Country, StringComparison.OrdinalIgnoreCase))
+            .Sum(o => o.Cells);
+        // Figures ride every CORP-02 verdict with a denominator, including
+        // the non-critical pass: the award stores them so decided orders
+        // show the shares as they stood, matching the live sentences.
+        OriginCapFigures? capFigures = total + totalOpen + award.Quantity > 0
+            ? new OriginCapFigures(
+                award.ItemId, countryCells, total, countryOpen, totalOpen,
+                award.Quantity, _corp.OriginCap,
+                (countryCells + countryOpen + award.Quantity) / (total + totalOpen + award.Quantity))
+            : null;
+        if (!item.IsCritical)
+        {
+            return new Verdict(CorpOriginCapId, VerdictKind.Pass,
+                $"CORP-02 caps critical battery volume only; {award.ItemId} is not critical, so the cap is not applicable.", _corp.PolicySource, capFigures);
+        }
+
+        if (total + totalOpen <= 0)
+        {
+            // No trailing history and no open orders for this part: CORP-02
+            // has no denominator. Passes as not applicable so history-free
+            // parts (e.g. SCR-9 via Vendor C) keep their straight-through
+            // path. The empty-history human-review boundary from the
+            // scenario plan is still open.
+            return new Verdict(CorpOriginCapId, VerdictKind.Pass,
+                $"No 12-month volume history or open orders for {award.ItemId}; country-of-origin cap not applicable.", _corp.PolicySource);
+        }
+
+        var share = capFigures!.Share;
+        var noun = DisplayWords.CountNoun(item.Description);
+        var openNote = totalOpen > 0
+            ? $", including {DisplayWords.Qty(totalOpen)} {noun} on open orders"
+            : string.Empty;
+        var figures =
+            $"({DisplayWords.Qty(countryCells)}" +
+            (countryOpen > 0 ? $"+{DisplayWords.Qty(countryOpen)} open" : string.Empty) +
+            $"+{DisplayWords.Qty(award.Quantity)} of " +
+            $"{DisplayWords.Qty(total)}" +
+            (totalOpen > 0 ? $"+{DisplayWords.Qty(totalOpen)} open" : string.Empty) +
+            $"+{DisplayWords.Qty(award.Quantity)} {noun})";
+        var cap = capFigures;
         if (share <= _corp.OriginCap)
         {
             return new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"Awarding {award.Quantity} {award.ItemId} cells to {award.Country} puts its share at {share:P1}, within the {_corp.OriginCap:P0} cap.", _corp.PolicySource);
+                $"Awarding {DisplayWords.Qty(award.Quantity)} {noun} ({award.ItemId}) to {award.Country} " +
+                $"puts its share at {share:P1} {figures}{openNote}, within the {_corp.OriginCap:P0} cap.", _corp.PolicySource, cap);
         }
 
         if (exception is not null && exception.IsValidFor(CorpOriginCapId, vendorId))
         {
             return new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"Awarding {award.Quantity} {award.ItemId} cells to {award.Country} puts its share at {share:P1}, exceeding the {_corp.OriginCap:P0} cap, but overridden by logged exception from {exception.Approver} at {exception.At:u}: {exception.Reason}.",
-                _corp.PolicySource);
+                $"Awarding {DisplayWords.Qty(award.Quantity)} {noun} ({award.ItemId}) to {award.Country} " +
+                $"puts its share at {share:P1} {figures}{openNote}, exceeding the {_corp.OriginCap:P0} cap, " +
+                $"but overridden by logged exception from {exception.Approver} at {DisplayWords.When(exception.At)}: {exception.Reason}.",
+                _corp.PolicySource, cap);
         }
 
         return new Verdict(CorpOriginCapId, VerdictKind.Block,
-            $"Awarding {award.Quantity} {award.ItemId} cells to {award.Country} puts its share at {share:P1} ({countryCells}+{award.Quantity} of {total}+{award.Quantity}), exceeding the {_corp.OriginCap:P0} country-of-origin cap.", _corp.PolicySource);
+            $"Awarding {DisplayWords.Qty(award.Quantity)} {noun} ({award.ItemId}) to {award.Country} " +
+            $"puts its share at {share:P1} {figures}{openNote}, exceeding the {_corp.OriginCap:P0} country-of-origin cap.", _corp.PolicySource, cap);
     }
 
     public Task<IReadOnlyList<Verdict>> EvaluatePayableAsync(
@@ -222,12 +257,12 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         var parts = new List<string>();
         if (state.OpenHolds.Count > 0)
         {
-            parts.Add($"{state.OpenHolds.Count} open hold(s): {string.Join(", ", state.OpenHolds.Select(h => h.HoldId))}");
+            parts.Add($"{DisplayWords.Plural(state.OpenHolds.Count, "open hold")}: {string.Join(", ", state.OpenHolds.Select(h => h.HoldId))}");
         }
 
         if (state.QuarantinedLotRefs.Count > 0)
         {
-            parts.Add($"{state.QuarantinedLotRefs.Count} quarantined lot(s): {string.Join(", ", state.QuarantinedLotRefs)}");
+            parts.Add($"{DisplayWords.Plural(state.QuarantinedLotRefs.Count, "quarantined lot")}: {string.Join(", ", state.QuarantinedLotRefs)}");
         }
 
         if (state.OpenReviews.Count > 0)
@@ -242,7 +277,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
     }
 
     private static string DescribeReviews(PrePayState state) =>
-        $"{state.OpenReviews.Count} open review(s): " +
+        $"{DisplayWords.Plural(state.OpenReviews.Count, "open review")}: " +
         string.Join(", ", state.OpenReviews.Select(r => $"{r.ReviewId} ({r.RuleId})"));
 
     private static string DescribePayBlock(IReadOnlyList<string> parts, string what) =>

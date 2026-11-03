@@ -92,7 +92,7 @@
             @if (_memoResult.ValidationErrors.Count > 0)
             {
                 <div class="gate-notice gate-notice-error" role="alert">
-                    <strong>Validation refuses (@_memoResult.ValidationErrors.Count error(s)):</strong>
+                    <strong>Validation refuses (@CountWords(_memoResult.ValidationErrors.Count, "error")):</strong>
                     <ul class="gate-list">
                         @foreach (var error in _memoResult.ValidationErrors)
                         {
@@ -137,7 +137,7 @@ else
                     {
                         <span class="gate-chip">covering @(string.Join(", ", _covering))</span>
                     }
-                    <span class="gate-badge">PolicyQuestion</span>
+                    <span class="gate-badge">Policy question</span>
                     @if (card.Question is not null)
                     {
                         <span class="gate-badge">@(card.Question.Blocking ? "Blocking — memo waits" : "Advisory")</span>
@@ -146,14 +146,14 @@ else
                 </div>
             </div>
             <p class="gate-meta">
-                Memo @card.MemoId · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")@if (d.DocumentNumber is not null)
+                Memo @card.MemoId · requested to @ActorLabels.Display(d.RequestedTo) at @ErpFormat.When(d.RequestedAt)@if (d.DocumentNumber is not null)
                 {
                     <span> · ref @d.DocumentNumber</span>
                 }
             </p>
             @if (d.Amount is not null)
             {
-                <p class="gate-row"><span class="gate-label">Amount:</span> @d.Amount @d.Currency</p>
+                <p class="gate-row"><span class="gate-label">Amount:</span> @ErpFormat.Money(d.Amount.Value, d.Currency)</p>
             }
             @if (card.Question is not null)
             {
@@ -241,35 +241,35 @@ else
                     {
                         <span class="gate-chip">covering @(string.Join(", ", _covering))</span>
                     }
-                    <span class="gate-badge">PolicyApproval</span>
+                    <span class="gate-badge">Policy approval</span>
                     <AgentBanner Source="@RecordSource.P2pAgent" />
                     @if (card.StaleCard)
                     {
                         <span class="gate-badge gate-badge-dark">stale</span>
                     }
-                    <span class="gate-badge gate-badge-dark">@d.Status</span>
+                    <span class="gate-badge gate-badge-dark">@ErpStatusWords.Of(d.Status)</span>
                 </div>
             </div>
             <p class="gate-meta">
                 Memo @card.MemoId · policy owner @card.PolicyOwner
-                · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
+                · requested to @ActorLabels.Display(d.RequestedTo) at @ErpFormat.When(d.RequestedAt)
             </p>
             @if (d.Amount is not null)
             {
-                <p class="gate-row"><span class="gate-label">Amount:</span> @d.Amount @d.Currency</p>
+                <p class="gate-row"><span class="gate-label">Amount:</span> @ErpFormat.Money(d.Amount.Value, d.Currency)</p>
             }
-            <p class="gate-row"><span class="gate-label">Memo @card.Memo.MemoId</span> from @card.Memo.Author, received @card.Memo.ReceivedAt.ToString("u")</p>
+            <p class="gate-row"><span class="gate-label">Memo @card.Memo.MemoId</span> from @card.Memo.Author, received @ErpFormat.When(card.Memo.ReceivedAt)</p>
             <div class="gate-notice" role="note">@card.Memo.Excerpt</div>
             @if (proposal is not null && current is not null)
             {
                 <p class="gate-row">
                     <span class="gate-label">Proposal @proposal.ProposalId</span>
-                    · KB @KbDisplay.Version(proposal.KbVersion) · proposed @proposal.ProposedAt.ToString("u")
+                    · KB @KbDisplay.Version(proposal.KbVersion) · proposed @ErpFormat.When(proposal.ProposedAt)
                     · hash <code>@proposal.ProposalHash</code>
                 </p>
                 <p class="gate-row">
                     <span class="gate-label">Spark interpretation</span>
-                    (@proposal.Statements.Count statement(s),
+                    (@CountWords(proposal.Statements.Count, "statement"),
                     @(proposal.Statements.Count - card.UnresolvedStatements.Count) resolved,
                     @card.UnresolvedStatements.Count unresolved):
                 </p>
@@ -348,7 +348,7 @@ else
                 else
                 {
                     <div class="gate-notice gate-notice-error" role="alert">
-                        <strong>Validation refuses (@current.Validation.Errors.Count error(s)):</strong>
+                        <strong>Validation refuses (@CountWords(current.Validation.Errors.Count, "error")):</strong>
                         <ul class="gate-list">
                             @foreach (var error in current.Validation.Errors)
                             {
@@ -376,8 +376,8 @@ else
                     var report = current.WhatIf;
                     <p class="gate-row">
                         <span class="gate-label">What-if</span>
-                        (@report.HistoryLabel; @report.HistoryRowCount history row(s);
-                        computed @report.ComputedAt.ToString("u")):
+                        (@report.HistoryLabel; @CountWords(report.HistoryRowCount, "history row");
+                        computed @ErpFormat.When(report.ComputedAt)):
                     </p>
                     @if (report.Unviable)
                     {
@@ -390,9 +390,9 @@ else
                             {
                                 <li>
                                     @flip.DocumentType @flip.DocumentNumber:
-                                    @flip.OldKind → @flip.NewKind
+                                    @PolicyLabels.VerdictWords(flip.OldKind) → @PolicyLabels.VerdictWords(flip.NewKind)
                                     @(flip.BlockingRuleId is null ? "" : $"(blocked by {flip.BlockingRuleId})"),
-                                    qty @flip.Quantity, @PolicyLabels.FlipMoney(flip.Amount, flip.Currency)
+                                    qty @ErpFormat.Qty(flip.Quantity), @PolicyLabels.FlipMoney(flip.Amount, flip.Currency)
                                 </li>
                             }
                         </ul>
@@ -409,7 +409,7 @@ else
                             {
                                 <li>
                                     @row.DocumentType @row.DocumentNumber:
-                                    @row.OldKind → @row.NewKind
+                                    @PolicyLabels.VerdictWords(row.OldKind) → @PolicyLabels.VerdictWords(row.NewKind)
                                     @(row.BlockingRuleId is null ? "" : $"(blocked by {row.BlockingRuleId})")
                                 </li>
                             }
@@ -417,8 +417,8 @@ else
                     }
                     <p class="gate-row">
                         <span class="gate-label">Totals:</span> @report.Totals.DocumentsEvaluated evaluated,
-                        @report.Totals.FlipsToBlock flip(s) to block, @report.Totals.FlipsToPass flip(s) to pass,
-                        qty @report.Totals.QuantityFlipped,
+                        @FlipWords(report.Totals.FlipsToBlock, "block"), @FlipWords(report.Totals.FlipsToPass, "pass"),
+                        qty @ErpFormat.Qty(report.Totals.QuantityFlipped),
                         @PolicyLabels.TotalsMoney(report.Totals.AmountFlipped, report.Totals.Currency)
                     </p>
                 }
@@ -429,7 +429,7 @@ else
                 {
                     <span>Published @card.Activation.RuleId in pack @card.Activation.PackId
                     @card.Activation.PriorPackVersion → @card.Activation.NewPackVersion,
-                    effective @card.Activation.EffectiveAt.ToString("u") · @card.Activation.Applicability.</span>
+                    effective @ErpFormat.When(card.Activation.EffectiveAt) · @PolicyLabels.ApplicabilityWords(card.Activation.Applicability).</span>
                 }
             </div>
             @if (card.Notices.Count > 0)
@@ -448,7 +448,7 @@ else
                     <select class="gate-select" id="applic-@d.DecisionId" value="@ApplicabilityFor(d.DecisionId)" @onchange="e => _applicability[d.DecisionId] = Enum.Parse<RuleApplicability>(e.Value?.ToString() ?? nameof(RuleApplicability.ProspectiveOnly))">
                         @foreach (var mode in Enum.GetValues<RuleApplicability>())
                         {
-                            <option value="@mode">@mode</option>
+                            <option value="@mode">@PolicyLabels.ApplicabilityWords(mode)</option>
                         }
                     </select>
                     <p class="gate-meta">@PolicyLabels.ApplicabilityBlurb(ApplicabilityFor(d.DecisionId))</p>
@@ -499,7 +499,7 @@ else
                         <select class="gate-select" id="tier-@d.DecisionId" value="@NewRuleTierFor(d.DecisionId)" @onchange="e => _newRuleTiers[d.DecisionId] = Enum.Parse<RuleTier>(e.Value?.ToString() ?? nameof(RuleTier.Tier2))">
                             @foreach (var tier in Enum.GetValues<RuleTier>())
                             {
-                                <option value="@tier">@tier</option>
+                                <option value="@tier">@PolicyLabels.TierWords(tier)</option>
                             }
                         </select>
                     </div>
@@ -555,11 +555,11 @@ else
                     {
                         var h = card.Decision;
                         <tr>
-                            <td>@h.DecisionId — @h.Title</td>
+                            <td>@h.Title</td>
                             <td>@card.MemoId</td>
-                            <td>PolicyQuestion</td>
-                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
-                            <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                            <td>Policy question</td>
+                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@ErpStatusWords.Of(h.Status)</span></td>
+                            <td>@(h.DecidedAt is null ? "—" : ErpFormat.When(h.DecidedAt.Value))</td>
                             <td>@(h.Comment ?? "—")</td>
                         </tr>
                     }
@@ -567,11 +567,11 @@ else
                     {
                         var h = card.Decision;
                         <tr>
-                            <td>@h.DecisionId — @h.Title</td>
+                            <td>@h.Title</td>
                             <td>@card.MemoId</td>
-                            <td>PolicyApproval</td>
-                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
-                            <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                            <td>Policy approval</td>
+                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@ErpStatusWords.Of(h.Status)</span></td>
+                            <td>@(h.DecidedAt is null ? "—" : ErpFormat.When(h.DecidedAt.Value))</td>
                             <td>@(h.Comment ?? "—")</td>
                         </tr>
                     }
@@ -605,8 +605,8 @@ else
             <p class="gate-row">
                 <span class="gate-label">Rule:</span> @a.RuleId · memo @activation.MemoId ·
                 prior version @a.PriorPackVersion (rollback point) ·
-                effective @a.EffectiveAt.ToString("u") · @a.Applicability ·
-                published @a.PublishedAt.ToString("u") · proposal <code>@a.ProposalHash</code>
+                effective @ErpFormat.When(a.EffectiveAt) · @PolicyLabels.ApplicabilityWords(a.Applicability) ·
+                published @ErpFormat.When(a.PublishedAt) · proposal <code>@a.ProposalHash</code>
             </p>
             <div class="gate-field">
                 <label class="gate-label" for="restore-@a.ActivationId">Version to restore</label>
@@ -870,10 +870,17 @@ else
         });
     }
 
+    private static string CountWords(int count, string noun) =>
+        CaseChain.CountWords(count, noun);
+
+    private static string FlipWords(int count, string direction) =>
+        count == 1 ? $"1 flip to {direction}" : $"{count} flips to {direction}";
+
     private string Subtitle() =>
-        _selected is null
-            ? "Loading…"
-            : $"{_pendingQuestions.Count} question(s) and {_pendingApprovals.Count} approval(s) pending for {_selected}.";
+        _loadError is not null ? "Failed to load." :
+        _users is null ? "Loading…" :
+        _selected is null ? "Nobody to act as — the ERP has no users." :
+        $"{CountWords(_pendingQuestions.Count, "question")} and {CountWords(_pendingApprovals.Count, "approval")} pending for {_selected}.";
 
     private void ResolveSelection()
     {

@@ -7,6 +7,9 @@
 @inject SimulationUiService Sim
 @inject ModelSpendTracker Spend
 @inject PresentationPace Pace
+@inject SplitProposals Splits
+@inject DockSceneLive Scenes
+@inject DockSceneStatus SceneStatus
 @inject ILogger<Admin> Log
 
 <PageTitle>Admin</PageTitle>
@@ -14,7 +17,7 @@
 <div class="gate-page-head">
     <div>
         <p class="gate-page-title">Admin</p>
-        <p class="gate-page-sub">Operator controls: saved data, ERP-work pickup, answers mode, presentation pace, and spend.</p>
+        <p class="gate-page-sub">Operator controls: saved data, ERP-work pickup, answers mode, dock scenes, split proposals, presentation pace, and spend.</p>
     </div>
 </div>
 
@@ -38,6 +41,28 @@
 </section>
 
 <section class="gate-card">
+    <p class="gate-card-title">Dock scenes</p>
+    <p class="gate-meta">@SceneStatus.StatusLine(Scenes.LiveOn, Scenes.SceneGenerator is not null, Scenes.LastFallbackReason)</p>
+    @if (SceneStatus.MissingCredentialsNote is { } scenesNote)
+    {
+        <p class="gate-meta">@scenesNote</p>
+    }
+    <div class="gate-checkline">
+        <input type="checkbox" id="scene-toggle" checked="@Scenes.LiveOn" @onchange="e => Scenes.LiveOn = e.Value is true" />
+        <label for="scene-toggle">Build dock scenes live</label>
+    </div>
+</section>
+
+<section class="gate-card">
+    <p class="gate-card-title">Split proposals</p>
+    <p class="gate-meta">When on, the agent may propose splitting a buy across vendors when the cheapest vendor is blocked for the full quantity. Every plan is verified by code and still needs a person's approval before anything is ordered. Off is today's single-vendor award.</p>
+    <div class="gate-checkline">
+        <input type="checkbox" id="split-toggle" checked="@Splits.IsOn" @onchange="e => Splits.IsOn = e.Value is true" />
+        <label for="split-toggle">Propose split awards</label>
+    </div>
+</section>
+
+<section class="gate-card">
     <p class="gate-card-title">Presentation pace</p>
     <p class="gate-meta">When on, the agent pauses two seconds between steps and the activity pane refreshes every second, so each step appears one at a time. Off is normal speed. Pacing only; nothing else changes.</p>
     <div class="gate-checkline">
@@ -55,7 +80,7 @@
         <ul class="gate-list">
             @foreach (var kv in Spend.CallsByModel.OrderBy(kv => kv.Key, StringComparer.Ordinal))
             {
-                <li>@kv.Key: @kv.Value call(s)</li>
+                <li>@kv.Key: @CaseChain.CountWords(kv.Value, "call")</li>
             }
         </ul>
     }

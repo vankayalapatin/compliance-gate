@@ -780,7 +780,7 @@ public class MemoWhatIfGather
         if (context.InvoiceRowsWithoutPoJoin > 0)
         {
             caveats.Add(
-                $"{context.InvoiceRowsWithoutPoJoin} invoice row(s) are absent from the pipeline window: " +
+                $"{DisplayWords.Plural(context.InvoiceRowsWithoutPoJoin, "invoice row")} are absent from the pipeline window: " +
                 $"their lines name no resolvable PO line (first: {context.FirstInvoiceWithoutPoJoin}). " +
                 "Item, quantity, and price joins need the PO line.");
         }
@@ -788,7 +788,7 @@ public class MemoWhatIfGather
         if (context.PaymentRowsWithoutJoin > 0)
         {
             caveats.Add(
-                $"{context.PaymentRowsWithoutJoin} payment row(s) are absent from the pipeline window: " +
+                $"{DisplayWords.Plural(context.PaymentRowsWithoutJoin, "payment row")} are absent from the pipeline window: " +
                 $"their invoices name no resolvable invoice or PO line (first: {context.FirstPaymentWithoutJoin}). " +
                 "Item, quantity, and price joins need the invoice and PO lines.");
         }
@@ -796,7 +796,7 @@ public class MemoWhatIfGather
         if (context.UnknownItemRows > 0)
         {
             caveats.Add(
-                $"{context.UnknownItemRows} pipeline row(s) are absent from the pipeline window: " +
+                $"{DisplayWords.Plural(context.UnknownItemRows, "pipeline row")} are absent from the pipeline window: " +
                 $"their items are in neither the pinned KB snapshot nor the ERP item master (first: {context.FirstUnknownItem}). " +
                 "Criticality cannot be evaluated without the item.");
         }

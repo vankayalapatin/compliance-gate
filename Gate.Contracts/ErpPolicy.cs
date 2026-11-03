@@ -42,9 +42,10 @@ public sealed record PolicyCheckResult(bool Allowed, PolicyRefusal? Refusal)
 }
 
 /// <summary>Sourcing input for one award line. The ERP reads every field
-// itself (vendor, item, documents, trailing volume) except the exception
-// grant, which arrives from the platform context. CORP-02 is computed for
-// AwardQuantity: the quantity on this PO line, not history alone.</summary>
+// itself (vendor, item, documents, trailing volume, open orders) except
+// the exception grant, which arrives from the platform context. CORP-02
+// is computed for AwardQuantity: the quantity on this PO line, counted
+// with received history plus open orders, never history alone.</summary>
 public sealed record SourcingCheckInput(
     string VendorId,
     string VendorName,
@@ -56,7 +57,8 @@ public sealed record SourcingCheckInput(
     decimal AwardQuantity,
     IReadOnlyList<VendorDocumentDto> Documents,
     IReadOnlyList<VolumeHistory> History,
-    PolicyExceptionGrant? ExceptionGrant);
+    PolicyExceptionGrant? ExceptionGrant,
+    IReadOnlyList<OpenOrderQty> OpenOrders);
 
 /// <summary>Payable input for one payment or held-line release. The ERP reads
 // holds and quarantine itself from the receipts behind Invoices; open

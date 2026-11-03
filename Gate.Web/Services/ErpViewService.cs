@@ -330,8 +330,44 @@ public sealed class ErpViewService
 
     /// <summary>One audit stamp for display: who plus when, with the unset
     /// placeholder for either half. Stored actors never render as "system".</summary>
+    private static string VendorNameFrom(IReadOnlyDictionary<string, string> map, string vendorId) =>
+        map.TryGetValue(vendorId, out var name) ? name : vendorId;
+
+    private async Task<IReadOnlyDictionary<string, string>> VendorMapAsync(CancellationToken ct)
+    {
+        try
+        {
+            var vendors = await _erp.GetVendorsAsync(ct).ConfigureAwait(false);
+            return vendors.ToDictionary(v => v.VendorId, v => v.Name, StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Vendor map lookup failed.");
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+    }
+
+    private async Task<string> VendorNameAsync(string vendorId, CancellationToken ct)
+    {
+        try
+        {
+            var vendors = await _erp.GetVendorsAsync(ct).ConfigureAwait(false);
+            return vendors.FirstOrDefault(
+                v => string.Equals(v.VendorId, vendorId, StringComparison.Ordinal))?.Name
+                ?? vendorId;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Vendor name lookup failed for {Vendor}.", vendorId);
+            return vendorId;
+        }
+    }
+
+    private static string CartonWords(int count) =>
+        count == 1 ? "1 carton" : $"{ErpFormat.Count(count)} cartons";
+
     private static string Stamp(string? by, DateTimeOffset? at) =>
-        $"{ActorLabels.Display(by)} · {(at?.ToString("u") ?? ActorLabels.Unset)}";
+        $"{ActorLabels.Display(by)} · {(at is null ? ActorLabels.Unset : ErpFormat.When(at.Value))}";
 
     /// <summary>Acting-user role for role-gated views (the AP clerk hides
     /// quarantine-lot views plus vendor-block actions). Null when the user
@@ -350,7 +386,7 @@ public sealed class ErpViewService
     }
 
     private async Task<ErpLineTable?> ApprovalsTableAsync(
-        string docType, string docNumber, List<string> notes, CancellationToken ct)
+        string docType, string docNumber, string? currency, List<string> notes, CancellationToken ct)
     {
         IReadOnlyList<ApprovalDto> rows;
         try
@@ -376,7 +412,7 @@ public sealed class ErpViewService
             [
                 new(a.RoutedTo), new(ActorLabels.Display(a.ActedBy)),
                 new(a.Approved ? "approved" : "rejected"),
-                new($"{ErpFormat.Amount(a.DocumentAmount)} / {ErpFormat.Amount(a.LimitChecked)}", true),
+                new($"{ErpFormat.Money(a.DocumentAmount, currency)} / {ErpFormat.Money(a.LimitChecked, currency)}", true),
                 new(CommentLabels.Display(a.Comment)),
             ]).ToList());
     }
@@ -451,15 +487,17 @@ public sealed class ErpViewService
         }
 
         var related = so.Lines.Select(l => l.ItemId).Distinct(StringComparer.Ordinal)
-            .Select(item => new ErpRelatedDoc($"Item {item}", "item", item, null, "master"))
+            .Select(item => new ErpRelatedDoc($"Item {item}", "item", item, null, "Master record"))
             .ToList<ErpRelatedDoc>();
         await AddBlockingHoldsAsync(so.SoNumber, related, notes, ct).ConfigureAwait(false);
-        var statuses = Enum.GetNames<SalesOrderStatus>().ToList();
+        var statuses = Enum.GetValues<SalesOrderStatus>()
+            .Select(s => new ErpActionOption(s.ToString(), ErpStatusWords.Of(s)))
+            .ToList();
         return new ErpRecordVm("so", key, $"Sales order {so.SoNumber}",
-            [$"Status {so.Status}"], null, so.SoNumber,
+            [$"Status {ErpStatusWords.Of(so.Status)}"], null, so.SoNumber,
             [
                 new("Sales order", so.SoNumber),
-                new("Status", so.Status.ToString()),
+                new("Status", ErpStatusWords.Of(so.Status)),
                 new("Currency", so.Currency),
                 new("Lines", ErpFormat.Count(so.Lines.Count)),
                 new("Total quantity", ErpFormat.Qty(so.Lines.Sum(l => l.Quantity))),
@@ -493,7 +531,7 @@ public sealed class ErpViewService
         related.AddRange(pos.Rows
             .Where(p => string.Equals(p.PrNumber, pr.PrNumber, StringComparison.Ordinal))
             .Select(p => new ErpRelatedDoc($"Purchase order {p.PoNumber}", "po", p.PoNumber, null,
-                $"{p.ApprovalStatus} / {p.DocStatus}")));
+                ErpStatusWords.Of(p.ApprovalStatus) + " / " + ErpStatusWords.Of(p.DocStatus))));
         await AddBlockingHoldsAsync(pr.PrNumber, related, notes, ct).ConfigureAwait(false);
 
         var actions = new List<ErpActionDef>();
@@ -509,7 +547,7 @@ public sealed class ErpViewService
         else if (pr.Status == PrStatus.Approved)
         {
             related.Add(new ErpRelatedDoc("New purchase order from this PR", "po", pr.PrNumber, null,
-                "create", HrefOverride: ErpRoutes.NewHref("po", pr.PrNumber)));
+                "New", HrefOverride: ErpRoutes.NewHref("po", pr.PrNumber)));
         }
 
         var tables = new List<ErpLineTable>
@@ -523,17 +561,23 @@ public sealed class ErpViewService
                     new(l.Unit),
                 ]).ToList()),
         };
-        var approvals = await ApprovalsTableAsync("PR", pr.PrNumber, notes, ct).ConfigureAwait(false);
+        var approvals = await ApprovalsTableAsync("PR", pr.PrNumber, pr.Currency, notes, ct).ConfigureAwait(false);
         if (approvals is not null)
         {
             tables.Add(approvals);
         }
 
+        var screening = await _views.ScreeningSectionAsync(pr.PrNumber, null, ct).ConfigureAwait(false);
+        if (screening is not null)
+        {
+            tables.Add(screening);
+        }
+
         return new ErpRecordVm("pr", key, $"Purchase requisition {pr.PrNumber}",
-            [$"Status {pr.Status}"], pr.Source, pr.PrNumber,
+            [$"Status {ErpStatusWords.Of(pr.Status)}"], pr.Source, pr.PrNumber,
             [
                 new("Purchase requisition", pr.PrNumber),
-                new("Status", pr.Status.ToString()),
+                new("Status", ErpStatusWords.Of(pr.Status)),
                 new("Requester", pr.Requester),
                 new("Estimated amount", ErpFormat.Money(pr.EstimatedAmount, pr.Currency)),
                 new("Created", Stamp(pr.CreatedBy, pr.CreatedAt)),
@@ -554,7 +598,7 @@ public sealed class ErpViewService
         // The vendor stays out of related documents: the header links it.
         var related = new List<ErpRelatedDoc>
         {
-            new($"Purchase requisition {po.PrNumber}", "pr", po.PrNumber, null, "source"),
+            new($"Purchase requisition {po.PrNumber}", "pr", po.PrNumber, null, "Source document"),
         };
         var asns = await ListAsnsAsync(ct).ConfigureAwait(false);
         notes.AddRange(asns.Notes);
@@ -564,7 +608,7 @@ public sealed class ErpViewService
         {
             asn ??= row;
             related.Add(new ErpRelatedDoc($"ASN {row.AsnNumber}", "asn", row.AsnNumber, null,
-                $"{ErpFormat.Count(row.Cartons.Count)} carton(s)"));
+                CartonWords(row.Cartons.Count)));
         }
 
         var receipts = await ListReceiptsAsync(ct).ConfigureAwait(false);
@@ -572,7 +616,7 @@ public sealed class ErpViewService
         related.AddRange(receipts.Rows
             .Where(r => string.Equals(r.PoNumber, po.PoNumber, StringComparison.Ordinal))
             .Select(r => new ErpRelatedDoc($"Receipt {r.ReceiptNumber}", "receipt", r.ReceiptNumber, null,
-                r.Status.ToString())));
+                ErpStatusWords.Of(r.Status))));
         await AddBlockingHoldsAsync(po.PoNumber, related, notes, ct).ConfigureAwait(false);
 
         var header = new List<ErpFact>
@@ -585,8 +629,8 @@ public sealed class ErpViewService
             new("Purchase requisition", po.PrNumber, ErpRoutes.RecordHref("pr", po.PrNumber)),
             new("Vendor", po.VendorId, ErpRoutes.RecordHref("vendor", po.VendorId)),
             new("Payment terms", po.PaymentTermsId),
-            new("Approval", po.ApprovalStatus.ToString()),
-            new("Document status", po.DocStatus.ToString()),
+            new("Approval", ErpStatusWords.Of(po.ApprovalStatus)),
+            new("Document status", ErpStatusWords.Of(po.DocStatus)),
             new("Total", ErpFormat.Money(po.Lines.Sum(l => l.LineAmount), po.Currency)),
             new("Created", Stamp(po.CreatedBy, po.CreatedAt)),
             new("Approved", Stamp(po.ApprovedBy, po.ApprovedAt)),
@@ -595,7 +639,7 @@ public sealed class ErpViewService
         {
             var confirm = await _erp.GetVendorConfirmationAsync(po.PoNumber, ct).ConfigureAwait(false);
             header.Add(new("Vendor confirmation",
-                confirm is null ? "none yet" : $"confirmed {confirm.ConfirmDate}"));
+                confirm is null ? "none yet" : "confirmed " + ErpFormat.Day(confirm.ConfirmDate)));
         }
         catch (Exception ex)
         {
@@ -634,11 +678,11 @@ public sealed class ErpViewService
                     new(ErpFormat.Qty(l.QtyOrdered), true), new(ErpFormat.Qty(l.QtyReceived), true),
                     new(ErpFormat.Qty(l.QtyInvoiced), true), new(ErpFormat.Qty(l.QtyQuarantined), true),
                     new(ErpFormat.Qty(l.QtyRejected), true),
-                    new(ErpFormat.Amount(l.UnitPrice), true),
-                    new(ErpFormat.Amount(l.LineAmount), true),
+                    new(ErpFormat.Money(l.UnitPrice, po.Currency), true),
+                    new(ErpFormat.Money(l.LineAmount, po.Currency), true),
                 ]).ToList()),
         };
-        var approvals = await ApprovalsTableAsync("PO", po.PoNumber, notes, ct).ConfigureAwait(false);
+        var approvals = await ApprovalsTableAsync("PO", po.PoNumber, po.Currency, notes, ct).ConfigureAwait(false);
         if (approvals is not null)
         {
             tables.Add(approvals);
@@ -647,11 +691,17 @@ public sealed class ErpViewService
         if (asn is not null)
         {
             related.Add(new ErpRelatedDoc("Post receipt from this ASN", "receipt", asn.AsnNumber, null,
-                "create", HrefOverride: ErpRoutes.NewHref("receipt", asn.AsnNumber)));
+                "New", HrefOverride: ErpRoutes.NewHref("receipt", asn.AsnNumber)));
+        }
+
+        var screening = await _views.ScreeningSectionAsync(po.PrNumber, po.PoNumber, ct).ConfigureAwait(false);
+        if (screening is not null)
+        {
+            tables.Add(screening);
         }
 
         return new ErpRecordVm("po", key, $"Purchase order {po.PoNumber}",
-            [$"Approval {po.ApprovalStatus}", $"Document {po.DocStatus}"],
+            [$"Approval {ErpStatusWords.Of(po.ApprovalStatus)}", $"Document {ErpStatusWords.Of(po.DocStatus)}"],
             po.Source, po.PoNumber, header, tables, related, actions, [], [], notes);
     }
 
@@ -666,19 +716,19 @@ public sealed class ErpViewService
 
         var related = new List<ErpRelatedDoc>
         {
-            new($"Purchase order {asn.PoNumber}", "po", asn.PoNumber, null, "source"),
+            new($"Purchase order {asn.PoNumber}", "po", asn.PoNumber, null, "Source document"),
             new("Post receipt from this ASN", "receipt", asn.AsnNumber, null,
-                "create", HrefOverride: ErpRoutes.NewHref("receipt", asn.AsnNumber)),
+                "New", HrefOverride: ErpRoutes.NewHref("receipt", asn.AsnNumber)),
         };
         var receipts = await ListReceiptsAsync(ct).ConfigureAwait(false);
         notes.AddRange(receipts.Notes);
         related.AddRange(receipts.Rows
             .Where(r => string.Equals(r.PoNumber, asn.PoNumber, StringComparison.Ordinal))
             .Select(r => new ErpRelatedDoc($"Receipt {r.ReceiptNumber}", "receipt", r.ReceiptNumber, null,
-                r.Status.ToString())));
+                ErpStatusWords.Of(r.Status))));
 
         return new ErpRecordVm("asn", key, $"ASN {asn.AsnNumber}",
-            [$"{ErpFormat.Count(asn.Cartons.Count)} carton(s)"], asn.Source, asn.AsnNumber,
+            [CartonWords(asn.Cartons.Count)], asn.Source, asn.AsnNumber,
             [
                 new("ASN", asn.AsnNumber),
                 new("Purchase order", asn.PoNumber, ErpRoutes.RecordHref("po", asn.PoNumber)),
@@ -705,7 +755,7 @@ public sealed class ErpViewService
 
         var related = new List<ErpRelatedDoc>
         {
-            new($"Purchase order {receipt.PoNumber}", "po", receipt.PoNumber, null, "source"),
+            new($"Purchase order {receipt.PoNumber}", "po", receipt.PoNumber, null, "Source document"),
         };
         var asns = await ListAsnsAsync(ct).ConfigureAwait(false);
         notes.AddRange(asns.Notes);
@@ -714,7 +764,7 @@ public sealed class ErpViewService
         if (asn is not null)
         {
             related.Add(new ErpRelatedDoc($"ASN {asn.AsnNumber}", "asn", asn.AsnNumber, null,
-                $"{ErpFormat.Count(asn.Cartons.Count)} carton(s)"));
+                CartonWords(asn.Cartons.Count)));
         }
 
         var invoices = await ListInvoicesAsync(ct).ConfigureAwait(false);
@@ -723,18 +773,18 @@ public sealed class ErpViewService
             .Where(i => string.Equals(i.PoNumber, receipt.PoNumber, StringComparison.Ordinal))
             .Select(i => new ErpRelatedDoc(
                 $"Invoice {i.SupplierInvoiceNumber}", "invoice", i.VendorId, i.SupplierInvoiceNumber,
-                i.Status.ToString())));
+                ErpStatusWords.Of(i.Status))));
         await AddBlockingHoldsAsync(receipt.ReceiptNumber, related, notes, ct).ConfigureAwait(false);
 
         var media = await _views.GetReceiptMediaAsync(receipt, asn, ct).ConfigureAwait(false);
         return new ErpRecordVm("receipt", key, $"Receipt {receipt.ReceiptNumber}",
-            [$"Status {receipt.Status}"], receipt.Source, receipt.ReceiptNumber,
+            [$"Status {ErpStatusWords.Of(receipt.Status)}"], receipt.Source, receipt.ReceiptNumber,
             [
                 new("Receipt", receipt.ReceiptNumber),
                 new("Purchase order", receipt.PoNumber, ErpRoutes.RecordHref("po", receipt.PoNumber)),
                 new("Supplier packing slip", receipt.SupplierPackingSlipNumber),
-                new("Status", receipt.Status.ToString()),
-                new("Posting date", receipt.PostingDate?.ToString() ?? ActorLabels.Unset),
+                new("Status", ErpStatusWords.Of(receipt.Status)),
+                new("Posting date", receipt.PostingDate is null ? ActorLabels.Unset : ErpFormat.Day(receipt.PostingDate.Value)),
                 new("Created", Stamp(receipt.CreatedBy, receipt.CreatedAt)),
                 new("Posted", Stamp(receipt.PostedBy, receipt.PostedAt)),
             ],
@@ -811,7 +861,7 @@ public sealed class ErpViewService
                 [new("Receipt"), new("Lot"), new("Status"), new("Quantity", true)],
                 txns.Select(t => (IReadOnlyList<ErpCell>)
                 [
-                    new(t.ReceiptNumber), new(t.LotRef), new(t.Status.ToString()),
+                    new(t.ReceiptNumber), new(t.LotRef), new(ErpStatusWords.Of(t.Status)),
                     new(ErpFormat.Qty(t.Quantity), true),
                 ]).ToList())],
             related,
@@ -842,12 +892,13 @@ public sealed class ErpViewService
 
         var docNumber = ErpDocTypes.InvoiceDocNumber(inv.VendorId, inv.SupplierInvoiceNumber);
         var total = inv.Lines.Sum(l => l.Quantity * l.UnitPrice);
+        var vendorName = await VendorNameAsync(inv.VendorId, ct).ConfigureAwait(false);
         // The vendor stays out of related documents: the header links it.
         var related = new List<ErpRelatedDoc>();
         if (inv.PoNumber is not null)
         {
             related.Add(new ErpRelatedDoc($"Purchase order {inv.PoNumber}", "po", inv.PoNumber, null,
-                "source"));
+                "Source document"));
         }
 
         var payments = await ListPaymentsAsync(ct).ConfigureAwait(false);
@@ -857,7 +908,7 @@ public sealed class ErpViewService
                 string.Equals(l.VendorId, inv.VendorId, StringComparison.Ordinal)
                 && string.Equals(l.SupplierInvoiceNumber, inv.SupplierInvoiceNumber, StringComparison.Ordinal)))
             .Select(p => new ErpRelatedDoc($"Payment {p.PaymentNumber}", "payment", p.PaymentNumber, null,
-                p.Status.ToString())));
+                ErpStatusWords.Of(p.Status))));
         await AddBlockingHoldsAsync(docNumber, related, notes, ct).ConfigureAwait(false);
 
         var tables = new List<ErpLineTable>
@@ -868,9 +919,9 @@ public sealed class ErpViewService
                 inv.Lines.Select(l => (IReadOnlyList<ErpCell>)
                 [
                     new(l.PoLineRef ?? "—"), new(ErpFormat.Qty(l.Quantity), true),
-                    new(ErpFormat.Amount(l.UnitPrice), true),
-                    new(ErpFormat.Amount(l.Quantity * l.UnitPrice), true),
-                    new(l.Disposition.ToString()), new(l.HoldReason ?? "—"),
+                    new(ErpFormat.Money(l.UnitPrice, inv.Currency), true),
+                    new(ErpFormat.Money(l.Quantity * l.UnitPrice, inv.Currency), true),
+                    new(ErpStatusWords.Of(l.Disposition)), new(l.HoldReason ?? "—"),
                 ]).ToList()),
         };
         if (inv.MatchResults.Count > 0)
@@ -879,7 +930,7 @@ public sealed class ErpViewService
                 [new("PO line"), new("Matched"), new("Message")],
                 inv.MatchResults.Select(m => (IReadOnlyList<ErpCell>)
                 [
-                    new(m.PoLineRef ?? "header"), new(m.Matched ? "yes" : "NO"), new(m.Message),
+                    new(m.PoLineRef ?? "header"), new(m.Matched ? "yes" : "no"), new(m.Message),
                 ]).ToList()));
         }
 
@@ -894,8 +945,8 @@ public sealed class ErpViewService
                     settlements.Select(s => (IReadOnlyList<ErpCell>)
                     [
                         new(s.PaymentNumber, Href: ErpRoutes.RecordHref("payment", s.PaymentNumber)),
-                        new(ErpFormat.Amount(s.SettledAmount), true),
-                        new(ErpFormat.Amount(s.RemainingBalance), true),
+                        new(ErpFormat.Money(s.SettledAmount, inv.Currency), true),
+                        new(ErpFormat.Money(s.RemainingBalance, inv.Currency), true),
                     ]).ToList()));
             }
         }
@@ -905,7 +956,32 @@ public sealed class ErpViewService
             notes.Add($"Settlements for {docNumber} failed: {ex.Message}.");
         }
 
-        var approvals = await ApprovalsTableAsync("Invoice", docNumber, notes, ct).ConfigureAwait(false);
+        try
+        {
+            var releases = await _erp.GetHeldReleasesAsync(
+                inv.VendorId, inv.SupplierInvoiceNumber, ct).ConfigureAwait(false);
+            if (releases.Count > 0)
+            {
+                tables.Add(new ErpLineTable("Release history",
+                    [new("PO line"), new("Quantity", true), new("Released by"), new("Released at")],
+                    releases.Select(r => (IReadOnlyList<ErpCell>)
+                    [
+                        new(r.PoLineRef ?? "—"), new(ErpFormat.Qty(r.Quantity), true),
+                        new(ActorLabels.Display(r.ReleasedBy)), new(ErpFormat.When(r.ReleasedAt)),
+                    ]).ToList()));
+            }
+        }
+        catch (NotSupportedException)
+        {
+            notes.Add("Release history is unavailable from this ERP read.");
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Release-history lookup failed for {Doc}.", docNumber);
+            notes.Add($"Release history for {docNumber} failed: {ex.Message}.");
+        }
+
+        var approvals = await ApprovalsTableAsync("Invoice", docNumber, inv.Currency, notes, ct).ConfigureAwait(false);
         if (approvals is not null)
         {
             tables.Add(approvals);
@@ -927,7 +1003,7 @@ public sealed class ErpViewService
             notes.Add("Held lines release only when the quarantine or review behind them closes.");
         }
 
-        var badges = new List<string> { $"Status {inv.Status}" };
+        var badges = new List<string> { $"Status {ErpStatusWords.Of(inv.Status)}" };
         if (inv.Voucher is not null)
         {
             badges.Add($"Voucher {inv.Voucher}");
@@ -937,13 +1013,13 @@ public sealed class ErpViewService
             badges, inv.Source, inv.SupplierInvoiceNumber,
             [
                 new("Supplier invoice", inv.SupplierInvoiceNumber),
-                new("Vendor", inv.VendorId, ErpRoutes.RecordHref("vendor", inv.VendorId)),
+                new("Vendor", vendorName, ErpRoutes.RecordHref("vendor", inv.VendorId)),
                 new("Purchase order", inv.PoNumber ?? "—",
                     inv.PoNumber is null ? null : ErpRoutes.RecordHref("po", inv.PoNumber)),
-                new("Status", inv.Status.ToString()),
+                new("Status", ErpStatusWords.Of(inv.Status)),
                 new("Voucher", inv.Voucher ?? "none yet"),
                 new("Total", ErpFormat.Money(total, inv.Currency)),
-                new("Due", inv.DueDate?.ToString() ?? ActorLabels.Unset),
+                new("Due", inv.DueDate is null ? ActorLabels.Unset : ErpFormat.Day(inv.DueDate.Value)),
                 new("Created", Stamp(inv.CreatedBy, inv.CreatedAt)),
                 new("Approved", Stamp(inv.ApprovedBy, inv.ApprovedAt)),
                 new("Posted", Stamp(inv.PostedBy, inv.PostedAt)),
@@ -967,7 +1043,7 @@ public sealed class ErpViewService
             {
                 var parts = doc.Split('/', 2);
                 return new ErpRelatedDoc($"Invoice {parts[1]} ({parts[0]})",
-                    "invoice", parts[0], parts[1], "settled line");
+                    "invoice", parts[0], parts[1], "Settled line");
             })
             .ToList<ErpRelatedDoc>();
         await AddBlockingHoldsAsync(pay.PaymentNumber, related, notes, ct).ConfigureAwait(false);
@@ -988,31 +1064,32 @@ public sealed class ErpViewService
                 "Posts the payment. Bank verification and state are enforced by the ERP.", []));
         }
 
+        var vendorMap = await VendorMapAsync(ct).ConfigureAwait(false);
         var tables = new List<ErpLineTable>
         {
             new("Lines",
                 [new("Vendor"), new("Invoice"), new("Amount", true)],
                 pay.Lines.Select(l => (IReadOnlyList<ErpCell>)
                 [
-                    new(l.VendorId, Href: ErpRoutes.RecordHref("vendor", l.VendorId)),
+                    new(VendorNameFrom(vendorMap, l.VendorId), Href: ErpRoutes.RecordHref("vendor", l.VendorId)),
                     new(l.SupplierInvoiceNumber,
                         Href: ErpRoutes.RecordHref("invoice", l.VendorId, l.SupplierInvoiceNumber)),
-                    new(ErpFormat.Amount(l.Amount), true),
+                    new(ErpFormat.Money(l.Amount, pay.Currency), true),
                 ]).ToList()),
         };
-        var approvals = await ApprovalsTableAsync("Payment", pay.PaymentNumber, notes, ct).ConfigureAwait(false);
+        var approvals = await ApprovalsTableAsync("Payment", pay.PaymentNumber, pay.Currency, notes, ct).ConfigureAwait(false);
         if (approvals is not null)
         {
             tables.Add(approvals);
         }
 
         return new ErpRecordVm("payment", key, $"Payment {pay.PaymentNumber}",
-            [$"Status {pay.Status}"], pay.Source, pay.PaymentNumber,
+            [$"Status {ErpStatusWords.Of(pay.Status)}"], pay.Source, pay.PaymentNumber,
             [
                 new("Payment", pay.PaymentNumber),
-                new("Status", pay.Status.ToString()),
+                new("Status", ErpStatusWords.Of(pay.Status)),
                 new("Total", ErpFormat.Money(pay.Lines.Sum(l => l.Amount), pay.Currency)),
-                new("Due", pay.DueDate.ToString()),
+                new("Due", ErpFormat.Day(pay.DueDate)),
                 new("Payee bank", $"{pay.PayeeBank.AccountRef} ({(pay.PayeeBank.Verified ? "verified" : "not verified")})"),
                 new("Created", Stamp(pay.CreatedBy, pay.CreatedAt)),
                 new("Approved", Stamp(pay.ApprovedBy, pay.ApprovedAt)),
@@ -1043,7 +1120,7 @@ public sealed class ErpViewService
         {
             related.Add(new ErpRelatedDoc(
                 $"Blocked {hold.DocumentType} {hold.DocumentNumber}",
-                target.Kind, target.Key, target.Key2, "blocked"));
+                target.Kind, target.Key, target.Key2, "Blocked document"));
         }
 
         var tables = new List<ErpLineTable>();
@@ -1056,7 +1133,7 @@ public sealed class ErpViewService
                     [new("Released by"), new("Released at"), new("Approval ref")],
                     history.Select(h => (IReadOnlyList<ErpCell>)
                     [
-                        new(h.ReleasedBy), new(h.ReleasedAt.ToString("u")), new(h.ApprovalRef ?? "—"),
+                        new(ActorLabels.Display(h.ReleasedBy)), new(ErpFormat.When(h.ReleasedAt)), new(h.ApprovalRef ?? "—"),
                     ]).ToList()));
             }
         }
@@ -1067,13 +1144,13 @@ public sealed class ErpViewService
         }
 
         return new ErpRecordVm("hold", key, $"Hold {hold.HoldId}",
-            [hold.ReasonCode, hold.Status.ToString()], null, null,
+            [hold.ReasonCode, ErpStatusWords.Of(hold.Status)], null, null,
             [
                 new("Hold", hold.HoldId),
                 new("Reason", $"{hold.ReasonCode}: {hold.Note}"),
                 new("Rule", hold.RuleId ?? "—"),
                 new("Case", hold.CaseId, $"cases/{hold.CaseId}"),
-                new("Set by", $"{hold.SetBy} at {hold.SetAt:u}"),
+                new("Set by", $"{ActorLabels.Display(hold.SetBy)} at {ErpFormat.When(hold.SetAt)}"),
                 new("Blocks", string.IsNullOrWhiteSpace(blocks) ? "—" : blocks),
             ],
             tables, related,
@@ -1147,14 +1224,14 @@ public sealed class ErpViewService
 
         related.AddRange(pos.Rows.Select(p => new ErpRelatedDoc(
             $"Purchase order {p.PoNumber}", "po", p.PoNumber, null,
-            $"{p.ApprovalStatus} / {p.DocStatus}")));
+            ErpStatusWords.Of(p.ApprovalStatus) + " / " + ErpStatusWords.Of(p.DocStatus))));
         var invoices = await ListInvoicesAsync(ct).ConfigureAwait(false);
         notes.AddRange(invoices.Notes);
         related.AddRange(invoices.Rows
             .Where(i => string.Equals(i.VendorId, vendor.VendorId, StringComparison.Ordinal))
             .Select(i => new ErpRelatedDoc(
                 $"Invoice {i.SupplierInvoiceNumber}", "invoice", i.VendorId, i.SupplierInvoiceNumber,
-                i.Status.ToString())));
+                ErpStatusWords.Of(i.Status))));
 
         var actions = new List<ErpActionDef>();
         if (vendor.IsBlocked)
@@ -1174,7 +1251,7 @@ public sealed class ErpViewService
             []));
 
         return new ErpRecordVm("vendor", key, $"Vendor {vendor.VendorId}",
-            [vendor.IsBlocked ? "blocked" : "active"], null, vendor.VendorId,
+            [vendor.IsBlocked ? "Blocked" : "Active"], null, vendor.VendorId,
             header, tables, related, actions, [], [], notes);
     }
 

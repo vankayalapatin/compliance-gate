@@ -487,7 +487,7 @@ public sealed class PolicyUiTests
         Assert.Equal(TimeSpan.Zero, parsed.Offset);
         Assert.False(PolicyLabels.TryParseEffectiveUtc(null, out _));
         Assert.False(PolicyLabels.TryParseEffectiveUtc("not-a-date", out _));
-        Assert.Equal("10 TST", PolicyLabels.FlipMoney(10m, "TST"));
+        Assert.Equal("10.00 TST", PolicyLabels.FlipMoney(10m, "TST"));
         Assert.Contains("missing", PolicyLabels.FlipMoney(10m, null));
         Assert.Contains("mixed", PolicyLabels.TotalsMoney(10m, null));
     }

@@ -55,26 +55,83 @@ else
                     {
                         <span class="gate-chip">covering @(string.Join(", ", _covering))</span>
                     }
-                    <span class="gate-badge">@d.Kind</span>
+                    <span class="gate-badge">@ActivityLines.KindWords(d.Kind)</span>
                     <span class="gate-badge gate-badge-dark">Pending</span>
                 </div>
             </div>
             <p class="gate-meta">
                 Case <a href="cases/@d.CaseId">@d.CaseId</a>
-                · SO @card.SoNumber · item @card.ItemId · stage @card.Stage
-                · requested to @d.RequestedTo at @d.RequestedAt.ToString("u")
+                · SO @card.SoNumber · item @card.ItemId · stage @CaseDisplay.StageSummary(card.Stage)
+                · requested to @ActorLabels.Display(d.RequestedTo) at @ErpFormat.When(d.RequestedAt)
             </p>
             @if (d.Amount is not null)
             {
-                <p class="gate-row"><span class="gate-label">Amount:</span> @d.Amount @d.Currency</p>
+                <p class="gate-row"><span class="gate-label">Amount:</span> @ErpFormat.Money(d.Amount.Value, d.Currency)</p>
             }
-            @if (d.RuleId is not null || d.Reason is not null)
+            @if (card.RuleLine is not null)
             {
-                <p class="gate-row"><span class="gate-label">Rule:</span> @(d.RuleId ?? "—") — @(d.Reason ?? "—")</p>
+                <p class="gate-row"><span class="gate-label">Rule:</span> @card.RuleLine</p>
+            }
+            @if (d.Split is not null)
+            {
+                <table class="gate-table">
+                    <thead>
+                        <tr><th>Vendor</th><th class="gate-num">Quantity</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in d.Split.Lines)
+                        {
+                            <tr>
+                                <td>@line.VendorName</td>
+                                <td class="gate-num">@ErpFormat.Qty(line.Quantity)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <p class="gate-row"><span class="gate-label">Final shares:</span> @SplitFormat.Shares(d.Split.FinalShares)</p>
+                <p class="gate-row"><span class="gate-label">Split total:</span> @ErpFormat.Money(d.Split.SplitTotal, d.Split.Currency)</p>
+                @if (d.Split.SingleVendorTotal is not null)
+                {
+                    <p class="gate-row"><span class="gate-label">Single award:</span> @ErpFormat.Money(d.Split.SingleVendorTotal.Value, d.Split.Currency)</p>
+                    @if (d.Split.Saving is not null)
+                    {
+                        <p class="gate-row"><span class="gate-label">Saving:</span> @ErpFormat.Money(d.Split.Saving.Value, d.Split.Currency)</p>
+                    }
+                }
+                else
+                {
+                    <p class="gate-row"><span class="gate-label">Single award:</span> no vendor passes for the full quantity</p>
+                }
             }
             @if (card.ErpSummary is not null)
             {
                 <p class="gate-row"><span class="gate-label">ERP:</span> @card.ErpSummary</p>
+            }
+            @if (card.ScreeningRows is not null && card.ScreeningRows.Count > 0)
+            {
+                <table class="gate-table">
+                    <thead>
+                        <tr><th>Vendor</th><th>Country</th><th class="gate-num">Unit price</th><th>Result</th><th>Reason</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in card.ScreeningRows)
+                        {
+                            <tr>
+                                <td>
+                                    @row.VendorName
+                                    @if (row.Awarded)
+                                    {
+                                        <span class="gate-badge gate-badge-dark">awarded</span>
+                                    }
+                                </td>
+                                <td>@row.Country</td>
+                                <td class="gate-num">@row.Price</td>
+                                <td>@row.Result</td>
+                                <td>@row.Reason</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             }
             @if (card.EvidenceCaptions.Count > 0)
             {
@@ -87,6 +144,7 @@ else
             }
             @foreach (var figure in card.CartonFigures)
             {
+                var readKey = $"{d.DecisionId}:{figure.CartonId}";
                 <figure class="gate-figure">
                     @if (figure.ImageFileName is not null)
                     {
@@ -95,7 +153,15 @@ else
                     <figcaption>@figure.Caption</figcaption>
                     @if (figure.Read is not null)
                     {
-                        <p class="gate-figure-read">@figure.Read</p>
+                        @if (_showReads.Contains(readKey))
+                        {
+                            <button class="gate-btn" @onclick="() => _showReads.Remove(readKey)">Hide raw read</button>
+                            <p class="gate-figure-read">@figure.Read</p>
+                        }
+                        else
+                        {
+                            <button class="gate-btn" @onclick="() => _showReads.Add(readKey)">Show raw read</button>
+                        }
                     }
                 </figure>
             }
@@ -177,11 +243,11 @@ else
                     {
                         var h = card.Decision;
                         <tr>
-                            <td>@h.DecisionId — @h.Title</td>
+                            <td>@h.Title</td>
                             <td><a href="cases/@h.CaseId">@h.CaseId</a></td>
-                            <td>@h.Kind</td>
-                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@h.Status</span></td>
-                            <td>@(h.DecidedAt?.ToString("u") ?? "—")</td>
+                            <td>@ActivityLines.KindWords(h.Kind)</td>
+                            <td><span class="gate-badge @(h.Status == DecisionStatus.Approved ? "gate-badge-dark" : "")">@ErpStatusWords.Of(h.Status)</span></td>
+                            <td>@(h.DecidedAt is null ? "—" : ErpFormat.When(h.DecidedAt.Value))</td>
                             <td>@(h.Comment ?? "—")</td>
                         </tr>
                     }
@@ -202,6 +268,7 @@ else
     private string? _selected;
     private string? _loadError;
     private bool _busy;
+    private readonly HashSet<string> _showReads = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _comments = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _questions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _answers = new(StringComparer.Ordinal);
@@ -245,7 +312,9 @@ else
     }
 
     private string Subtitle() =>
-        _selected is null ? "Loading…" : $"{_pending.Count} pending for {_selected}.";
+        _users is null ? "Loading…" :
+        _selected is null ? "Nobody to act as — the ERP has no users." :
+        $"{_pending.Count} pending for {_selected}.";
 
     private void ResolveSelection()
     {

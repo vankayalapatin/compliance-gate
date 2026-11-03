@@ -1,8 +1,8 @@
-// Dock carton-figure tests: a held or reviewed carton renders its own full
-// photo plus verdict caption on the decision card (vision reads carry no
-// positions, so never a crop); passed cartons stay out; figured photos are
-// not repeated as loose images; missing photos still render captions.
-// Test data is local, on an unfamiliar item.
+// Dock carton-figure tests: every carton on a dock decision card renders one
+// line (its failing verdicts plus rules, or the pass line) with its own
+// full photo (vision reads carry no positions, so never a crop); figured
+// photos are not repeated as loose images; missing photos still render
+// captions. Test data is local, on an unfamiliar item.
 using Gate.Agent;
 using Gate.Contracts;
 using Gate.Erp;
@@ -20,14 +20,16 @@ public sealed class DecisionCardFiguresTests
 
         Assert.Equal("SO-77", card.SoNumber);
         Assert.Equal("COIL-3", card.ItemId);
-        var figure = Assert.Single(card.CartonFigures);
-        Assert.Equal("CTN-1", figure.CartonId);
+        Assert.Equal(2, card.CartonFigures.Count);
+        var figure = Assert.Single(card.CartonFigures, f => f.CartonId == "CTN-1");
         Assert.Equal("IMG-1.jpg", figure.ImageFileName);
         Assert.Contains("Carton CTN-1", figure.Caption);
         Assert.Contains("BAT-LI-01", figure.Caption);
         Assert.Contains("handling mark missing", figure.Caption);
         Assert.NotNull(figure.Read);
         Assert.Contains("mark absent", figure.Read);
+        var passed = Assert.Single(card.CartonFigures, f => f.CartonId == "CTN-2");
+        Assert.Contains("passed the dock check", passed.Caption);
         Assert.DoesNotContain("IMG-1.jpg", card.ImageFileNames);
         Assert.DoesNotContain(card.EvidenceCaptions, c => c.Contains("IMG-1.jpg"));
     }

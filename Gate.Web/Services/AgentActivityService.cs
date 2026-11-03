@@ -15,7 +15,7 @@ namespace Gate.Web.Services;
 public sealed class AgentActivityService
 {
     private const int RecentTake = 15;
-    private const string IdleNow = "Idle.";
+    private const string IdleNow = "Idle";
     private static readonly TimeSpan ActiveWithin = TimeSpan.FromSeconds(90);
 
     private readonly CaseCacheStore _cases;
@@ -203,7 +203,7 @@ public sealed class AgentActivityService
         IReadOnlyList<CaseFile> files, ActivityLookups lookups, CancellationToken ct)
     {
         var mathByFile = new Dictionary<string, IReadOnlyList<OriginCapLine>>(StringComparer.Ordinal);
-        var rows = new List<(CaseFile File, DateTimeOffset At, string Text, ActivitySide Side, bool Refused, string Href)>();
+        var rows = new List<(CaseFile File, DateTimeOffset At, string Text, ActivitySide Side, bool Refused, string Href, bool Full)>();
         foreach (var file in files)
         {
             var caseHref = $"cases/{file.Case.CaseId}";
@@ -216,23 +216,28 @@ public sealed class AgentActivityService
                 }
 
                 var href = caseHref;
-                if (e.Kind is CaseEventKind.VendorBlocked or CaseEventKind.Note
-                    && string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal)
+                var full = false;
+                if (e.Kind == CaseEventKind.VendorScreened
+                    && (e.RuleId is null
+                        || string.Equals(e.RuleId, OriginCapMath.OriginCapRuleId, StringComparison.Ordinal))
                     && e.Summary.StartsWith("Vendor ", StringComparison.Ordinal))
                 {
                     var math = await MathForAsync(file, mathByFile, ct).ConfigureAwait(false);
-                    var vendorId = OriginCapMath.TryParseBlockedVendor(e.Summary);
+                    var vendorId = OriginCapMath.TryParseScreenedVendor(e.Summary);
                     var hit = vendorId is null ? null : math.FirstOrDefault(m =>
                         string.Equals(m.VendorId, vendorId, StringComparison.Ordinal));
                     if (hit is not null)
                     {
+                        // Math sentences render whole in a wrapping bubble;
+                        // the word cap would cut the verdict off mid-share.
                         line = hit.Line.PlainText;
                         href = hit.Line.HistoryHref;
+                        full = true;
                     }
                 }
 
                 rows.Add((file, e.Timestamp, line, ActivitySide.Agent,
-                    e.Kind == CaseEventKind.AgentRefused, href));
+                    e.Kind == CaseEventKind.AgentRefused, href, full));
             }
 
             foreach (var d in file.Decisions)
@@ -240,7 +245,7 @@ public sealed class AgentActivityService
                 var line = ActivityLines.DecidedLine(lookups, d);
                 if (line is not null)
                 {
-                    rows.Add((file, d.DecidedAt ?? d.RequestedAt, line, ActivitySide.Person, false, caseHref));
+                    rows.Add((file, d.DecidedAt ?? d.RequestedAt, line, ActivitySide.Person, false, caseHref, false));
                 }
             }
         }
@@ -259,7 +264,7 @@ public sealed class AgentActivityService
                     caseHref,
                     g.OrderByDescending(r => r.At)
                         .Select(r => new ActivityRecentLine(
-                            ActivityLines.Cap(r.Text), ActivityLines.Ago(r.At), r.At, r.Side, r.Refused, r.Href))
+                            r.Full ? r.Text : ActivityLines.Cap(r.Text), ActivityLines.Ago(r.At), r.At, r.Side, r.Refused, r.Href))
                         .ToList());
             })
             .ToList();

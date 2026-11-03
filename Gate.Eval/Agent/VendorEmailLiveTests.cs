@@ -64,8 +64,10 @@ public sealed class VendorEmailLiveTests
         var erp = SeededErp.Create();
         var models = new CachedModelClient(spark, modelCache);
         var compliance = new RecordingComplianceEngine();
+        // The reply flow pins single-vendor cases; splits stay off.
         var runner = new CaseRunner(erp, new P2pAgent(erp, models, compliance), models,
-            compliance, new DockEvaluatorAdapter(), caseDir);
+            compliance, new DockEvaluatorAdapter(), caseDir,
+            splitProposals: new SplitProposals { IsOn = false });
         _output.WriteLine($"[mail-live] case dir: {caseDir}");
 
         var vendor = (await erp.GetVendorsAsync()).Single(v => v.VendorId == "V-B");

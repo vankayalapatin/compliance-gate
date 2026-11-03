@@ -125,7 +125,8 @@ public sealed class P2pAgent
                     ?? throw new InvalidOperationException($"Unknown item {line.ItemId}.");
                 var award = new ProposedAward(line.ItemId, line.Quantity, vendor.CountryOfOrigin);
                 var history = await _erp.GetVolumeHistoryAsync(line.ItemId, ct).ConfigureAwait(false);
-                verdicts.AddRange(await _compliance.EvaluateVendorAsync(vendor, item, docs, award, history, ct).ConfigureAwait(false));
+                var open = await _erp.GetOpenOrderQuantitiesAsync(line.ItemId, ct).ConfigureAwait(false);
+                verdicts.AddRange(await _compliance.EvaluateVendorAsync(vendor, item, docs, award, history, open, ct).ConfigureAwait(false));
             }
             screenings.Add(new VendorScreening(vendorId, verdicts.All(v => v.Kind == VerdictKind.Pass), verdicts));
         }
@@ -177,7 +178,7 @@ public sealed class P2pAgent
             throw new InvalidOperationException("No compliant vendor: PO refused.");
         }
 
-        var po = await _erp.CreatePoAsync(prNumber, winner, source, pr.Requester, Key("po"), ct).ConfigureAwait(false);
+        var po = await _erp.CreatePoAsync(prNumber, winner, source, pr.Requester, Key("po"), ct: ct).ConfigureAwait(false);
         return (po, screenings);
     }
 
