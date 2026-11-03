@@ -3,9 +3,11 @@
 // sentences with only the link targets resolving live; only orders not
 // yet decided gather inputs from the platform db and the ERP adapter at
 // render time. Every screened vendor gets the same sentence shape,
-// blocked or passing; anything unreadable (vendor, PR, history, rule
-// config) skips that line with a log entry, never a throw, so the feed
-// and the case page always render.
+// blocked or passing, except on non-critical items, where the cap does
+// not apply and no sentence shows (the screening table already says so);
+// anything unreadable (vendor, PR, history, rule config) skips that line
+// with a log entry, never a throw, so the feed and the case page always
+// render.
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
@@ -34,6 +36,28 @@ public static class OriginCapExplainer
             .OrderBy(e => e.Timestamp)
             .ToList();
         if (screened.Count == 0 || file.Case.PrNumber is null)
+        {
+            return [];
+        }
+
+        // The cap applies to critical items only: on anything else the
+        // table's not-applicable reason stands alone, with no sentence
+        // beside it. Unknown items fail open to the sentence (status quo).
+        var capApplies = true;
+        try
+        {
+            var gated = await erp.GetItemAsync(file.Case.ItemId, ct).ConfigureAwait(false);
+            if (gated is not null)
+            {
+                capApplies = gated.IsCritical;
+            }
+        }
+        catch (Exception ex)
+        {
+            log?.LogWarning(ex, "Screening math for case {CaseId} could not read item {Item}.", file.Case.CaseId, file.Case.ItemId);
+        }
+
+        if (!capApplies)
         {
             return [];
         }

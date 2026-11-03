@@ -912,6 +912,8 @@ public sealed partial class EfCoreErpAdapter
         var po = inv.PoNumber is null ? null : await db.PurchaseOrders.FindAsync([inv.PoNumber], ct).ConfigureAwait(false);
         if (po is null) throw new InvalidOperationException($"Unknown PO {inv.PoNumber}.");
         var poLines = await db.PurchaseOrderLines.Where(l => l.PoNumber == po.PoNumber).ToListAsync(ct).ConfigureAwait(false);
+        var dockPendingByLine = await DockPendingQtyByLineAsync(
+            db, po.PoNumber, [new InvoiceKey(vendorId, supplierInvoiceNumber)], ct).ConfigureAwait(false);
         var current = await db.VendorInvoiceLines
             .Where(l => l.VendorId == vendorId && l.SupplierInvoiceNumber == supplierInvoiceNumber)
             .OrderBy(l => l.RowId).ToListAsync(ct).ConfigureAwait(false);
@@ -945,6 +947,8 @@ public sealed partial class EfCoreErpAdapter
             }
             var acceptedSoFar = await PoAcceptedInvoicedAsync(db, po.PoNumber, poLine.PoLineRef, ct).ConfigureAwait(false);
             var available = Math.Max(0, poLine.QtyReceived - poLine.QtyQuarantined - poLine.QtyRejected - acceptedSoFar);
+            dockPendingByLine.TryGetValue(poLine.PoLineRef, out var dockPending);
+            available = Math.Max(0, available - dockPending);
             var acceptedQty = Math.Min(line.Quantity, available);
             var heldQty = line.Quantity - acceptedQty;
             if (acceptedQty > 0) split.Add(new InvoiceLineRow
@@ -955,9 +959,15 @@ public sealed partial class EfCoreErpAdapter
             });
             if (heldQty > 0)
             {
-                var why = acceptedQty <= 0 && available <= 0
-                    ? $"AP-C3: qty {line.Quantity} exceeds available received {available}."
-                    : $"Quarantine hold: {heldQty} of {line.Quantity} held.";
+                // The dock check is the first gate in time: while its
+                // quantity is still pending, the hold names it. Quarantine
+                // and reviews still guard the later release with their own
+                // cited refusals.
+                var why = dockPending > 0
+                    ? "Awaiting dock check"
+                    : acceptedQty <= 0 && available <= 0
+                        ? $"AP-C3: qty {line.Quantity} exceeds available received {available}."
+                        : $"Quarantine hold: {heldQty} of {line.Quantity} held.";
                 split.Add(new InvoiceLineRow
                 {
                     RowId = Guid.NewGuid().ToString("N"), VendorId = vendorId, SupplierInvoiceNumber = supplierInvoiceNumber,
@@ -980,6 +990,65 @@ public sealed partial class EfCoreErpAdapter
         RecordReplay(db, $"match:{idempotencyKey}", OkPayload);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await tx.CommitAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Dock-pending received quantity per PO line: receipt lots on
+    /// ASN-declared cartons the platform has not passed yet, net of their
+    /// quarantine and rejections. Empty without a platform context or
+    /// without declared cartons.</summary>
+    private async Task<IReadOnlyDictionary<string, decimal>> DockPendingQtyByLineAsync(
+        ErpDbContext db, string poNumber, IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
+    {
+        var empty = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        if (_policyContext is null)
+        {
+            return empty;
+        }
+
+        var asnNumbers = await db.Asns
+            .Where(a => a.PoNumber == poNumber).Select(a => a.AsnNumber)
+            .ToListAsync(ct).ConfigureAwait(false);
+        var cartonLots = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var asn in asnNumbers)
+        {
+            var cartons = await db.AsnCartons
+                .Where(c => c.AsnNumber == asn).ToListAsync(ct).ConfigureAwait(false);
+            foreach (var carton in cartons)
+            {
+                cartonLots.TryAdd(carton.CartonId, carton.LotRef);
+            }
+        }
+
+        if (cartonLots.Count == 0)
+        {
+            return empty;
+        }
+
+        var passed = await _policyContext
+            .FindDockPassedCartonsAsync(invoices, ct).ConfigureAwait(false);
+        var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+        var pendingLots = cartonLots
+            .Where(kv => !passedSet.Contains(kv.Key))
+            .Select(kv => kv.Value)
+            .ToHashSet(StringComparer.Ordinal);
+        if (pendingLots.Count == 0)
+        {
+            return empty;
+        }
+
+        var receiptNumbers = await db.ShipmentReceipts
+            .Where(r => r.PoNumber == poNumber).Select(r => r.ReceiptNumber)
+            .ToListAsync(ct).ConfigureAwait(false);
+        var receiptLines = await db.ShipmentReceiptLines
+            .Where(l => receiptNumbers.Contains(l.ReceiptNumber) && pendingLots.Contains(l.LotRef))
+            .ToListAsync(ct).ConfigureAwait(false);
+        // Client-side sum: SQLite cannot aggregate decimals server-side.
+        return receiptLines
+            .GroupBy(l => l.PoLineRef, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Sum(l => Math.Max(0, l.QtyReceived - l.QtyQuarantined - l.QtyRejected)),
+                StringComparer.Ordinal);
     }
 
     private async Task<decimal> PoAcceptedInvoicedAsync(ErpDbContext db, string poNumber, string poLineRef, CancellationToken ct)

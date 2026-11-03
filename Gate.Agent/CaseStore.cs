@@ -103,6 +103,47 @@ public static class CaseStore
         File.WriteAllText(ProblemsFilePath(cacheDir, problems.CaseId), JsonSerializer.Serialize(problems, JsonOpts));
     }
 
+    /// <summary>Minted dock-view sidecar: the image files built for the
+    /// case's ASN this lifetime, persisted next to the case file as
+    /// &lt;CaseId&gt;.dockviews.json. A sidecar file; never a case file.</summary>
+    public static string DockViewsFilePath(string cacheDir, string caseId) =>
+        Path.Combine(cacheDir, caseId + ".dockviews.json");
+
+    public static DockViewFiles? LoadDockViews(string cacheDir, string caseId)
+    {
+        var path = DockViewsFilePath(cacheDir, caseId);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<DockViewFiles>(File.ReadAllText(path), JsonOpts)
+            ?? throw new InvalidOperationException($"Dock views file {path} did not parse as DockViewFiles.");
+    }
+
+    /// <summary>Records image files minted for the case's ASN, merging with
+    /// prior mints. Only bare file names are recorded: a name carrying
+    /// directories is skipped, never reinterpreted under GetFileName,
+    /// because the counter offer and the reset wipe resolve it on disk.
+    /// The dock counter offers only recorded files on disk, and reset
+    /// deletes them plus the image cache.</summary>
+    public static void RecordDockViews(
+        string cacheDir, string caseId, string asnNumber, IEnumerable<string> fileNames)
+    {
+        var prior = LoadDockViews(cacheDir, caseId);
+        var images = (prior?.Images ?? (IReadOnlyList<string>)[])
+            .Concat(fileNames.Select(n => n.Trim()))
+            .Where(n => n.Length > 0 && n.IndexOfAny(['/', '\\']) < 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+        Directory.CreateDirectory(cacheDir);
+        File.WriteAllText(
+            DockViewsFilePath(cacheDir, caseId),
+            JsonSerializer.Serialize(
+                new DockViewFiles(caseId, asnNumber, images, DateTimeOffset.UtcNow), JsonOpts));
+    }
+
     public static CaseFile? Load(string cacheDir, string caseId)
     {
         var path = CaseFilePath(cacheDir, caseId);
@@ -130,7 +171,8 @@ public static class CaseStore
         // Mail files (<CaseId>.mail.json), vendor-identity pendings
         // (<CaseId>.vendor-identity.json), dock evidence sidecars
         // (<CaseId>.dock.json), dock-problem sidecars
-        // (<CaseId>.problems.json), and memo files (<MemoId>.memo.json)
+        // (<CaseId>.problems.json), minted dock-view sidecars
+        // (<CaseId>.dockviews.json), and memo files (<MemoId>.memo.json)
         // share the dir but are not cases.
         return Directory.GetFiles(cacheDir, "*.json")
             .Select(Path.GetFileNameWithoutExtension)
@@ -139,6 +181,7 @@ public static class CaseStore
             .Where(id => !id!.EndsWith(".vendor-identity", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".dock", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".problems", StringComparison.Ordinal))
+            .Where(id => !id!.EndsWith(".dockviews", StringComparison.Ordinal))
             .Where(id => !id!.EndsWith(".memo", StringComparison.Ordinal))
             .OrderBy(id => id, StringComparer.Ordinal)
             .ToList()!;

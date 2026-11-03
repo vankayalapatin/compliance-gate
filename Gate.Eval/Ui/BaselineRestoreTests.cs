@@ -11,6 +11,13 @@ using Microsoft.Extensions.Logging;
 
 namespace Gate.Eval.Ui;
 
+[CollectionDefinition(RestoreEnvCollection.Name, DisableParallelization = true)]
+public sealed class RestoreEnvCollection
+{
+    public const string Name = "RestoreEnv";
+}
+
+[Collection(RestoreEnvCollection.Name)]
 public sealed class BaselineRestoreTests
 {
     private static string NewDir() => UiTestSupport.NewDir("gate-ui-baseline");
@@ -50,6 +57,45 @@ public sealed class BaselineRestoreTests
         Assert.Equal(new byte[] {9, 9}, await File.ReadAllBytesAsync(liveErp));
         Assert.True(File.Exists(Path.Combine(liveCache, "CASE-T.json")));
         Assert.False(File.Exists(Path.Combine(liveCache, "STALE.json")));
+    }
+
+    [Fact]
+    public async Task RestoreDeletesRecordedDockViewsAndClearsImageCache()
+    {
+        // The prior lifetime's counter: one recorded view, one unrecorded
+        // same-shipment view, one shipped photo, a two-file image cache,
+        // and a traversal-shaped recorded name that must never retarget.
+        var root = NewDir();
+        var baseline = WriteSnapshot(root);
+        var liveErp = Path.Combine(root, "live", "erp.db");
+        var liveCache = Path.Combine(root, "case-cache");
+        Directory.CreateDirectory(liveCache);
+        Gate.Agent.CaseStore.RecordDockViews(
+            liveCache, "CASE-T", "ASN-T",
+            ["ASN-T-SCENE-04.jpg", "../IMG-04.jpg"]);
+        var dockDir = Path.Combine(root, "dock");
+        Directory.CreateDirectory(dockDir);
+        await File.WriteAllBytesAsync(Path.Combine(dockDir, "ASN-T-SCENE-04.jpg"), [1, 2, 3]);
+        await File.WriteAllBytesAsync(Path.Combine(dockDir, "ASN-T-SCENE-01.jpg"), [4, 5, 6]);
+        await File.WriteAllBytesAsync(Path.Combine(dockDir, "IMG-04.jpg"), [7, 8, 9]);
+        var imageCache = Path.Combine(dockDir, ".image-cache");
+        Directory.CreateDirectory(Path.Combine(imageCache, "nested"));
+        await File.WriteAllBytesAsync(Path.Combine(imageCache, "a.jpg"), [10]);
+        await File.WriteAllBytesAsync(Path.Combine(imageCache, "nested", "b.jpg"), [11]);
+
+        var steps = await BaselineRestore.RestoreAsync(
+            baseline, liveErp, liveCache, UiTestLogger<BaselineRestoreTests>.Instance,
+            ct: default, dockImageDir: dockDir);
+
+        Assert.Equal(3, steps.Count);
+        Assert.Contains(steps, s => s.Contains("Dock counter cleared", StringComparison.Ordinal));
+        Assert.Contains(steps, s => s.Contains("1 generated view", StringComparison.Ordinal));
+        Assert.Contains(steps, s => s.Contains("2 image-cache files", StringComparison.Ordinal));
+        Assert.False(File.Exists(Path.Combine(dockDir, "ASN-T-SCENE-04.jpg")));
+        Assert.True(File.Exists(Path.Combine(dockDir, "ASN-T-SCENE-01.jpg")));
+        Assert.True(File.Exists(Path.Combine(dockDir, "IMG-04.jpg")));
+        Assert.Empty(Directory.GetFiles(imageCache, "*", SearchOption.AllDirectories));
+        Assert.True(File.Exists(Path.Combine(liveCache, "CASE-T.json")));
     }
 
     [Fact]
@@ -125,10 +171,14 @@ public sealed class BaselineRestoreTests
     public async Task EnsureRestoresOnlyWhenLiveIsMissing()
     {
         var previousCache = Environment.GetEnvironmentVariable("GATE_CASE_CACHE");
+        var previousDock = Environment.GetEnvironmentVariable("GATE_DOCK_IMAGES");
         try
         {
             Environment.SetEnvironmentVariable("GATE_CASE_CACHE", null);
             var root = NewDir();
+            // The ensure wipes the image cache through env resolution; pin
+            // it at temp so the suite never clears the real dock counter.
+            Environment.SetEnvironmentVariable("GATE_DOCK_IMAGES", Path.Combine(root, "dock"));
             var baseline = WriteSnapshot(root);
             var liveErp = Path.Combine(root, "live", "erp.db");
             var config = Config(baseline, liveErp);
@@ -144,6 +194,7 @@ public sealed class BaselineRestoreTests
         finally
         {
             Environment.SetEnvironmentVariable("GATE_CASE_CACHE", previousCache);
+            Environment.SetEnvironmentVariable("GATE_DOCK_IMAGES", previousDock);
         }
     }
 

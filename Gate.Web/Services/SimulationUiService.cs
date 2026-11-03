@@ -167,7 +167,7 @@ public sealed class SimulationUiService
 
         return new SimulateOptions(
             entityCode, currency, users, vendors, cases,
-            ListDockImages(notes), items, candidates, notes);
+            await ListDockImagesAsync(notes, ct).ConfigureAwait(false), items, candidates, notes);
     }
 
     /// <summary>Company identity for headers and sender context, or null
@@ -1582,7 +1582,7 @@ public sealed class SimulationUiService
             .Where(s => s.Length > 0)
             .ToList();
     }
-    private IReadOnlyList<string> ListDockImages(List<string> notes)
+    private async Task<IReadOnlyList<string>> ListDockImagesAsync(List<string> notes, CancellationToken ct)
     {
         try
         {
@@ -1594,13 +1594,28 @@ public sealed class SimulationUiService
 
             // Base originals are working files, never counter photos; the
             // dock panel splits the rest into pallet views vs close-ups.
-            return Directory.GetFiles(_photos.ImageDir)
+            // Only files minted this lifetime (recorded in a case's
+            // dock-views sidecar) are offered: a view minted in a prior
+            // lifetime names the same cartons but shows another shipment,
+            // and ticking it would hold the wrong goods.
+            var minted = (await _cases.ListDockViewFilesAsync(ct).ConfigureAwait(false))
+                .ToHashSet(StringComparer.Ordinal);
+            var onDisk = Directory.GetFiles(_photos.ImageDir)
                 .Select(Path.GetFileName)
                 .Where(n => n is not null
                     && (n.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
                         || n.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
                     && !DockPhotoService.IsBaseImage(n))
                 .Select(n => n!)
+                .ToList();
+            var stale = onDisk.Count(n => !minted.Contains(n));
+            if (stale > 0)
+            {
+                notes.Add($"{stale} stored photo(s) were not built for the current cases and are not offered.");
+            }
+
+            return onDisk
+                .Where(minted.Contains)
                 .Order(StringComparer.Ordinal)
                 .ToList();
         }

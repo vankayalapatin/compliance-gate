@@ -80,7 +80,8 @@ public sealed class ReplayService
                 Path.GetFullPath(BaselineRestore.LiveErpPath(_config)),
                 _cases.CacheDir,
                 _log,
-                ct).ConfigureAwait(false);
+                ct,
+                BaselineRestore.ResolveImageDirOrNull(_log)).ConfigureAwait(false);
             foreach (var step in restored)
             {
                 Step(step);

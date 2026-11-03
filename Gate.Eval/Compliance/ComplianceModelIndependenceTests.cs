@@ -59,8 +59,8 @@ public sealed class ComplianceModelIndependenceTests
     public async Task PaymentVerdictsAreDeterministicWithoutModel()
     {
         var engine = new ComplianceEngine(new List<ScreeningEntry>());
-        var first = await engine.EvaluatePaymentAsync(new PrePayState([], [], []));
-        var second = await engine.EvaluatePaymentAsync(new PrePayState([], [], []));
+        var first = await engine.EvaluatePaymentAsync(new PrePayState([], [], [], []));
+        var second = await engine.EvaluatePaymentAsync(new PrePayState([], [], [], []));
         Assert.Equal(Shape(first), Shape(second));
     }
 

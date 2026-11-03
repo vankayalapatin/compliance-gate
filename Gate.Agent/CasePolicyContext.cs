@@ -91,6 +91,51 @@ public sealed class CasePolicyContext(string cacheDir) : IErpPolicyContext
         return Task.FromResult<IReadOnlyList<OpenReview>>(reviews);
     }
 
+    public Task<IReadOnlyList<string>> FindDockPassedCartonsAsync(
+        IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default)
+    {
+        var keys = invoices
+            .Select(k => $"{k.VendorId}/{k.SupplierInvoiceNumber}")
+            .ToHashSet(StringComparer.Ordinal);
+        var passed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var caseId in CaseStore.ListCaseIds(cacheDir))
+        {
+            ct.ThrowIfCancellationRequested();
+            var file = CaseStore.Load(cacheDir, caseId);
+            if (file is null)
+            {
+                continue;
+            }
+
+            var touched = file.Case.Invoices
+                .Any(k => keys.Contains($"{k.VendorId}/{k.SupplierInvoiceNumber}"));
+            if (!touched)
+            {
+                continue;
+            }
+
+            var evidence = CaseStore.LoadDock(cacheDir, caseId);
+            if (evidence is null)
+            {
+                continue;
+            }
+
+            // A carton passes only with dock evidence carrying at least one
+            // verdict, every verdict a pass. Reads without verdicts, holds,
+            // blocks, and open reviews all fail closed to pending.
+            foreach (var (cartonId, verdicts) in evidence.Verdicts)
+            {
+                if (verdicts.Count > 0 && verdicts.All(v => v.Kind == VerdictKind.Pass))
+                {
+                    passed.Add(cartonId);
+                }
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<string>>(
+            passed.OrderBy(c => c, StringComparer.Ordinal).ToList());
+    }
+
     private static string? CartonFromEvidence(Decision decision) =>
         decision.EvidenceRefs
             .Where(r => r.StartsWith("carton:", StringComparison.Ordinal))

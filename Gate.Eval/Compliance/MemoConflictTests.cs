@@ -240,9 +240,9 @@ public sealed class MemoConflictTests
 
         foreach (var state in new[]
         {
-            new PrePayState([hold], [], []),
-            new PrePayState([], ["LOT-1"], []),
-            new PrePayState([], [], [review]),
+            new PrePayState([hold], [], [], []),
+            new PrePayState([], ["LOT-1"], [], []),
+            new PrePayState([], [], [review], []),
         })
         {
             var verdicts = await engine.EvaluatePaymentAsync(state);

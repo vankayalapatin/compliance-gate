@@ -62,14 +62,16 @@ public sealed record SourcingCheckInput(
 
 /// <summary>Payable input for one payment or held-line release. The ERP reads
 // holds and quarantine itself from the receipts behind Invoices; open
-// reviews arrive from the platform context. Open reviews block the whole
-// payment; holds and quarantine hold only their own value, which never
-// enters a draft and is releasable only once its taint closes.</summary>
+// reviews and dock-passed cartons arrive from the platform context. Open
+// reviews block the whole payment; holds, quarantine, and dock-pending
+// hold only their own value, which never enters a draft and is releasable
+// only once its taint closes.</summary>
 public sealed record PayableCheckInput(
     IReadOnlyList<InvoiceKey> Invoices,
     IReadOnlyList<HoldDto> OpenHolds,
     IReadOnlyList<string> QuarantinedLotRefs,
-    IReadOnlyList<OpenReview> OpenReviews);
+    IReadOnlyList<OpenReview> OpenReviews,
+    IReadOnlyList<string> DockPendingLotRefs);
 
 /// <summary>Well-known rule ids the ERP control points name. Policy seam
 // keys (like document types), not business data.</summary>
@@ -90,19 +92,31 @@ public interface IErpPolicy
     Task<PolicyCheckResult> CheckPayableAsync(PayableCheckInput input, CancellationToken ct = default);
 
     /// <summary>Held-value gate for held-line release: any quarantine, open
-    /// hold, or open review on the receipt refuses the release.</summary>
+    /// hold, dock-pending lot, or open review on the receipt refuses the
+    /// release.</summary>
     Task<PolicyCheckResult> CheckReleasableAsync(PayableCheckInput input, CancellationToken ct = default);
 }
 
 /// <summary>Platform-side inputs the ERP cannot read itself: logged rule
-// exceptions granted on case decisions, and open dock/damage reviews on
-// case decisions. Implemented by the agent platform, wired in Gate.Web.
-// A missing grant or an empty review list is a valid answer, never an error.</summary>
+// exceptions granted on case decisions, open dock/damage reviews on case
+// decisions, and the cartons whose dock evidence is complete with every
+// verdict a pass. Implemented by the agent platform, wired in Gate.Web.
+// A missing grant, an empty review list, or no passed cartons is a valid
+// answer, never an error.</summary>
 public interface IErpPolicyContext
 {
     Task<PolicyExceptionGrant?> FindExceptionGrantAsync(
         string ruleId, string vendorId, string? prNumber, CancellationToken ct = default);
 
     Task<IReadOnlyList<OpenReview>> FindOpenReviewsAsync(
+        IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default);
+
+    /// <summary>Cartons behind these invoices whose dock check is complete
+    /// with every verdict a pass. The ERP intersects with its own ASN
+    /// cartons: anything declared but not passed is dock-pending, held
+    /// with "Awaiting dock check" and unreleasable until it passes. Lots
+    /// with no ASN cartons are never pending: nothing photographable was
+    /// declared for them.</summary>
+    Task<IReadOnlyList<string>> FindDockPassedCartonsAsync(
         IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default);
 }

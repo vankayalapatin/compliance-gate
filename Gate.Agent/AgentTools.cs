@@ -240,6 +240,7 @@ public static class AgentTools
         {
             OpenHolds = state.OpenHolds.Count,
             state.QuarantinedLotRefs,
+            state.DockPendingLotRefs,
             OpenReviews = state.OpenReviews.Count,
             Verdicts = verdicts.Select(v => new
             {

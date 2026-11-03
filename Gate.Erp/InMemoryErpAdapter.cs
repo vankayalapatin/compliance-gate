@@ -263,6 +263,11 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             .Where(a => poNumbers.Contains(a.PoNumber))
             .SelectMany(a => a.Cartons.Select(c => c.CartonId))
             .ToHashSet(StringComparer.Ordinal);
+        var cartonLots = _asns.Values
+            .Where(a => poNumbers.Contains(a.PoNumber))
+            .SelectMany(a => a.Cartons)
+            .GroupBy(c => c.CartonId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().LotRef, StringComparer.Ordinal);
         var holds = _holds.Values
             .Where(h => h.Status == HoldStatus.Set)
             .Where(h => (h.DocumentNumber is not null
@@ -283,7 +288,24 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         var reviews = _policyContext is null
             ? (IReadOnlyList<OpenReview>)[]
             : await _policyContext.FindOpenReviewsAsync(invoices, ct).ConfigureAwait(false);
-        return new PayableCheckInput(invoices, holds, quarantined, reviews);
+        // Dock-pending lots: ASN-declared cartons the platform has not
+        // passed yet. No platform context (unit tests) or no declared
+        // cartons means nothing pending, mirroring the reviews fallback.
+        var dockPending = new List<string>();
+        if (_policyContext is not null && cartonIds.Count > 0)
+        {
+            var passed = await _policyContext
+                .FindDockPassedCartonsAsync(invoices, ct).ConfigureAwait(false);
+            var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+            dockPending = cartonLots
+                .Where(kv => !passedSet.Contains(kv.Key))
+                .Select(kv => kv.Value)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(l => l, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        return new PayableCheckInput(invoices, holds, quarantined, reviews, dockPending);
     }
 
     private static string InvoiceDoc(string vendorId, string supplierNumber) => $"{vendorId}/{supplierNumber}";
@@ -1156,8 +1178,12 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             return inv;
         }));
 
-    public Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default)
+    public async Task RecordMatchResultAsync(string vendorId, string supplierInvoiceNumber, IReadOnlyList<LineMatchResult> results, string idempotencyKey, CancellationToken ct = default)
     {
+        // The dock-pending fetch awaits the platform, so it runs before
+        // the synchronous idempotency block below.
+        var dockPendingByLine = await DockPendingQtyByLineAsync(vendorId, supplierInvoiceNumber, ct)
+            .ConfigureAwait(false);
         Idem<object?>($"match:{idempotencyKey}", () =>
         {
             if (!_invoices.TryGetValue((vendorId, supplierInvoiceNumber), out var inv))
@@ -1184,21 +1210,80 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 }
                 var acceptedSoFar = PoAcceptedInvoiced(po.PoNumber, poLine.PoLineRef);
                 var available = Math.Max(0, poLine.QtyReceived - poLine.QtyQuarantined - poLine.QtyRejected - acceptedSoFar);
+                dockPendingByLine.TryGetValue(poLine.PoLineRef, out var dockPending);
+                available = Math.Max(0, available - dockPending);
                 var acceptedQty = Math.Min(line.Quantity, available);
                 var heldQty = line.Quantity - acceptedQty;
                 if (acceptedQty > 0) split.Add(new VendorInvoiceLine(line.PoLineRef, acceptedQty, line.UnitPrice, LineDisposition.Accepted, null));
                 if (heldQty > 0)
                 {
-                    var why = acceptedQty <= 0 && available <= 0
-                        ? $"AP-C3: qty {line.Quantity} exceeds available received {available}."
-                        : $"Quarantine hold: {heldQty} of {line.Quantity} held.";
+                    // The dock check is the first gate in time: while its
+                    // quantity is still pending, the hold names it. Quarantine
+                    // and reviews still guard the later release with their own
+                    // cited refusals.
+                    var why = dockPending > 0
+                        ? "Awaiting dock check"
+                        : acceptedQty <= 0 && available <= 0
+                            ? $"AP-C3: qty {line.Quantity} exceeds available received {available}."
+                            : $"Quarantine hold: {heldQty} of {line.Quantity} held.";
                     split.Add(new VendorInvoiceLine(line.PoLineRef, heldQty, line.UnitPrice, LineDisposition.Held, why));
                 }
             }
             _invoices[(vendorId, supplierInvoiceNumber)] = inv with { Lines = split, MatchResults = results.ToList(), Status = InvoiceStatus.Matched };
             return null;
         });
-        return Task.CompletedTask;
+    }
+
+    /// <summary>Dock-pending received quantity per PO line: receipt lots on
+    /// ASN-declared cartons the platform has not passed yet, net of their
+    /// quarantine and rejections. Empty without a platform context or
+    /// without declared cartons.</summary>
+    private async Task<IReadOnlyDictionary<string, decimal>> DockPendingQtyByLineAsync(
+        string vendorId, string supplierInvoiceNumber, CancellationToken ct)
+    {
+        var empty = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        if (_policyContext is null)
+        {
+            return empty;
+        }
+
+        if (!_invoices.TryGetValue((vendorId, supplierInvoiceNumber), out var inv)
+            || inv.PoNumber is null)
+        {
+            return empty;
+        }
+
+        var cartonLots = _asns.Values
+            .Where(a => a.PoNumber == inv.PoNumber)
+            .SelectMany(a => a.Cartons)
+            .GroupBy(c => c.CartonId, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().LotRef, StringComparer.Ordinal);
+        if (cartonLots.Count == 0)
+        {
+            return empty;
+        }
+
+        var passed = await _policyContext.FindDockPassedCartonsAsync(
+            [new InvoiceKey(vendorId, supplierInvoiceNumber)], ct).ConfigureAwait(false);
+        var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+        var pendingLots = cartonLots
+            .Where(kv => !passedSet.Contains(kv.Key))
+            .Select(kv => kv.Value)
+            .ToHashSet(StringComparer.Ordinal);
+        if (pendingLots.Count == 0)
+        {
+            return empty;
+        }
+
+        return _receipts.Values
+            .Where(r => r.PoNumber == inv.PoNumber)
+            .SelectMany(r => r.Lines)
+            .Where(l => pendingLots.Contains(l.LotRef))
+            .GroupBy(l => l.PoLineRef, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Sum(l => Math.Max(0, l.QtyReceived - l.QtyQuarantined - l.QtyRejected)),
+                StringComparer.Ordinal);
     }
 
     public Task<VendorInvoice> PostInvoiceAsync(string vendorId, string supplierInvoiceNumber, string postedBy, string idempotencyKey, DateOnly? postingDate = null, CancellationToken ct = default) =>

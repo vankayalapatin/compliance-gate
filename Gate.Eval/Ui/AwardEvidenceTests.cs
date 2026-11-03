@@ -2,11 +2,14 @@
 // and figures as they stood, and decided orders display the stored copy
 // on the case page, the PO record, and the approval cards. Only orders
 // not yet decided re-run screening live. All data is local test data.
+using Bunit;
 using Gate.Agent;
 using Gate.Compliance;
 using Gate.Contracts;
 using Gate.Erp;
+using Gate.Web.Components.Layout;
 using Gate.Web.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Gate.Eval.Ui;
 
@@ -46,18 +49,49 @@ public sealed class AwardEvidenceTests
     private static CaseFile Load(Harness h, string caseId) =>
         CaseStore.Load(h.CaseDir, caseId) ?? throw new InvalidOperationException($"Case {caseId} vanished.");
 
-    private static async Task<string> AwardBatteryAsync(Harness h)
+    private static async Task<(string Battery, string Screw)> StartCasesAsync(Harness h)
     {
         var cases = await h.Runner.OnOrderWebhookAsync(
             new OrderWebhookInput("test", "SO-1001", "planner", Candidates()));
-        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
-        await h.Runner.AdvanceAsync(battery);
-        var raised = Load(h, battery);
+        return (
+            cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal)),
+            cases.Single(c => c.EndsWith(SeededErp.Screw, StringComparison.Ordinal)));
+    }
+
+    private static async Task FinishAwardAsync(Harness h, string caseId)
+    {
+        var raised = Load(h, caseId);
         var prDecision = raised.Decisions.Single(d =>
             d.Kind == DecisionKind.PrApproval && d.Status == DecisionStatus.Pending);
-        await h.Runner.ResolveDecisionAsync(battery, prDecision.DecisionId, true, prDecision.RequestedTo, "ok");
+        await h.Runner.ResolveDecisionAsync(caseId, prDecision.DecisionId, true, prDecision.RequestedTo, "ok");
+        await h.Runner.AdvanceAsync(caseId);
+    }
+
+    private static async Task<string> AwardBatteryAsync(Harness h)
+    {
+        var (battery, _) = await StartCasesAsync(h);
         await h.Runner.AdvanceAsync(battery);
+        await FinishAwardAsync(h, battery);
         return battery;
+    }
+
+    private static async Task<string> AwardScrewAsync(Harness h)
+    {
+        // The small screw PR auto-approves, so the first advance may
+        // already run through the award; resolve the PR only if pending.
+        var (_, screw) = await StartCasesAsync(h);
+        await h.Runner.AdvanceAsync(screw);
+        var raised = Load(h, screw);
+        var prDecision = raised.Decisions.SingleOrDefault(d =>
+            d.Kind == DecisionKind.PrApproval && d.Status == DecisionStatus.Pending);
+        if (prDecision is not null)
+        {
+            await h.Runner.ResolveDecisionAsync(
+                screw, prDecision.DecisionId, true, prDecision.RequestedTo, "ok");
+            await h.Runner.AdvanceAsync(screw);
+        }
+
+        return screw;
     }
 
     private static async Task ResolvePoApprovalAsync(Harness h, string caseId)
@@ -295,5 +329,100 @@ public sealed class AwardEvidenceTests
         Assert.True(firstWinner.Passed);
         Assert.NotNull(firstWinner.Math);
         Assert.Contains("1.9%", firstWinner.Math.PlainText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task NonCriticalAwardStoresNoMathSentence()
+    {
+        // Screws are not critical: the row passes with the table's
+        // not-applicable reason and stores no math sentence, so decided
+        // orders never show a share beside it.
+        var h = Create();
+        var screw = await AwardScrewAsync(h);
+        var file = Load(h, screw);
+
+        var snapshot = file.ScreeningSnapshot;
+        Assert.NotNull(snapshot);
+        Assert.Equal(SeededErp.Screw, snapshot.ItemId);
+        var row = Assert.Single(snapshot.Rows);
+        Assert.Equal("V-C", row.VendorId);
+        Assert.True(row.Passed);
+        Assert.Equal("Passed", row.Result);
+        Assert.Contains("not applicable", row.Reason, StringComparison.Ordinal);
+        Assert.Null(row.Math);
+
+        var rows = await VendorScreeningTable.RowsAsync(h.Erp, h.Core, file, null, CountryMap());
+        var table = Assert.Single(rows);
+        Assert.Contains("not applicable", table.Reason, StringComparison.Ordinal);
+        var lines = await OriginCapExplainer.LinesAsync(h.Erp, file, null, CountryMap());
+        Assert.Empty(lines);
+    }
+
+    [Fact]
+    public async Task NonCriticalLiveScreeningShowsNoSentence()
+    {
+        // Tuned history puts the screw vendor over the cap, so without the
+        // gate the live sentence would read blocked.
+        var h = Create(erp => erp.SeedVolumeHistory(SeededErp.Screw,
+        [
+            new VolumeHistory("V-C US active", "US", 1000),
+        ]));
+        var screw = await AwardScrewAsync(h);
+        var decided = Load(h, screw);
+        Assert.NotNull(decided.ScreeningSnapshot);
+        Assert.Null(Assert.Single(decided.ScreeningSnapshot.Rows).Math);
+
+        // Undecided orders re-run live: strip the snapshot and the live
+        // math still shows nothing for the non-critical item.
+        var lines = await OriginCapExplainer.LinesAsync(
+            h.Erp, decided with { ScreeningSnapshot = null }, null, CountryMap());
+        Assert.Empty(lines);
+
+        // Control: the critical sibling still renders its live sentences.
+        // The battery PO is open by now, so the live share dilutes to
+        // (6,000 + 90) / (10,000 + 90 open + 90) = 59.8%: passing, with
+        // the open orders named.
+        var battery = await AwardBatteryAsync(h);
+        var undecided = Load(h, battery) with { ScreeningSnapshot = null };
+        var control = await OriginCapExplainer.LinesAsync(h.Erp, undecided, null, CountryMap());
+        Assert.Equal(2, control.Count);
+        var controlLine = control.Single(l => l.VendorId == "V-A").Line.PlainText;
+        Assert.Contains("59.8%", controlLine, StringComparison.Ordinal);
+        Assert.Contains("open orders", controlLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ActivityPaneShowsNoMathSentenceForNonCriticalOrders()
+    {
+        var screwHarness = Create();
+        await AwardScrewAsync(screwHarness);
+        using var screwCtx = PaneFor(screwHarness);
+        using var screwPane = screwCtx.RenderComponent<AgentActivityPane>();
+        screwPane.WaitForAssertion(
+            () => Assert.Contains(
+                "Formosa Fasteners Co passed screening for order SO-1001.",
+                screwPane.Markup, StringComparison.Ordinal),
+            TimeSpan.FromSeconds(10));
+        Assert.DoesNotContain("Formosa Fasteners Co (", screwPane.Markup);
+
+        var batteryHarness = Create();
+        await AwardBatteryAsync(batteryHarness);
+        using var batteryCtx = PaneFor(batteryHarness);
+        using var batteryPane = batteryCtx.RenderComponent<AgentActivityPane>();
+        batteryPane.WaitForAssertion(
+            () => Assert.Contains(
+                "CinderVolt Energy Ltd (China) is blocked.",
+                batteryPane.Markup, StringComparison.Ordinal),
+            TimeSpan.FromSeconds(10));
+    }
+
+    private static TestContext PaneFor(Harness h)
+    {
+        var ctx = new TestContext();
+        ctx.Services.AddSingleton(new AgentActivityService(
+            new CaseCacheStore(h.CaseDir), h.Erp, h.Runner,
+            UiTestLogger<AgentActivityService>.Instance));
+        ctx.Services.AddSingleton(new PresentationPace());
+        return ctx;
     }
 }

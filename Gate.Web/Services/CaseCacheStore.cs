@@ -37,7 +37,8 @@ public sealed class CaseCacheStore
         // Mail files (<CaseId>.mail.json), vendor-identity pendings
         // (<CaseId>.vendor-identity.json), dock evidence sidecars
         // (<CaseId>.dock.json), dock-problem sidecars
-        // (<CaseId>.problems.json), and memo files (<MemoId>.memo.json)
+        // (<CaseId>.problems.json), minted dock-view sidecars
+        // (<CaseId>.dockviews.json), and memo files (<MemoId>.memo.json)
         // share the dir but are not cases (mirrors the agent CaseStore
         // exclusions; memo files belong to MemoFileStore).
         var files = Directory.GetFiles(_dir, "*.json")
@@ -45,6 +46,7 @@ public sealed class CaseCacheStore
             .Where(f => !f.EndsWith(".vendor-identity.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".dock.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".problems.json", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.EndsWith(".dockviews.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".memo.json", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         Array.Sort(files, StringComparer.Ordinal);
@@ -89,6 +91,32 @@ public sealed class CaseCacheStore
     {
         ct.ThrowIfCancellationRequested();
         return Task.FromResult(CaseStore.LoadDock(_dir, caseId));
+    }
+
+    /// <summary>Union of dock view files minted this lifetime, from every
+    /// case's dock-views sidecar. The dock counter offers only these: files
+    /// minted in a prior lifetime have no sidecar once the reset wipes the
+    /// case cache.</summary>
+    public async Task<IReadOnlyList<string>> ListDockViewFilesAsync(CancellationToken ct = default)
+    {
+        if (!Directory.Exists(_dir))
+        {
+            return [];
+        }
+
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in Directory.GetFiles(_dir, "*.dockviews.json").Order(StringComparer.Ordinal))
+        {
+            var json = await File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
+            var parsed = JsonSerializer.Deserialize<DockViewFiles>(json, JsonOpts)
+                ?? throw new InvalidOperationException($"Dock views file did not parse: {file}.");
+            foreach (var image in parsed.Images)
+            {
+                result.Add(image);
+            }
+        }
+
+        return result.OrderBy(n => n, StringComparer.Ordinal).ToList();
     }
 
     /// <summary>Deletes every cached case file. Returns the cleared count.</summary>

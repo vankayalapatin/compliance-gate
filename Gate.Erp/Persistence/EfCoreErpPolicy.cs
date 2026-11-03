@@ -140,6 +140,7 @@ public sealed partial class EfCoreErpAdapter
         }
 
         var cartonIds = new HashSet<string>(StringComparer.Ordinal);
+        var cartonLots = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var po in poNumbers)
         {
             var asnNumbers = await db.Asns
@@ -152,6 +153,7 @@ public sealed partial class EfCoreErpAdapter
                 foreach (var carton in cartons)
                 {
                     cartonIds.Add(carton.CartonId);
+                    cartonLots.TryAdd(carton.CartonId, carton.LotRef);
                 }
             }
         }
@@ -182,6 +184,23 @@ public sealed partial class EfCoreErpAdapter
         var reviews = _policyContext is null
             ? (IReadOnlyList<OpenReview>)[]
             : await _policyContext.FindOpenReviewsAsync(invoices, ct).ConfigureAwait(false);
-        return new PayableCheckInput(invoices, holds, quarantined, reviews);
+        // Dock-pending lots: ASN-declared cartons the platform has not
+        // passed yet. No platform context (unit tests) or no declared
+        // cartons means nothing pending, mirroring the reviews fallback.
+        var dockPending = new List<string>();
+        if (_policyContext is not null && cartonIds.Count > 0)
+        {
+            var passed = await _policyContext
+                .FindDockPassedCartonsAsync(invoices, ct).ConfigureAwait(false);
+            var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+            dockPending = cartonLots
+                .Where(kv => !passedSet.Contains(kv.Key))
+                .Select(kv => kv.Value)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(l => l, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        return new PayableCheckInput(invoices, holds, quarantined, reviews, dockPending);
     }
 }

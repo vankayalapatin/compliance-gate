@@ -124,7 +124,10 @@ public sealed class PurchaseHistoryTests
     public async Task ActivityPaneShowsTheMathLineForAnUnfamiliarItemAndVendor()
     {
         var erp = SeededErp.Create();
-        erp.SeedItem(new ItemDto("COIL-3", "Copper coil", false, 5, "EA"));
+        // Critical so the cap sentence renders: the test is about
+        // unfamiliar-item fallback words, and non-critical items show no
+        // sentence (see the award-evidence tests).
+        erp.SeedItem(new ItemDto("COIL-3", "Copper coil", true, 5, "EA"));
         erp.SeedVendor(new VendorDto("V-Z", "Zed Parts AB", "SE", false, null, "NET0"));
         erp.SeedVendorPrice("V-Z", "COIL-3", 2m);
         erp.SeedVolumeHistory("COIL-3", [

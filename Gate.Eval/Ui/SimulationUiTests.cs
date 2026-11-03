@@ -101,8 +101,15 @@ public sealed class SimulationUiTests
         // Base originals are working files, never counter photos.
         await File.WriteAllBytesAsync(
             Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "dock", "IMG-T-base.jpg"), [4, 5, 6]);
+        // Unrecorded files (a prior lifetime's views) stay on disk but are
+        // never offered.
+        await File.WriteAllBytesAsync(
+            Path.Combine(Path.GetDirectoryName(h.CacheDir)!, "dock", "STALE-T.jpg"), [7, 8, 9]);
         await new CaseCacheStore(h.CacheDir).WriteAsync(
             UiTestSupport.CaseFileWith("CASE-1", "SO-7", "ITEM-1"));
+        await File.WriteAllTextAsync(
+            Path.Combine(h.CacheDir, "CASE-1.dockviews.json"),
+            """{"caseId":"CASE-1","asnNumber":"ASN-T","images":["IMG-T.jpg"],"updatedAt":"2026-11-03T00:00:00Z"}""");
 
         var options = await h.Service.GetOptionsAsync();
 
@@ -116,6 +123,8 @@ public sealed class SimulationUiTests
         var kase = Assert.Single(options.Cases);
         Assert.Equal("CASE-1", kase.CaseId);
         Assert.Equal(new[] {"IMG-T.jpg"}, options.DockImages);
+        Assert.Contains(
+            options.Notes, n => n.Contains("were not built for the current cases", StringComparison.Ordinal));
         Assert.Equal(new[] {"ITEM-1", "ITEM-2"}, options.Items.Select(i => i.ItemId).ToList());
         Assert.Equal("EA", options.Items[0].Unit);
         // Candidates are the vendors carrying a price for the item: V-1

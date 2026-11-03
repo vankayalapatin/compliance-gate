@@ -996,11 +996,12 @@ public sealed class ErpViewService
         }
 
         // No release-held-line form: held lines release only when the
-        // quarantine or review behind them closes (reshot photo, warehouse
-        // review), never from this page.
+        // hold, quarantine, dock check, or review behind them closes
+        // (dock pass photo, reshot photo, warehouse review), never from
+        // this page.
         if (inv.Lines.Any(l => l.Disposition == LineDisposition.Held))
         {
-            notes.Add("Held lines release only when the quarantine or review behind them closes.");
+            notes.Add("Held lines release only when the hold, quarantine, dock check, or review behind them closes.");
         }
 
         var badges = new List<string> { $"Status {ErpStatusWords.Of(inv.Status)}" };

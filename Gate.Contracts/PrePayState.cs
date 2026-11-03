@@ -1,7 +1,8 @@
 // Pre-pay gate input (ELEC-04). Blocks while any compliance hold,
-// quarantine, or open human review from the earlier gates is still open on
-// the lot or shipment. The holds-only input under-read the rule; this state
-// carries all three (see docs/DECISIONS.md 30).
+// quarantine, dock-pending lot, or open human review from the earlier
+// gates is still open on the lot or shipment. The holds-only input
+// under-read the rule; this state carries all four (see
+// docs/DECISIONS.md 30 and 56).
 namespace Gate.Contracts;
 
 /// <summary>One still-open human review from the vendor or dock gate:
@@ -19,4 +20,5 @@ public sealed record OpenReview(
 public sealed record PrePayState(
     IReadOnlyList<HoldDto> OpenHolds,
     IReadOnlyList<string> QuarantinedLotRefs,
-    IReadOnlyList<OpenReview> OpenReviews);
+    IReadOnlyList<OpenReview> OpenReviews,
+    IReadOnlyList<string> DockPendingLotRefs);

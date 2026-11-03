@@ -67,9 +67,26 @@ public static class BaselineRestore
         }
 
         var steps = await RestoreAsync(
-            baseline, liveErp, CaseCacheStore.ResolveDir(contentRoot), log, ct).ConfigureAwait(false);
+            baseline, liveErp, CaseCacheStore.ResolveDir(contentRoot), log, ct,
+            ResolveImageDirOrNull(log)).ConfigureAwait(false);
         log.LogInformation("Baseline restored: {Steps}", string.Join(" | ", steps));
         return true;
+    }
+
+    /// <summary>Resolves the dock image dir for the restore wipe. A missing
+    /// dir means there is nothing to wipe, so resolution failure logs and
+    /// yields null (dock step skipped) instead of failing the restore.</summary>
+    internal static string? ResolveImageDirOrNull(ILogger log)
+    {
+        try
+        {
+            return DockPhotoService.ResolveImageDir();
+        }
+        catch (InvalidOperationException ex)
+        {
+            log.LogWarning("Dock image directory not found; skipping the dock wipe: {Message}.", ex.Message);
+            return null;
+        }
     }
 
     /// <summary>Restores the snapshot pair over the live stores: validates
@@ -77,10 +94,11 @@ public static class BaselineRestore
     /// every file in the live case cache and copies every platform file in.
     /// The ERP copy runs before the wipe so a failed restore leaves the live
     /// stores untouched. Pure file IO; zero model calls. Returns the
-    /// completed steps.</summary>
+    /// completed steps. A non-null dock image dir also deletes the recorded
+    /// generated dock views plus the image cache (null skips that step).</summary>
     public static async Task<IReadOnlyList<string>> RestoreAsync(
         string baselineDir, string liveErpPath, string liveCaseCacheDir,
-        ILogger? log = null, CancellationToken ct = default)
+        ILogger? log = null, CancellationToken ct = default, string? dockImageDir = null)
     {
         var snapshotErp = Path.Combine(baselineDir, BaselineErpFileName);
         if (!File.Exists(snapshotErp))
@@ -97,6 +115,64 @@ public static class BaselineRestore
             : [];
 
         Gate.Erp.Baseline.BaselineRestore.Restore(baselineDir, liveErpPath, liveCaseCacheDir);
+
+        // Generated dock views are lifetime-scoped: sequence numbers
+        // restart, so a prior lifetime's views would name this lifetime's
+        // cartons while showing another shipment. Delete the recorded views
+        // plus the image cache before their sidecars go with the case
+        // cache. Shipped photos and anything unrecorded stay on disk; the
+        // counter offers recorded files only.
+        string? dockStep = null;
+        if (dockImageDir is not null)
+        {
+            var views = await new CaseCacheStore(liveCaseCacheDir)
+                .ListDockViewFilesAsync(ct).ConfigureAwait(false);
+            var removed = 0;
+            var imageRoot = Path.GetFullPath(dockImageDir);
+            foreach (var name in views)
+            {
+                ct.ThrowIfCancellationRequested();
+                var fileName = Path.GetFileName(name);
+                if (string.IsNullOrEmpty(fileName)
+                    || !string.Equals(fileName, name, StringComparison.Ordinal))
+                {
+                    // Minted names are bare file names; a recorded name
+                    // with directories would retarget the wipe under
+                    // GetFileName, so it is skipped, never reinterpreted.
+                    continue;
+                }
+
+                var full = Path.GetFullPath(Path.Combine(imageRoot, fileName));
+                if (!full.StartsWith(imageRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (File.Exists(full))
+                {
+                    File.Delete(full);
+                    removed++;
+                }
+            }
+
+            var cacheCleared = 0;
+            var imageCache = Path.Combine(imageRoot, ".image-cache");
+            if (Directory.Exists(imageCache))
+            {
+                foreach (var file in Directory.GetFiles(imageCache, "*", SearchOption.AllDirectories))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    File.Delete(file);
+                    cacheCleared++;
+                }
+            }
+
+            log?.LogInformation(
+                "Baseline restore: removed {Removed} generated dock view(s), cleared {Cache} image-cache file(s).",
+                removed, cacheCleared);
+            dockStep = $"Dock counter cleared ({CountWords(removed, "generated view")} removed, " +
+                $"{CountWords(cacheCleared, "image-cache file")} cleared).";
+        }
 
         Directory.CreateDirectory(liveCaseCacheDir);
         var wiped = 0;
@@ -122,11 +198,17 @@ public static class BaselineRestore
             "Baseline restore: wiped {Wiped} live file(s), copied the saved ERP database plus {Copied} platform file(s).",
             wiped, copied);
         await Task.CompletedTask.ConfigureAwait(false);
-        return
-        [
+        var steps = new List<string>(capacity: 3)
+        {
             $"Saved ERP database restored ({new FileInfo(liveErpPath).Length} bytes).",
             $"Live workspace wiped ({CountWords(wiped, "file")} removed), {CountWords(copied, "saved file")} copied in.",
-        ];
+        };
+        if (dockStep is not null)
+        {
+            steps.Add(dockStep);
+        }
+
+        return steps;
     }
 
     private static string CountWords(int count, string noun) =>

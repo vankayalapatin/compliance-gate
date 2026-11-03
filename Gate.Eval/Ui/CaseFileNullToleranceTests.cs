@@ -136,7 +136,7 @@ public sealed class CaseFileNullToleranceTests
         foreach (var suffix in new[]
                  {
                      "CASE-1.mail.json", "CASE-1.vendor-identity.json", "CASE-1.dock.json",
-                     "CASE-1.problems.json", "MEMO-1.memo.json",
+                     "CASE-1.problems.json", "CASE-1.dockviews.json", "MEMO-1.memo.json",
                  })
         {
             await File.WriteAllTextAsync(Path.Combine(dir, suffix), "{}");

@@ -300,11 +300,12 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         var source = FindRule(PrePayHoldId).Source;
         if (state.OpenHolds.Count == 0
             && state.QuarantinedLotRefs.Count == 0
-            && state.OpenReviews.Count == 0)
+            && state.OpenReviews.Count == 0
+            && state.DockPendingLotRefs.Count == 0)
         {
             IReadOnlyList<Verdict> pass =
                 [new Verdict(PrePayHoldId, VerdictKind.Pass,
-                    "No open holds, no quarantined lots, and no open reviews on lot or shipment; pre-pay all-clear.", source)];
+                    "No open holds, no quarantined lots, no lots awaiting dock check, and no open reviews on lot or shipment; pre-pay all-clear.", source)];
             return Task.FromResult(pass);
         }
 
@@ -317,6 +318,11 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         if (state.QuarantinedLotRefs.Count > 0)
         {
             parts.Add($"{DisplayWords.Plural(state.QuarantinedLotRefs.Count, "quarantined lot")}: {string.Join(", ", state.QuarantinedLotRefs)}");
+        }
+
+        if (state.DockPendingLotRefs.Count > 0)
+        {
+            parts.Add($"{DisplayWords.Plural(state.DockPendingLotRefs.Count, "lot")} awaiting dock check: {string.Join(", ", state.DockPendingLotRefs)}");
         }
 
         if (state.OpenReviews.Count > 0)

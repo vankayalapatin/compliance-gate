@@ -84,6 +84,9 @@ public partial class CaseRunner
             var live = await TryBuildLiveSceneAsync(caseId, asn, options, effective, ct).ConfigureAwait(false);
             if (live is not null)
             {
+                CaseStore.RecordDockViews(
+                    _cacheDir, caseId, asn.AsnNumber,
+                    live.Images.Select(i => Path.GetFileName(i.FilePath)));
                 return live;
             }
         }
@@ -121,6 +124,9 @@ public partial class CaseRunner
         }
 
         work.Save(_cacheDir);
+        CaseStore.RecordDockViews(
+            _cacheDir, caseId, asn.AsnNumber,
+            set.Images.Select(i => Path.GetFileName(i.FilePath)));
         return set;
     }
 
@@ -209,6 +215,8 @@ public partial class CaseRunner
             (image.ReadWarning is null ? string.Empty : $" Read warning: {image.ReadWarning}."),
             documentType: "ASN", documentNumber: asn.AsnNumber);
         work.Save(_cacheDir);
+        CaseStore.RecordDockViews(
+            _cacheDir, caseId, asn.AsnNumber, [Path.GetFileName(image.FilePath)]);
         return new MintedReshotImage(
             Path.GetFileName(image.FilePath), image.FilePath, image.Path, image.FallbackReason);
     }

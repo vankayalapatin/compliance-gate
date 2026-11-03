@@ -540,10 +540,13 @@ public partial class CaseRunner
 
     /// <summary>Freezes the screening evidence as it stood at the award: one
     /// row per screened candidate with vendor facts, unit price, the shared
-    /// result and reason words, the full verdicts, and the origin-cap
-    /// sentence built from the verdict's own figures (never recomputed, so
-    /// the sentence always matches the verdict's share). Decided orders
-    /// display this stored copy; only undecided orders re-run live.</summary>
+    /// result and reason words, the full verdicts, and, for critical items,
+    /// the origin-cap sentence built from the verdict's own figures (never
+    /// recomputed, so the sentence always matches the verdict's share).
+    /// Non-critical items store no sentence: the cap does not apply to
+    /// them, and a share sentence would contradict the table's reason.
+    /// Decided orders display this stored copy; only undecided orders
+    /// re-run live.</summary>
     private async Task<AwardScreeningSnapshot> BuildScreeningSnapshotAsync(
         CaseFile file,
         IReadOnlyList<VendorScreening> screenings,
@@ -557,12 +560,14 @@ public partial class CaseRunner
         var vendors = (await _erp.GetVendorsAsync(ct).ConfigureAwait(false))
             .ToDictionary(v => v.VendorId, StringComparer.Ordinal);
         string noun = "units";
+        var capApplies = true;
         try
         {
             var item = await _erp.GetItemAsync(current.ItemId, ct).ConfigureAwait(false);
             if (item is not null)
             {
                 noun = DisplayWords.CountNoun(item.Description);
+                capApplies = item.IsCritical;
             }
         }
         catch (Exception ex)
@@ -616,7 +621,7 @@ public partial class CaseRunner
                 ScreeningRowWords.ReasonFor(screening.Verdicts, CorpExceptionFlow.CorpOriginCapRuleId),
                 string.Equals(screening.VendorId, winner, StringComparison.Ordinal),
                 screening.Verdicts,
-                figures is null
+                figures is null || !capApplies
                     ? null
                     : ScreeningSentence.Build(
                         CorpExceptionFlow.CorpOriginCapRuleId, vendor.Name, country,
@@ -1013,6 +1018,50 @@ public partial class CaseRunner
         }
     }
 
+    /// <summary>Advances every split child of a parked parent in plan order
+    /// (child ids sort by split line). Every sibling runs even when one
+    /// fails: failures are logged, noted on the failing child's timeline,
+    /// and thrown together naming the children, so Decisions shows Try
+    /// again on the parent and a retry finishes the rest. Retries are
+    /// idempotent: submitted POs skip the draft check and existing cards
+    /// are found, never duplicated.</summary>
+    private async Task AdvanceSplitChildrenAsync(
+        string parentId, DateOnly? payUpToDate, CancellationToken ct)
+    {
+        var failures = new List<string>();
+        foreach (var id in CaseStore.ListCaseIds(_cacheDir))
+        {
+            var candidate = CaseStore.Load(_cacheDir, id);
+            if (candidate is null
+                || !string.Equals(candidate.Case.ParentCaseId, parentId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                var outcome = await AdvanceWithToolsAsync(id, payUpToDate, ct, fanOut: false)
+                    .ConfigureAwait(false);
+                _logger.LogInformation(
+                    "Split child {Child} of {Parent} advanced to {Step} ({Reason}).",
+                    id, parentId, outcome.Step, outcome.Summary);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Split child {Child} of {Parent} failed to advance.", id, parentId);
+                RecordFailureNote(id, "split child advance", ex);
+                failures.Add($"{id}: {ex.Message}");
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Split {parentId} has {failures.Count} child case(s) needing attention: " +
+                string.Join("; ", failures));
+        }
+    }
+
     private async Task SubmitPoApprovalStepAsync(CaseFile file, CancellationToken ct)
     {
         var current = file.Case;
@@ -1083,6 +1132,7 @@ public partial class CaseRunner
         causes.AddRange(state.OpenHolds.Select(h =>
             string.IsNullOrWhiteSpace(h.CartonId) ? $"hold {h.HoldId} is open" : $"{h.CartonId} is on hold"));
         causes.AddRange(state.QuarantinedLotRefs.Select(lot => $"{lot} is in quarantine"));
+        causes.AddRange(state.DockPendingLotRefs.Select(lot => $"{lot} is awaiting the dock check"));
         causes.AddRange(state.OpenReviews.Select(r =>
             string.IsNullOrWhiteSpace(r.CartonId) ? $"review {r.ReviewId} is open" : $"{r.CartonId} is under review"));
 
@@ -1292,7 +1342,8 @@ public partial class CaseRunner
     }
 
     /// <summary>Builds the pre-pay gate input: ERP open holds for this case,
-    /// quarantined lots from inventory transactions, and open reviews from
+    /// quarantined lots from inventory transactions, dock-pending lots
+    /// from ASN cartons without an all-pass verdict, and open reviews from
     /// pending dock/damage decisions.</summary>
     private async Task<PrePayState> BuildPrePayStateAsync(CaseFile file, CancellationToken ct)
     {
@@ -1310,6 +1361,7 @@ public partial class CaseRunner
         AsnDto? asn = current.AsnNumber is null
             ? null
             : await _erp.GetAsnAsync(current.AsnNumber, ct).ConfigureAwait(false);
+        var dockPending = DockPendingLots(current.CaseId, asn);
         var reviews = file.Decisions
             .Where(d => d.Status == DecisionStatus.Pending
                 && d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview)
@@ -1323,7 +1375,38 @@ public partial class CaseRunner
                 d.RequestedAt,
                 d.Reason ?? d.Title))
             .ToList();
-        return new PrePayState(caseHolds, quarantined, reviews);
+        return new PrePayState(caseHolds, quarantined, reviews, dockPending);
+    }
+
+    /// <summary>Lots on the case's ASN cartons without a complete all-pass
+    /// dock verdict. No ASN (or no cartons) means nothing pending: nothing
+    /// photographable was declared.</summary>
+    private IReadOnlyList<string> DockPendingLots(string caseId, AsnDto? asn)
+    {
+        if (asn is null || asn.Cartons.Count == 0)
+        {
+            return [];
+        }
+
+        var passed = new HashSet<string>(StringComparer.Ordinal);
+        var evidence = CaseStore.LoadDock(_cacheDir, caseId);
+        if (evidence is not null)
+        {
+            foreach (var (cartonId, verdicts) in evidence.Verdicts)
+            {
+                if (verdicts.Count > 0 && verdicts.All(v => v.Kind == VerdictKind.Pass))
+                {
+                    passed.Add(cartonId);
+                }
+            }
+        }
+
+        return asn.Cartons
+            .Where(c => !passed.Contains(c.CartonId))
+            .Select(c => c.LotRef)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(l => l, StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string? CartonFromEvidence(Decision decision) =>

@@ -167,6 +167,7 @@ public sealed class SplitAwardTests
         await h.Runner.ResolveDecisionAsync(battery, split.DecisionId, true, split.RequestedTo, "ok");
         h.Models.QueueToolCalls("create children",
             ("c1", AgentTools.CreateSplitChildren, Args(battery)));
+        QueueTexts(h.Models, 2, "fan-out child submits");
         var ordered = await h.Runner.AdvanceAsync(battery);
         Assert.Equal(CaseNextStep.AwaitSplitChildren, ordered.Step);
         var parent = Load(h, battery);
@@ -223,6 +224,51 @@ public sealed class SplitAwardTests
     }
 
     [Fact]
+    public async Task ParentAdvanceSubmitsSplitChildren()
+    {
+        // No manual child advance anywhere in this test: the parent's
+        // advance fans out to the children, each child submits its own
+        // PO and raises its own approval card.
+        var h = Create(policy: true);
+        var cases = await h.Runner.OnOrderWebhookAsync(
+            new OrderWebhookInput("test", "SO-SPLIT-1", "planner", Candidates()));
+        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
+
+        QueueTexts(h.Models, 2, "shortfall then raise");
+        await h.Runner.AdvanceAsync(battery);
+        var raised = Load(h, battery);
+        var prDecision = PendingDecision(raised, DecisionKind.PrApproval);
+        await h.Runner.ResolveDecisionAsync(battery, prDecision.DecisionId, true, prDecision.RequestedTo, "ok");
+
+        h.Models.QueueText("screen");
+        h.Models.QueueToolCalls("split 800/400",
+            ("p1", AgentTools.ProposeSplit, SplitArgs(battery, ["V-A", "V-B"], [800, 400], "keep dual supply for resilience")));
+        var parked = await h.Runner.AdvanceAsync(battery);
+        Assert.Equal(CaseNextStep.AwaitDecision, parked.Step);
+        var proposed = Load(h, battery);
+        var split = PendingDecision(proposed, DecisionKind.SplitApproval);
+
+        await h.Runner.ResolveDecisionAsync(battery, split.DecisionId, true, split.RequestedTo, "ok");
+        h.Models.QueueToolCalls("create children",
+            ("c1", AgentTools.CreateSplitChildren, Args(battery)));
+        QueueTexts(h.Models, 2, "fan-out child submits");
+        var ordered = await h.Runner.AdvanceAsync(battery);
+        Assert.Equal(CaseNextStep.AwaitSplitChildren, ordered.Step);
+
+        var children = ChildrenOf(h, battery);
+        Assert.Equal(2, children.Count);
+        foreach (var child in children)
+        {
+            var card = PendingDecision(child, DecisionKind.PoApproval);
+            Assert.NotNull(child.Case.PoNumber);
+            Assert.Contains(child.Case.PoNumber, card.Title, StringComparison.Ordinal);
+            var po = await h.Erp.GetPurchaseOrderAsync(child.Case.PoNumber!);
+            Assert.NotNull(po);
+            Assert.Equal(PoApprovalStatus.InReview, po.ApprovalStatus);
+        }
+    }
+
+    [Fact]
     public async Task ReorderedSplitCreatesPosInPassingOrder()
     {
         // CinderVolt first would breach at the ERP's own check
@@ -257,6 +303,7 @@ public sealed class SplitAwardTests
         await h.Runner.ResolveDecisionAsync(battery, split.DecisionId, true, split.RequestedTo, "ok");
         h.Models.QueueToolCalls("create children",
             ("c1", AgentTools.CreateSplitChildren, Args(battery)));
+        QueueTexts(h.Models, 2, "fan-out child submits");
         var ordered = await h.Runner.AdvanceAsync(battery);
         Assert.Equal(CaseNextStep.AwaitSplitChildren, ordered.Step);
 
@@ -376,6 +423,10 @@ public sealed class SplitAwardTests
         Harness h, string caseId, string carton, string lot, string invoice, int qty, decimal price)
     {
         QueueTexts(h.Models, 6, "deferred child flow");
+        // The parent's fan-out already submitted this child, so this
+        // advance is a no-op that re-affirms the retry is idempotent:
+        // submitted POs skip the draft check and the pending card is
+        // found, never duplicated.
         await h.Runner.AdvanceAsync(caseId);
         var submitted = Load(h, caseId);
         var poDecision = PendingDecision(submitted, DecisionKind.PoApproval);

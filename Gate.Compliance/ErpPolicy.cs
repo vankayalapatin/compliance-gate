@@ -54,7 +54,7 @@ public sealed class ErpPolicy : IErpPolicy
         PayableCheckInput input, CancellationToken ct = default)
     {
         var verdicts = await _engine.EvaluatePayableAsync(
-            new PrePayState(input.OpenHolds, input.QuarantinedLotRefs, input.OpenReviews), ct)
+            new PrePayState(input.OpenHolds, input.QuarantinedLotRefs, input.OpenReviews, input.DockPendingLotRefs), ct)
             .ConfigureAwait(false);
         return ToResult(verdicts);
     }
@@ -63,7 +63,7 @@ public sealed class ErpPolicy : IErpPolicy
         PayableCheckInput input, CancellationToken ct = default)
     {
         var verdicts = await _engine.EvaluatePaymentAsync(
-            new PrePayState(input.OpenHolds, input.QuarantinedLotRefs, input.OpenReviews), ct)
+            new PrePayState(input.OpenHolds, input.QuarantinedLotRefs, input.OpenReviews, input.DockPendingLotRefs), ct)
             .ConfigureAwait(false);
         return ToResult(verdicts);
     }

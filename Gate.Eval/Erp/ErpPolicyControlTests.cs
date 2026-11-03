@@ -20,6 +20,8 @@ public sealed class ErpPolicyControlTests
     {
         public IReadOnlyList<OpenReview> Reviews { get; set; } = reviews ?? [];
 
+        public IReadOnlyList<string> PassedCartons { get; set; } = [];
+
         public Task<PolicyExceptionGrant?> FindExceptionGrantAsync(
             string ruleId, string vendorId, string? prNumber, CancellationToken ct = default) =>
             Task.FromResult(grant);
@@ -27,6 +29,10 @@ public sealed class ErpPolicyControlTests
         public Task<IReadOnlyList<OpenReview>> FindOpenReviewsAsync(
             IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default) =>
             Task.FromResult(Reviews);
+
+        public Task<IReadOnlyList<string>> FindDockPassedCartonsAsync(
+            IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default) =>
+            Task.FromResult(PassedCartons);
     }
 
     private static async Task<string> ApprovedPrAsync(InMemoryErpAdapter erp, decimal qty = 90)

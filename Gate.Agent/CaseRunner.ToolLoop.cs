@@ -25,7 +25,7 @@ public partial class CaseRunner
     private const int MaxToolTurns = 50;
 
     private async Task<CaseAdvanceOutcome> AdvanceWithToolsAsync(
-        string caseId, DateOnly? payUpToDate, CancellationToken ct)
+        string caseId, DateOnly? payUpToDate, CancellationToken ct, bool fanOut = true)
     {
         var history = new List<ModelMessage>();
         var refusedStreak = 0;
@@ -52,6 +52,18 @@ public partial class CaseRunner
                 caseId, file.Case.Stage, step, reason);
             if (step.IsWaiting())
             {
+                // Split parents park here while their children still need
+                // work: each child submits its own PO and raises its own
+                // approval card only when the child itself advances, so the
+                // parent's advance fans out to the children (once; children
+                // never fan out further). Already-stuck parents heal on
+                // their next advance.
+                if (fanOut && step == CaseNextStep.AwaitSplitChildren)
+                {
+                    await AdvanceSplitChildrenAsync(caseId, payUpToDate, ct).ConfigureAwait(false);
+                    file = CaseStore.Load(_cacheDir, caseId) ?? file;
+                }
+
                 return new CaseAdvanceOutcome(caseId, file.Case.Stage, step, step == CaseNextStep.Done, reason);
             }
 

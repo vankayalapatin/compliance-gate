@@ -16,8 +16,27 @@ using Microsoft.Extensions.Logging;
 
 namespace Gate.Eval.Ui;
 
+[Collection(RestoreEnvCollection.Name)]
 public sealed class DemoReplayTests
 {
+    /// <summary>Points dock-dir resolution at a temp dir for the restore
+    /// under test: without it the restore would wipe the real image
+    /// cache. Shares a collection with the other restore tests so two
+    /// restores never interleave on the process env.</summary>
+    private sealed class DockImagesDir : IDisposable
+    {
+        private readonly string? _previous;
+
+        public DockImagesDir(string dir)
+        {
+            _previous = Environment.GetEnvironmentVariable("GATE_DOCK_IMAGES");
+            Environment.SetEnvironmentVariable("GATE_DOCK_IMAGES", dir);
+        }
+
+        public void Dispose() =>
+            Environment.SetEnvironmentVariable("GATE_DOCK_IMAGES", _previous);
+    }
+
     private static (ReplayService Service, ReplayState State, ModelSpendTracker Spend, string Dir) Create()
     {
         var dir = UiTestSupport.NewDir("gate-ui-demo");
@@ -57,12 +76,14 @@ public sealed class DemoReplayTests
         Directory.CreateDirectory(Path.Combine(dir, "case-cache"));
         await File.WriteAllTextAsync(Path.Combine(dir, "case-cache", "STALE.json"), "{}");
 
+        using var dock = new DockImagesDir(Path.Combine(dir, "dock"));
         var report = await service.RestoreAsync(progress);
 
         Assert.Null(report.Error);
         Assert.False(report.IsReplay);
         Assert.False(replay.IsReplay);
-        Assert.Equal(4, report.Steps.Count);
+        Assert.Equal(5, report.Steps.Count);
+        Assert.Contains(report.Steps, s => s.Contains("Dock counter cleared", StringComparison.Ordinal));
         Assert.Equal(report.Steps, progress.Seen);
         Assert.Contains(report.Steps, s => s.Contains("Spend so far"));
         Assert.Equal(new byte[] {7, 7, 7}, await File.ReadAllBytesAsync(Path.Combine(dir, "live", "erp.db")));
@@ -73,7 +94,8 @@ public sealed class DemoReplayTests
     [Fact]
     public async Task RestoreWorksWithoutProgress()
     {
-        var (service, _, _, _) = Create();
+        var (service, _, _, dir) = Create();
+        using var dock = new DockImagesDir(Path.Combine(dir, "dock"));
 
         var report = await service.RestoreAsync();
 
@@ -97,7 +119,8 @@ public sealed class DemoReplayTests
     [Fact]
     public async Task RestoreNeverTouchesAnswersMode()
     {
-        var (service, replay, _, _) = Create();
+        var (service, replay, _, dir) = Create();
+        using var dock = new DockImagesDir(Path.Combine(dir, "dock"));
 
         // Live answers stay live.
         var live = await service.RestoreAsync();

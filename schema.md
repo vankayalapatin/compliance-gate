@@ -31,8 +31,8 @@ adapter interface, and this file change in the lead session only.
   block cites rule id plus stored source. Document packs (BAT-LI, ELEC)
   apply to critical parts only (`ItemDto.IsCritical`); non-critical parts
   get not-applicable passes, vendor screening still applies. Pre-pay takes
-  `PrePayState` (holds plus quarantine plus open reviews); the holds-only
-  overload removed in batch 2.
+  `PrePayState` (holds plus quarantine plus open reviews plus dock-pending
+  lots); the holds-only overload removed in batch 2.
 - `Gate.Contracts/Cases.cs` — agent-side case store shapes (one case per
   SO shortfall item): `Case` stage plus document links plus block (`IsOpeningData`
   marks seeded shells with no agent-authored entries), `CaseEvent`
@@ -71,7 +71,7 @@ adapter interface, and this file change in the lead session only.
 - `Gate.Contracts/CaseMail.cs` — vendor email thread per case, stored as
   `<CaseId>.mail.json` next to the case file.
 - `Gate.Contracts/PrePayState.cs` — pre-pay gate input: open holds plus
-  quarantined lot refs plus open reviews.
+  quarantined lot refs plus open reviews plus dock-pending lot refs.
 - Dock reads (`CartonRead`) stay compliance-internal by decision (see
   `docs/DECISIONS.md` 29): transcription is agent-side evidence, the hold
   carries rule id, case link, and carton id. No dock DTO in contracts.

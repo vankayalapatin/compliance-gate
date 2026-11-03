@@ -5,6 +5,7 @@
 using Gate.Agent;
 using Gate.Contracts;
 using Gate.Erp;
+using SkiaSharp;
 
 namespace Gate.Eval;
 
@@ -72,9 +73,10 @@ public sealed class DockProblemsTests
 
     /// <summary>Drives one battery case to an ASN with the given staged
     /// problems persisted: webhook, shortfall, PR, screen, award, PO, ACK,
-    /// ASN plus receipt.</summary>
+    /// ASN plus receipt. Cartons default to the single test carton.</summary>
     private static async Task<string> OpenAsnCaseAsync(
-        Harness h, IReadOnlyList<SimulatedProblem>? problems = null)
+        Harness h, IReadOnlyList<SimulatedProblem>? problems = null,
+        IReadOnlyList<AsnCartonInput>? cartons = null)
     {
         var input = new OrderWebhookInput(
             "test",
@@ -98,7 +100,7 @@ public sealed class DockProblemsTests
             caseId,
             $"ASN-{Guid.NewGuid():N}",
             "PACK-T1",
-            [new AsnCartonInput("C-1", SeededErp.Battery, 5, "LOT-T1")],
+            cartons ?? [new AsnCartonInput("C-1", SeededErp.Battery, 5, "LOT-T1")],
             SimulatedProblems: problems));
         Assert.NotNull(receipt);
         _ = asn;
@@ -377,5 +379,221 @@ public sealed class DockProblemsTests
                 Assert.DoesNotContain("problem", parameter.Name ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             }
         }
+    }
+
+    private static string ReadsJson(string poNumber, bool c2MarkMissing, bool c3Crushed)
+    {
+        static string Read(string carton, string lot, bool mark, bool damage, string po) =>
+            "{\"carton_id\":\"" + carton
+            + "\",\"part\":\"" + SeededErp.Battery
+            + "\",\"po_number\":\"" + po
+            + "\",\"lot_code\":\"" + lot
+            + "\",\"units_per_carton\":5"
+            + ",\"mark_present\":" + (mark ? "true" : "false")
+            + ",\"mark_legible\":" + (mark ? "true" : "false")
+            + ",\"un_number\":" + (mark ? "\"UN3480\"" : "null")
+            + ",\"class9_visible\":true"
+            + ",\"damage_visible\":" + (damage ? "true" : "false")
+            + ",\"damage_note\":" + (damage ? "\"crushed corner with tear\"" : "null")
+            + ",\"read_confidence\":0.99}";
+        return "["
+            + Read("C-1", "LOT-T1", true, false, poNumber) + ","
+            + Read("C-2", "LOT-T2", !c2MarkMissing, false, poNumber) + ","
+            + Read("C-3", "LOT-T3", true, c3Crushed, poNumber) + "]";
+    }
+
+    [Fact]
+    public async Task TwoProblemsOnOneShipmentLandExactly()
+    {
+        // Three cartons, problems on two: the missing mark holds C-2 for
+        // relabel, the crushed carton routes C-3 to damage review, and C-1
+        // passes every rule. Pixels change only on the two chosen cartons.
+        var first = Create();
+        var caseId = await OpenAsnCaseAsync(first, cartons:
+        [
+            new AsnCartonInput("C-1", SeededErp.Battery, 5, "LOT-T1"),
+            new AsnCartonInput("C-2", SeededErp.Battery, 5, "LOT-T2"),
+            new AsnCartonInput("C-3", SeededErp.Battery, 5, "LOT-T3"),
+        ]);
+        var h = new Harness(
+            first.Erp,
+            new CaseRunner(
+                first.Erp,
+                new P2pAgent(first.Erp, first.Models, first.Compliance),
+                first.Models, first.Compliance, new DockEvaluatorAdapter(), first.CaseDir,
+                dockImageOptions: LibraryOptions(first.CaseDir)),
+            first.Models, first.Compliance, first.CaseDir);
+        var poNumber = CaseStore.Load(first.CaseDir, caseId)!.Case.PoNumber!;
+        h.Models.QueueText(ReadsJson(poNumber, c2MarkMissing: false, c3Crushed: false));
+
+        var clean = await h.Runner.BuildDockImagesAsync(caseId);
+        Assert.NotNull(clean);
+        var cleanImage = Assert.Single(clean.Images);
+        Assert.Contains("SCENE-04", cleanImage.FilePath, StringComparison.Ordinal);
+        var cleanBytes = await File.ReadAllBytesAsync(cleanImage.FilePath);
+
+        // The faithful problem read mismatches the manifest (no UN text
+        // where the mark is missing), so mint reads twice, warns, and keeps
+        // the views without caching the read.
+        var problemReads = ReadsJson(poNumber, c2MarkMissing: true, c3Crushed: true);
+        h.Models.QueueText(problemReads);
+        h.Models.QueueText(problemReads);
+        var set = await h.Runner.RebuildDockViewsAsync(new RebuildDockViewsInput(caseId,
+        [
+            new SimulatedProblem("C-2", SimulatedProblemKind.MissingMark),
+            new SimulatedProblem("C-3", SimulatedProblemKind.Crushed),
+        ]));
+        Assert.NotNull(set);
+        var image = Assert.Single(set.Images);
+        Assert.Equal(cleanImage.FilePath, image.FilePath);
+        var problemBytes = await File.ReadAllBytesAsync(image.FilePath);
+        Assert.NotEqual(cleanBytes, problemBytes);
+
+        var recorded = CaseStore.LoadDockViews(first.CaseDir, caseId);
+        Assert.NotNull(recorded);
+        Assert.Equal([Path.GetFileName(image.FilePath)], recorded.Images.ToList());
+
+        var timeline = CaseStore.Load(h.CaseDir, caseId)!.Events
+            .Where(e => e.Kind == CaseEventKind.Note)
+            .Select(e => e.Summary)
+            .ToList();
+        var problems = Assert.Single(timeline, s => s.Contains("2 simulated problem(s)", StringComparison.Ordinal));
+        Assert.Contains("C-2 (MissingMark)", problems, StringComparison.Ordinal);
+        Assert.Contains("C-3 (Crushed)", problems, StringComparison.Ordinal);
+
+        PixelsChangeOnlyOnChosenCartons(cleanBytes, problemBytes);
+
+        h.Models.QueueText(problemReads);
+        var reads = await h.Runner.TranscribeDockPhotosAsync(
+            caseId, [new DockPhoto(image.ImageId, problemBytes, null)]);
+        Assert.Equal(3, reads.Count);
+        var outcome = await h.Runner.OnDockReadsAsync(caseId, reads);
+
+        Assert.Equal(["C-1", "C-2", "C-3"], outcome.Keys.Order(StringComparer.Ordinal).ToList());
+        Assert.All(outcome["C-1"], v => Assert.Equal(VerdictKind.Pass, v.Kind));
+        var dock = new DockEvaluatorAdapter();
+        var markHold = Assert.Single(outcome["C-2"], v => v.Kind != VerdictKind.Pass);
+        Assert.Equal(VerdictKind.Hold, markHold.Kind);
+        Assert.Equal(dock.MarkRuleId, markHold.RuleId);
+        Assert.Contains("hold for relabel", markHold.Reason, StringComparison.Ordinal);
+        var damageReview = Assert.Single(outcome["C-3"], v => v.Kind != VerdictKind.Pass);
+        Assert.Equal(VerdictKind.HumanReview, damageReview.Kind);
+        Assert.Equal(dock.DamageRuleId, damageReview.RuleId);
+
+        var holds = await first.Erp.GetOpenHoldsAsync(null);
+        var hold = Assert.Single(holds);
+        Assert.Equal("C-2", hold.CartonId);
+        var decisions = CaseStore.Load(first.CaseDir, caseId)!.Decisions;
+        Assert.Contains(decisions, d =>
+            d.Kind == DecisionKind.DamageReview
+            && d.Status == DecisionStatus.Pending
+            && d.Title.Contains("C-3", StringComparison.Ordinal));
+        Assert.DoesNotContain(decisions, d =>
+            d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview
+            && (d.Title.Contains("C-1", StringComparison.Ordinal)
+                || d.Title.Contains("C-2", StringComparison.Ordinal)));
+    }
+
+    /// <summary>Decodes the clean and problem builds and proves the problem
+    /// pixels land only on the chosen cartons: C-1's face is identical, both
+    /// chosen faces change, and every changed pixel sits on a chosen carton
+    /// (the crushed zone reaches past its face by design, plus one JPEG
+    /// block of tolerance).</summary>
+    private static void PixelsChangeOnlyOnChosenCartons(byte[] cleanBytes, byte[] problemBytes)
+    {
+        using var clean = SKBitmap.Decode(cleanBytes)
+            ?? throw new InvalidOperationException("Clean dock view did not decode.");
+        using var problem = SKBitmap.Decode(problemBytes)
+            ?? throw new InvalidOperationException("Problem dock view did not decode.");
+        Assert.Equal(clean.Width, problem.Width);
+        Assert.Equal(clean.Height, problem.Height);
+        Assert.Equal(clean.BytesPerPixel, problem.BytesPerPixel);
+        Assert.Equal(clean.RowBytes, problem.RowBytes);
+        var (w, h) = (clean.Width, clean.Height);
+        var faces = DockImagePipeline.LoadScenes(VisionFiles.DockScenesPath())
+            .First(s => string.Equals(s.Id, "SCENE-04", StringComparison.Ordinal)).Faces;
+        Assert.True(faces.Count >= 3, "SCENE-04 carries the three test cartons.");
+
+        // Ceilings on the far edges: the compositor's float edges plus
+        // label strokes plus one JPEG block of bleed all fit inside 12px.
+        static SKRectI Pixels(DockSceneFace face, int w, int h, int margin) => new(
+            Math.Max(0, (int)(face.X * w) - margin),
+            Math.Max(0, (int)(face.Y * h) - margin),
+            Math.Min(w, (int)Math.Ceiling((face.X + face.W) * w) + margin),
+            Math.Min(h, (int)Math.Ceiling((face.Y + face.H) * h) + margin));
+        var untouched = Pixels(faces[0], w, h, -8);
+        var chosenMark = Pixels(faces[1], w, h, 12);
+        // The crushed cue washes 35% past the face on every side.
+        var crushed = faces[2];
+        var chosenCrushed = new SKRectI(
+            Math.Max(0, (int)((crushed.X - crushed.W * 0.35) * w) - 12),
+            Math.Max(0, (int)((crushed.Y - crushed.H * 0.35) * h) - 12),
+            Math.Min(w, (int)Math.Ceiling((crushed.X + crushed.W * 1.35) * w) + 12),
+            Math.Min(h, (int)Math.Ceiling((crushed.Y + crushed.H * 1.35) * h) + 12));
+
+        var a = clean.GetPixelSpan();
+        var b = problem.GetPixelSpan();
+        var bpp = clean.BytesPerPixel;
+        var rowBytes = clean.RowBytes;
+        var cleanChanged = 0;
+        var markChanged = 0;
+        var crushedChanged = 0;
+        var outsideChanged = 0;
+        var outsideMin = (X: w, Y: h);
+        var outsideMax = (X: -1, Y: -1);
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                var at = y * rowBytes + x * bpp;
+                var same = true;
+                for (var o = 0; o < bpp; o++)
+                {
+                    if (a[at + o] != b[at + o])
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+
+                if (same)
+                {
+                    continue;
+                }
+
+                var point = new SKPointI(x, y);
+                if (untouched.Contains(point))
+                {
+                    cleanChanged++;
+                }
+
+                if (chosenMark.Contains(point))
+                {
+                    markChanged++;
+                }
+
+                if (chosenCrushed.Contains(point))
+                {
+                    crushedChanged++;
+                }
+
+                if (!chosenMark.Contains(point) && !chosenCrushed.Contains(point))
+                {
+                    outsideChanged++;
+                    outsideMin = (Math.Min(outsideMin.X, x), Math.Min(outsideMin.Y, y));
+                    outsideMax = (Math.Max(outsideMax.X, x), Math.Max(outsideMax.Y, y));
+                }
+            }
+        }
+
+        Assert.Equal(0, cleanChanged);
+        Assert.True(markChanged > 100, $"C-2's face changed {markChanged} pixel(s); the missing mark must show.");
+        Assert.True(crushedChanged > 100, $"C-3's zone changed {crushedChanged} pixel(s); the damage cue must show.");
+        Assert.True(outsideChanged == 0,
+            $"{outsideChanged} changed pixel(s) outside the chosen cartons in a {w}x{h} image " +
+            $"(bbox x {outsideMin.X}..{outsideMax.X}, y {outsideMin.Y}..{outsideMax.Y}; " +
+            $"C-1 face inset {untouched.Left},{untouched.Top}-{untouched.Right},{untouched.Bottom}; " +
+            $"C-2 rect {chosenMark.Left},{chosenMark.Top}-{chosenMark.Right},{chosenMark.Bottom}; " +
+            $"C-3 zone {chosenCrushed.Left},{chosenCrushed.Top}-{chosenCrushed.Right},{chosenCrushed.Bottom}).");
     }
 }
