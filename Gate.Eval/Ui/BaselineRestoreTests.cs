@@ -99,6 +99,51 @@ public sealed class BaselineRestoreTests
     }
 
     [Fact]
+    public async Task RestoreClearsPublishedPacksMemoFilesAndInbox()
+    {
+        // A prior lifetime published CORP v3 and left a memo plus a pending
+        // submission behind. Restore must clear the published pack files
+        // (the company base packs win on an empty dir), wipe the memo
+        // files back to the snapshot, and clear the inbox, so the company
+        // returns exactly to CORP v2 at 60%.
+        var root = NewDir();
+        var baseline = WriteSnapshot(root);
+        var liveErp = Path.Combine(root, "live", "erp.db");
+        var liveCache = Path.Combine(root, "case-cache");
+        Directory.CreateDirectory(liveCache);
+        await File.WriteAllTextAsync(Path.Combine(liveCache, "MEMO-9.memo.json"), "{}");
+        var packsDir = Path.Combine(root, "packs");
+        Directory.CreateDirectory(packsDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(packsDir, "corp.v3.json"), Gate.Eval.MemoFixtures.CorpPackJson("v3", "0.40"));
+        await File.WriteAllTextAsync(Path.Combine(packsDir, "notes.txt"), "not a pack");
+        var inboxDir = Path.Combine(root, "memo-inbox");
+        Directory.CreateDirectory(inboxDir);
+        await File.WriteAllTextAsync(Path.Combine(inboxDir, "MEMO-9.json"), "{}");
+
+        var before = Gate.Compliance.RulePackLoader.LoadCurrent(packsDir);
+        Assert.Equal("v3", before.Rules.Single(r => r.RuleId == "CORP-02").PackVersion);
+        Assert.Equal(0.40m, before.Corp.OriginCap);
+
+        var steps = await BaselineRestore.RestoreAsync(
+            baseline, liveErp, liveCache, UiTestLogger<BaselineRestoreTests>.Instance,
+            ct: default, packsDir: packsDir, memoInboxDir: inboxDir);
+
+        Assert.Contains(steps, s => s.Contains("Published rule packs cleared", StringComparison.Ordinal));
+        Assert.Contains(steps, s => s.Contains("1 published version", StringComparison.Ordinal));
+        Assert.Contains(steps, s => s.Contains("Memo inbox cleared", StringComparison.Ordinal));
+        Assert.False(File.Exists(Path.Combine(packsDir, "corp.v3.json")));
+        Assert.True(File.Exists(Path.Combine(packsDir, "notes.txt")));
+        Assert.Empty(Directory.GetFiles(inboxDir));
+        Assert.False(File.Exists(Path.Combine(liveCache, "MEMO-9.memo.json")));
+        Assert.True(File.Exists(Path.Combine(liveCache, "CASE-T.json")));
+
+        var after = Gate.Compliance.RulePackLoader.LoadCurrent(packsDir);
+        Assert.Equal("v2", after.Rules.Single(r => r.RuleId == "CORP-02").PackVersion);
+        Assert.Equal(0.60m, after.Corp.OriginCap);
+    }
+
+    [Fact]
     public async Task RestoreWorksWhileAppHoldsLiveDb()
     {
         // Mimics the running app: a real sqlite live db with pooled

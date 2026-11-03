@@ -82,8 +82,10 @@ public sealed class DemoReplayTests
         Assert.Null(report.Error);
         Assert.False(report.IsReplay);
         Assert.False(replay.IsReplay);
-        Assert.Equal(5, report.Steps.Count);
+        Assert.Equal(7, report.Steps.Count);
         Assert.Contains(report.Steps, s => s.Contains("Dock counter cleared", StringComparison.Ordinal));
+        Assert.Contains(report.Steps, s => s.Contains("Published rule packs cleared", StringComparison.Ordinal));
+        Assert.Contains(report.Steps, s => s.Contains("Memo inbox cleared", StringComparison.Ordinal));
         Assert.Equal(report.Steps, progress.Seen);
         Assert.Contains(report.Steps, s => s.Contains("Spend so far"));
         Assert.Equal(new byte[] {7, 7, 7}, await File.ReadAllBytesAsync(Path.Combine(dir, "live", "erp.db")));

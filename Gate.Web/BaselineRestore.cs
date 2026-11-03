@@ -2,12 +2,17 @@
 // shipped snapshot pair back over the live stores. No loader, no model
 // call: the snapshot holds the ERP database file plus the platform
 // (case-cache) files, and restore wipes the live case cache first, then
-// copies the snapshot files in. Layout under the baseline dir:
+// copies the snapshot files in. Published rule packs and pending memo
+// submissions are lifetime-scoped too: the packs dir starts empty (the
+// company base packs win until the first publication) and the memo inbox
+// starts empty, so restore deletes both dirs' live files. Layout under
+// the baseline dir:
 //   erp.db            -> live ERP sqlite path (lane 1's helper copies it)
 //   platform/*        -> live case-cache dir (every file, recursively)
 // Lane split: Gate.Erp.Baseline.BaselineRestore owns the ERP database
 // copy; this Gate.Web coordinator owns the paths, the platform-dir copy,
 // the step report, and the startup ensure.
+using Gate.Compliance;
 using Gate.Web.Services;
 
 namespace Gate.Web;
@@ -42,6 +47,20 @@ public static class BaselineRestore
         return Path.Combine(contentRoot, "data", "baseline");
     }
 
+    /// <summary>Live published-packs dir, resolved exactly like startup:
+    /// the Compliance:PackDirectory setting, else the default, rooted at
+    /// the content root.</summary>
+    public static string LivePacksDir(string contentRoot, IConfiguration config) =>
+        Path.GetFullPath(
+            config[ComplianceEngine.PackDirectoryConfigKey]
+                ?? ComplianceEngine.DefaultPackDirectory,
+            contentRoot);
+
+    /// <summary>Live memo-inbox dir, resolved exactly like memo submit:
+    /// data/memo-inbox under the content root.</summary>
+    public static string LiveMemoInboxDir(string contentRoot) =>
+        Path.Combine(contentRoot, "data", "memo-inbox");
+
     /// <summary>Startup restore: when the live ERP database file is missing
     /// and the snapshot holds one, wipes the live case cache and copies the
     /// snapshot files into the live paths. Returns true when it restored.
@@ -68,7 +87,9 @@ public static class BaselineRestore
 
         var steps = await RestoreAsync(
             baseline, liveErp, CaseCacheStore.ResolveDir(contentRoot), log, ct,
-            ResolveImageDirOrNull(log)).ConfigureAwait(false);
+            ResolveImageDirOrNull(log),
+            LivePacksDir(contentRoot, config),
+            LiveMemoInboxDir(contentRoot)).ConfigureAwait(false);
         log.LogInformation("Baseline restored: {Steps}", string.Join(" | ", steps));
         return true;
     }
@@ -95,10 +116,14 @@ public static class BaselineRestore
     /// The ERP copy runs before the wipe so a failed restore leaves the live
     /// stores untouched. Pure file IO; zero model calls. Returns the
     /// completed steps. A non-null dock image dir also deletes the recorded
-    /// generated dock views plus the image cache (null skips that step).</summary>
+    /// generated dock views plus the image cache (null skips that step); a
+    /// non-null packs dir deletes the published pack files so the company
+    /// base packs win again, and a non-null memo inbox dir deletes pending
+    /// submissions (nulls skip those steps).</summary>
     public static async Task<IReadOnlyList<string>> RestoreAsync(
         string baselineDir, string liveErpPath, string liveCaseCacheDir,
-        ILogger? log = null, CancellationToken ct = default, string? dockImageDir = null)
+        ILogger? log = null, CancellationToken ct = default, string? dockImageDir = null,
+        string? packsDir = null, string? memoInboxDir = null)
     {
         var snapshotErp = Path.Combine(baselineDir, BaselineErpFileName);
         if (!File.Exists(snapshotErp))
@@ -183,6 +208,49 @@ public static class BaselineRestore
             wiped++;
         }
 
+        // Published packs are lifetime-scoped: without this wipe a prior
+        // lifetime's published versions would keep enforcing after the
+        // restore. The company base packs win on an empty dir, so the
+        // company returns exactly to opening.
+        string? packsStep = null;
+        if (packsDir is not null)
+        {
+            var removed = 0;
+            if (Directory.Exists(packsDir))
+            {
+                foreach (var file in Directory.GetFiles(packsDir, "*.json", SearchOption.TopDirectoryOnly))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    File.Delete(file);
+                    removed++;
+                }
+            }
+
+            log?.LogInformation(
+                "Baseline restore: removed {Removed} published pack file(s).", removed);
+            packsStep = $"Published rule packs cleared ({CountWords(removed, "published version")} removed); " +
+                "the company packs are back to opening.";
+        }
+
+        string? inboxStep = null;
+        if (memoInboxDir is not null)
+        {
+            var cleared = 0;
+            if (Directory.Exists(memoInboxDir))
+            {
+                foreach (var file in Directory.GetFiles(memoInboxDir, "*.json", SearchOption.TopDirectoryOnly))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    File.Delete(file);
+                    cleared++;
+                }
+            }
+
+            log?.LogInformation(
+                "Baseline restore: cleared {Cleared} pending memo submission(s).", cleared);
+            inboxStep = $"Memo inbox cleared ({CountWords(cleared, "pending submission")} removed).";
+        }
+
         var copied = 0;
         foreach (var file in platformFiles)
         {
@@ -198,7 +266,7 @@ public static class BaselineRestore
             "Baseline restore: wiped {Wiped} live file(s), copied the saved ERP database plus {Copied} platform file(s).",
             wiped, copied);
         await Task.CompletedTask.ConfigureAwait(false);
-        var steps = new List<string>(capacity: 3)
+        var steps = new List<string>(capacity: 5)
         {
             $"Saved ERP database restored ({new FileInfo(liveErpPath).Length} bytes).",
             $"Live workspace wiped ({CountWords(wiped, "file")} removed), {CountWords(copied, "saved file")} copied in.",
@@ -206,6 +274,16 @@ public static class BaselineRestore
         if (dockStep is not null)
         {
             steps.Add(dockStep);
+        }
+
+        if (packsStep is not null)
+        {
+            steps.Add(packsStep);
+        }
+
+        if (inboxStep is not null)
+        {
+            steps.Add(inboxStep);
         }
 
         return steps;

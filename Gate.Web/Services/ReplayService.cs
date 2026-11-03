@@ -81,7 +81,9 @@ public sealed class ReplayService
                 _cases.CacheDir,
                 _log,
                 ct,
-                BaselineRestore.ResolveImageDirOrNull(_log)).ConfigureAwait(false);
+                BaselineRestore.ResolveImageDirOrNull(_log),
+                BaselineRestore.LivePacksDir(_contentRoot, _config),
+                BaselineRestore.LiveMemoInboxDir(_contentRoot)).ConfigureAwait(false);
             foreach (var step in restored)
             {
                 Step(step);
