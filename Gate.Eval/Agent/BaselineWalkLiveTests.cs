@@ -248,7 +248,7 @@ public sealed class BaselineWalkLiveTests
         Assert.True(splits.IsOn, "Split proposals must be on for this walk.");
         var runner = new CaseRunner(
             erp, new P2pAgent(erp, models, compliance), models, compliance,
-            new DockEvaluatorService(), liveCache, NullLogger<CaseRunner>.Instance,
+            new DockEvaluatorService(new ComplianceEngine()), liveCache, NullLogger<CaseRunner>.Instance,
             visionReadCacheDir: visionReads,
             dockImageOptions: new DockImageOptions(
                 Path.Combine(root, "assets", "dock-scenes", "bases"),

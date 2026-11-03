@@ -216,7 +216,7 @@ public sealed class SplitOff1300LiveTests
             var splits = new SplitProposals { IsOn = false };
             var runner = new CaseRunner(
                 erp, new P2pAgent(erp, models, compliance), models, compliance,
-                new DockEvaluatorService(), liveCache, NullLogger<CaseRunner>.Instance,
+                new DockEvaluatorService(new ComplianceEngine()), liveCache, NullLogger<CaseRunner>.Instance,
                 visionReadCacheDir: visionReads,
                 dockImageOptions: new DockImageOptions(
                     Path.Combine(root, "assets", "dock-scenes", "bases"),

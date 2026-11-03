@@ -41,7 +41,7 @@ public sealed partial class ComplianceEngine
 
     /// <summary>Default rule-pack directory, content-root-relative. Holds
     /// the base pack files (corp.json, ...) plus published versioned files
-    /// (corp.v0.3.json, ...); the seam always loads the highest version.</summary>
+    /// (corp.v3.json, ...); the seam always loads the highest version.</summary>
     public const string DefaultPackDirectory = "Gate.Compliance/Packs";
 
     private readonly string _companyKbPath = DefaultCompanyKbPath;
@@ -183,12 +183,7 @@ public sealed partial class ComplianceEngine
     public Task<IReadOnlyList<LivePackRule>> ListLivePackRulesAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var dir = ResolvePackDirectory();
-        var inputs = Directory.GetFiles(dir, "*.json", SearchOption.TopDirectoryOnly)
-            .OrderBy(f => f, StringComparer.Ordinal)
-            .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
-            .ToList();
-        var set = RulePackLoader.LoadPacks(inputs);
+        var set = RulePackLoader.LoadCurrent(TryResolvePackDirectory());
         IReadOnlyList<LivePackRule> rules = set.Rules
             .Select(r => new LivePackRule(
                 r.Pack, r.PackVersion, r.RuleId, r.RuleType, r.Tier,
@@ -216,13 +211,15 @@ public sealed partial class ComplianceEngine
         return Task.FromResult(ProposalValidator.ValidateAgainstKb(proposal, snapshot));
     }
 
-    /// <summary>Live-pack conflicts for a proposed rule via the Memo core.</summary>
+    /// <summary>Live-pack conflicts for a proposed rule via the Memo core,
+    /// resolved against the current pack set (published files win).</summary>
     public Task<IReadOnlyList<RuleConflict>> DetectConflictsAsync(
         ProposedRule rule, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(rule);
-        return Task.FromResult(RuleConflictDetector.Compute(rule));
+        var packs = RulePackLoader.LoadCurrent(TryResolvePackDirectory());
+        return Task.FromResult(RuleConflictDetector.Compute(rule, packs.Rules, packs.Corp));
     }
 
     /// <summary>Read-only old-vs-new impact report via the Memo core.
@@ -285,7 +282,7 @@ public sealed partial class ComplianceEngine
         var priorJson = CurrentPackJson(packId, dir);
         var publication = PackPublisher.BuildUpdate(
             priorJson, proposal, validation, approval, testEvidence,
-            ruleId, activationId, publishedAt);
+            ruleId, activationId, publishedAt, CurrentRules());
         PackPublisher.PublishToDirectory(publication, dir);
         return Task.FromResult(publication);
     }
@@ -309,7 +306,7 @@ public sealed partial class ComplianceEngine
         var priorJson = CurrentPackJson(packId, dir);
         var publication = PackPublisher.BuildNewRule(
             priorJson, proposal, validation, approval, testEvidence,
-            ruleId, spec, activationId, publishedAt);
+            ruleId, spec, activationId, publishedAt, CurrentRules());
         PackPublisher.PublishToDirectory(publication, dir);
         return Task.FromResult(publication);
     }
@@ -402,6 +399,15 @@ public sealed partial class ComplianceEngine
         return dir;
     }
 
+    /// <summary>Best-effort pack directory for the READ path: the resolved
+    /// directory when it exists, else null (all-embedded). Evaluation never
+    /// throws for a missing directory; publishing still refuses loudly.</summary>
+    private string? TryResolvePackDirectory()
+    {
+        var dir = ResolveDirectory(_packDirectory);
+        return Directory.Exists(dir) ? dir : null;
+    }
+
     /// <summary>Resolves the live pack versions: every pack JSON in the pack
     /// directory through the multi-version loader (highest version wins per
     /// pack), reduced to the pack-name-to-version map the report stamps. Any
@@ -409,12 +415,7 @@ public sealed partial class ComplianceEngine
     /// mismatch) throws; the seam never invents or defaults a version.</summary>
     private IReadOnlyDictionary<string, string> LivePackVersions()
     {
-        var dir = ResolvePackDirectory();
-        var inputs = Directory.GetFiles(dir, "*.json", SearchOption.TopDirectoryOnly)
-            .OrderBy(f => f, StringComparer.Ordinal)
-            .Select(f => (Path.GetFileName(f), File.ReadAllText(f)))
-            .ToList();
-        var set = RulePackLoader.LoadPacks(inputs);
+        var set = RulePackLoader.LoadCurrent(TryResolvePackDirectory());
         return set.Rules
             .Select(r => (r.Pack, r.PackVersion))
             .Distinct()
@@ -444,29 +445,46 @@ public sealed partial class ComplianceEngine
     /// <summary>Loads the current pack JSON for a pack: the highest-version
     /// candidate among the base file plus versioned files, selected with
     /// PackVersions (the same highest-wins arithmetic the multi-version
-    /// loader enforces, so publish and load can never disagree).</summary>
+    /// loader enforces, so publish and load can never disagree). A pack
+    /// with no files in the directory falls back to its embedded files,
+    /// so the first publication into an empty directory builds on the
+    /// shipped base.</summary>
     private static string CurrentPackJson(string packId, string dir)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packId);
         var candidates = PackCandidates(packId, dir);
         if (candidates.Count == 0)
         {
+            candidates = EmbeddedPackCandidates(packId);
+        }
+
+        if (candidates.Count == 0)
+        {
             throw new InvalidOperationException(
                 $"Unknown pack '{packId}': directory '{dir}' carries no pack files for it " +
-                $"(packs present: {DescribePacks(dir)}).");
+                $"and no embedded base exists (packs present: {DescribePacks(dir)}).");
         }
 
         return HighestPackJson(packId, candidates).Json;
     }
 
     /// <summary>Loads the named prior version's pack JSON for a rollback.
-    /// An unknown version refuses loudly, naming what is available.</summary>
+    /// An unknown version refuses loudly, naming what is available. Packs
+    /// with no files in the directory fall back to their embedded files,
+    /// so a rollback to a shipped base version resolves.</summary>
     private static string RestorePackJson(string packId, string restoreVersion, string dir)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(packId);
         ArgumentException.ThrowIfNullOrWhiteSpace(restoreVersion);
         var candidates = PackCandidates(packId, dir);
+        if (candidates.Count == 0)
+        {
+            candidates = EmbeddedPackCandidates(packId);
+        }
+
         var match = candidates.FirstOrDefault(c =>
+            string.Equals(c.Version, restoreVersion, StringComparison.Ordinal));
+        match ??= EmbeddedPackCandidates(packId).FirstOrDefault(c =>
             string.Equals(c.Version, restoreVersion, StringComparison.Ordinal));
         if (match is null)
         {
@@ -482,6 +500,16 @@ public sealed partial class ComplianceEngine
     }
 
     private sealed record PackCandidate(string File, string Json, string Version);
+
+    /// <summary>Embedded fallback candidates for a pack with no directory
+    /// files: the shipped base (plus any shipped versioned file).</summary>
+    private static List<PackCandidate> EmbeddedPackCandidates(string packId)
+    {
+        var prefix = packId.Trim().ToLowerInvariant();
+        return RulePackLoader.EmbeddedInputs(prefix)
+            .Select(input => new PackCandidate(input.Name, input.Json, ReadPackVersion(input.Name, input.Json)))
+            .ToList();
+    }
 
     private static List<PackCandidate> PackCandidates(string packId, string dir)
     {
@@ -562,8 +590,8 @@ public sealed partial class ComplianceEngine
         throw new InvalidOperationException($"Rule pack '{name}' carries no version property; refusing to guess which wins.");
     }
 
-    /// <summary>Extracts the .vN.M filename version from versioned pack
-    /// files (corp.v0.3.json), or null for base files (corp.json).</summary>
+    /// <summary>Extracts the .vN filename version from versioned pack
+    /// files (corp.v3.json), or null for base files (corp.json).</summary>
     private static string? FileVersionSuffix(string fileName, string prefix)
     {
         if (string.Equals(fileName, $"{prefix}.json", StringComparison.Ordinal))

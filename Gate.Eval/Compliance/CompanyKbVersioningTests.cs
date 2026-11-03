@@ -416,7 +416,7 @@ public sealed class CompanyKbVersioningTests
             Assert.Equal(5, rules.Count);
             var corp = rules.Single(r => r.RuleId == "CORP-02");
             Assert.Equal("CORP", corp.PackId);
-            Assert.Equal("v0.2", corp.PackVersion);
+            Assert.Equal("v2", corp.PackVersion);
             Assert.Equal(MemoRuleGate.Vendor, corp.Gate);
             Assert.True(corp.Enforced);
             Assert.Equal(MemoFixtures.FixtureProcurementOwner, corp.Owner);
@@ -454,11 +454,11 @@ public sealed class CompanyKbVersioningTests
                 "CORP-02", "ACT-1", MemoFixtures.FixedAt);
 
             var rules = await engine.ListLivePackRulesAsync();
-            Assert.Equal("v0.3", rules.Single(r => r.RuleId == "CORP-02").PackVersion);
+            Assert.Equal("v3", rules.Single(r => r.RuleId == "CORP-02").PackVersion);
             Assert.Equal("OriginShareCap", rules.Single(r => r.RuleId == "CORP-02").RuleType);
             Assert.Equal(MemoFixtures.FixtureProcurementOwner, rules.Single(r => r.RuleId == "CORP-02").Owner);
             Assert.Equal(DateOnly.Parse("2026-04-01"), rules.Single(r => r.RuleId == "CORP-02").AdoptedDate);
-            Assert.Equal("v0.2", rules.Single(r => r.RuleId == "BAT-LI-01").PackVersion);
+            Assert.Equal("v1", rules.Single(r => r.RuleId == "BAT-LI-01").PackVersion);
         }
         finally
         {
@@ -471,7 +471,7 @@ public sealed class CompanyKbVersioningTests
     {
         var engine = new ComplianceEngine();
         var rules = await engine.ListLivePackRulesAsync();
-        Assert.Contains(rules, r => r.RuleId == "CORP-02" && r.PackVersion == "v0.2");
+        Assert.Contains(rules, r => r.RuleId == "CORP-02" && r.PackVersion == "v2");
         Assert.Contains(rules, r => r.RuleId == "BAT-LI-01" && r.Gate == MemoRuleGate.Vendor);
         Assert.Contains(rules, r => r.RuleId == "BAT-LI-03" && r.Gate == MemoRuleGate.Dock);
         Assert.Contains(rules, r => r.RuleId == "ELEC-04" && r.Gate == MemoRuleGate.PrePay);

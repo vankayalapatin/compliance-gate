@@ -32,7 +32,20 @@ builder.Services.AddDbContextFactory<ErpDbContext>(options => options.UseSqlite(
 // Factory lambda, not the bare type: the adapter also carries a unit-test
 // options constructor, and DI refuses the ambiguous pair. Production
 // always resolves through the context factory.
-builder.Services.AddSingleton<IErpPolicy, ErpPolicy>();
+// Published rule packs live in the app data dir (git-ignored live state),
+// never in the source tree: an approved memo lands as a new versioned
+// file here, and the engine enforces it on the next evaluation with no
+// rebuild and no restart. The directory starts empty (embedded bases win
+// until the first publication) and is created at startup.
+var packsDir = Path.GetFullPath(
+    builder.Configuration[ComplianceEngine.PackDirectoryConfigKey]
+        ?? ComplianceEngine.DefaultPackDirectory,
+    builder.Environment.ContentRootPath);
+Directory.CreateDirectory(packsDir);
+builder.Services.AddSingleton(sp => new ComplianceEngine(
+    ComplianceEngine.OptionsFromConfig(key => builder.Configuration[key])));
+builder.Services.AddSingleton<IComplianceEngine>(sp => sp.GetRequiredService<ComplianceEngine>());
+builder.Services.AddSingleton<IErpPolicy>(sp => new ErpPolicy(sp.GetRequiredService<ComplianceEngine>()));
 builder.Services.AddSingleton<IErpPolicyContext>(sp => new CasePolicyContext(
     CaseCacheStore.ResolveDir(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath)));
 builder.Services.AddScoped<IErpAdapter>(sp =>
@@ -40,7 +53,7 @@ builder.Services.AddScoped<IErpAdapter>(sp =>
         sp.GetRequiredService<IDbContextFactory<ErpDbContext>>(),
         sp.GetRequiredService<IErpPolicy>(),
         sp.GetRequiredService<IErpPolicyContext>()));
-builder.Services.AddSingleton<IComplianceEngine, ComplianceEngine>();
+
 // Spend ledger: process-wide, config-driven (ModelSpend section). The
 // meter wraps the live client only, between the cache and Spark, so
 // cached answers and fake echo calls never accrue spend.

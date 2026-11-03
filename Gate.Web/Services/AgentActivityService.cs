@@ -6,6 +6,7 @@
 // are logged, never swallowed. Render rules live in ActivityLines; this
 // class only reads.
 using Gate.Agent;
+using Gate.Compliance;
 using Gate.Contracts;
 using Gate.Erp;
 using Gate.Web.ViewModels;
@@ -23,16 +24,19 @@ public sealed class AgentActivityService
     private readonly CaseRunner _runner;
     private readonly ILogger<AgentActivityService> _log;
     private readonly CountryNames? _countries;
+    private readonly ComplianceEngine? _engine;
 
     public AgentActivityService(
         CaseCacheStore cases, IErpAdapter erp, CaseRunner runner, ILogger<AgentActivityService> log,
-        CountryNames? countries = null)
+        CountryNames? countries = null,
+        ComplianceEngine? engine = null)
     {
         _cases = cases;
         _erp = erp;
         _runner = runner;
         _log = log;
         _countries = countries;
+        _engine = engine;
     }
 
     public async Task<AgentActivityVm> BuildAsync(CancellationToken ct = default)
@@ -285,7 +289,7 @@ public sealed class AgentActivityService
 
         try
         {
-            lines = await OriginCapExplainer.LinesAsync(_erp, file, _log, _countries?.Map, ct).ConfigureAwait(false);
+            lines = await OriginCapExplainer.LinesAsync(_erp, file, _log, _countries?.Map, ct, _engine).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

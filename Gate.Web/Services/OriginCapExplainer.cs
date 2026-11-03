@@ -20,7 +20,8 @@ public static class OriginCapExplainer
     public static async Task<IReadOnlyList<OriginCapLine>> LinesAsync(
         IErpAdapter erp, CaseFile file, ILogger? log,
         IReadOnlyDictionary<string, string>? countryNames = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ComplianceEngine? engine = null)
     {
         // Origin-cap sentences only: vendors blocked by the origin-cap rule
         // plus vendors who passed screening entirely. Vendors blocked by
@@ -134,7 +135,7 @@ public static class OriginCapExplainer
         decimal cap;
         try
         {
-            cap = RuleCatalog.Corp.OriginCap;
+            cap = engine?.CurrentCorpConfig().OriginCap ?? RuleCatalog.Corp.OriginCap;
         }
         catch (Exception ex)
         {

@@ -18,6 +18,7 @@ public sealed class CaseViewService
     private readonly ModelSpendTracker? _spend;
     private readonly CountryNames? _countries;
     private readonly P2pAgent? _screening;
+    private readonly ComplianceEngine? _engine;
 
     public CaseViewService(
         IErpAdapter erp,
@@ -26,7 +27,8 @@ public sealed class CaseViewService
         ILogger<CaseViewService> log,
         ModelSpendTracker? spend = null,
         CountryNames? countries = null,
-        P2pAgent? screening = null)
+        P2pAgent? screening = null,
+        ComplianceEngine? engine = null)
     {
         _erp = erp;
         _cases = cases;
@@ -35,6 +37,7 @@ public sealed class CaseViewService
         _spend = spend;
         _countries = countries;
         _screening = screening;
+        _engine = engine;
     }
 
     public async Task<IReadOnlyList<DecisionCardVm>> ListDecisionCardsAsync(CancellationToken ct = default)
@@ -184,7 +187,7 @@ public sealed class CaseViewService
         if (decision.RuleId is not null)
         {
             var reason = decision.Reason ?? "no reason recorded";
-            var rule = RuleCatalog.TryFind(decision.RuleId);
+            var rule = _engine?.TryFindRule(decision.RuleId) ?? RuleCatalog.TryFind(decision.RuleId);
             return rule is null
                 ? $"{decision.RuleId} — {reason}"
                 : $"{rule.RuleId} ({rule.PackVersion}): {rule.Title} — {reason}";
@@ -461,7 +464,7 @@ public sealed class CaseViewService
         IReadOnlyList<OriginCapLine> math = [];
         try
         {
-            math = await OriginCapExplainer.LinesAsync(_erp, file, _log, _countries?.Map, ct).ConfigureAwait(false);
+            math = await OriginCapExplainer.LinesAsync(_erp, file, _log, _countries?.Map, ct, _engine).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

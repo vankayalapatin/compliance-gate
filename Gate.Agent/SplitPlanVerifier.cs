@@ -1,7 +1,10 @@
 // Split-plan verifier: pure C# judgment over a Spark-proposed whole-carton
 // split. Every line must pass the full policy check at its own quantity
-// with the earlier lines counted as open (the same order the POs are
-// created in, so same-country combinations are covered), the quantities
+// with the earlier lines counted as open, in the order the POs will be
+// created in (so same-country combinations are covered). The creation
+// order is mechanics: when the proposed order fails, other line orders
+// are tried and the first passing one wins, so a valid plan is never
+// rejected for the order Spark happened to list it in. The quantities
 // must add up to the request in whole cartons, and the plan must beat
 // the single-vendor award. A valid but costlier plan is blocked naming
 // only the dollars left on the table, never the better composition: Spark
@@ -22,7 +25,11 @@ public sealed record SplitVerification(
 
 public static class SplitPlanVerifier
 {
-    /// <summary>Verifies a proposed split line by line, in order. Returns the
+    /// <summary>Verifies a proposed split line by line. The creation order
+    /// is mechanics, not judgment: when the proposed order fails, every
+    /// other line order is tried (up to four lines; beyond that the
+    /// proposed order plus its reverse), and the first order in which
+    /// every line passes becomes the plan's creation order. Returns the
     /// plan with no errors, or the refusal reasons with no plan. A valid
     /// plan that a cheaper valid plan beats is refused with only the
     /// dollars left on the table unless note explains why it stands. Throws
@@ -166,9 +173,11 @@ public static class SplitPlanVerifier
         }
 
         // Each line passes on its own with the earlier lines counted as
-        // open: the same order the POs are created in, so a same-country
-        // combination can never slip through the per-line checks.
-        var (lineErrors, lines) = await CheckLinesAsync(
+        // open, in the order the POs will be created in, so a same-country
+        // combination can never slip through the per-line checks. The
+        // proposed order is tried first; when it fails, other orders are
+        // tried and the first passing one wins.
+        var (lineErrors, lines) = await CheckLinesInPassingOrderAsync(
             erp, compliance, file, vendors, item, history, preOpen,
             vendorIds, quantities, ct).ConfigureAwait(false);
         errors.AddRange(lineErrors);
@@ -226,6 +235,90 @@ public static class SplitPlanVerifier
             .ToList();
         var plan = new SplitPlan(lines, shares, splitTotal, baseline, saving, pr.Currency);
         return new SplitVerification(plan, [], full.Screenings, full.Grants);
+    }
+
+    /// <summary>Tries the proposed line order first, then every other
+    /// order (up to four lines; beyond that the proposed order plus its
+    /// reverse), returning the first order in which every line passes.
+    /// When no order passes, the proposed order's reasons come back, so
+    /// the line numbers Spark sees match the plan it proposed.</summary>
+    private static async Task<(IReadOnlyList<string> Errors, IReadOnlyList<SplitPlanLine> Lines)> CheckLinesInPassingOrderAsync(
+        IErpAdapter erp,
+        IComplianceEngine compliance,
+        CaseFile file,
+        IReadOnlyDictionary<string, VendorDto> vendors,
+        ItemDto item,
+        IReadOnlyList<VolumeHistory> history,
+        IReadOnlyList<OpenOrderQty> preOpen,
+        IReadOnlyList<string> vendorIds,
+        IReadOnlyList<decimal> quantities,
+        CancellationToken ct)
+    {
+        var first = await CheckLinesAsync(
+            erp, compliance, file, vendors, item, history, preOpen,
+            vendorIds, quantities, ct).ConfigureAwait(false);
+        if (first.Errors.Count == 0)
+        {
+            return first;
+        }
+
+        foreach (var order in LineOrders(vendorIds.Count).Skip(1))
+        {
+            var reorderedVendors = order.Select(i => vendorIds[i]).ToList();
+            var reorderedQtys = order.Select(i => quantities[i]).ToList();
+            var attempt = await CheckLinesAsync(
+                erp, compliance, file, vendors, item, history, preOpen,
+                reorderedVendors, reorderedQtys, ct).ConfigureAwait(false);
+            if (attempt.Errors.Count == 0)
+            {
+                return attempt;
+            }
+        }
+
+        return first;
+    }
+
+    /// <summary>Line orders to try, proposed first: every permutation for
+    /// up to four lines, else the proposed order plus its reverse. The
+    /// factorial search stays bounded (24 orders max); wider splits are
+    /// not expected (the best-plan search only justifies two lines).</summary>
+    private static IReadOnlyList<IReadOnlyList<int>> LineOrders(int count)
+    {
+        var identity = Enumerable.Range(0, count).ToList();
+        if (count > 4)
+        {
+            return [identity, identity.AsEnumerable().Reverse().ToList()];
+        }
+
+        var orders = new List<IReadOnlyList<int>> { identity };
+        foreach (var perm in Permutations(identity))
+        {
+            if (!perm.SequenceEqual(identity))
+            {
+                orders.Add(perm);
+            }
+        }
+
+        return orders;
+    }
+
+    private static IEnumerable<IReadOnlyList<int>> Permutations(IReadOnlyList<int> items)
+    {
+        if (items.Count == 0)
+        {
+            yield return [];
+            yield break;
+        }
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            var head = items[i];
+            var rest = items.Where((_, j) => j != i).ToList();
+            foreach (var tail in Permutations(rest))
+            {
+                yield return tail.Prepend(head).ToList();
+            }
+        }
     }
 
     /// <summary>Checks lines in order with the earlier lines counted as

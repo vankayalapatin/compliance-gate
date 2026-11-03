@@ -194,14 +194,40 @@ public sealed class SplitPlanVerifierTests
     public async Task FailingLineNamesItsRule()
     {
         var (erp, file) = await SetupAsync();
-        // 1,100 on the first line breaches on its own:
-        // (5,600 + 1,100) / (10,000 + 1,100) = 60.4%.
-        var result = await VerifyAsync(erp, file, ["V-A", "V-B"], ["V-A", "V-B"], [1100, 100]);
+        // 1,150 breaches in every order: proposed opens
+        // (5,600 + 1,150) / (10,000 + 1,150) = 60.5%, and reversed closes
+        // (5,600 + 1,150) / (10,000 + 50 + 1,150) = 60.3%.
+        var result = await VerifyAsync(erp, file, ["V-A", "V-B"], ["V-A", "V-B"], [1150, 50]);
 
         Assert.Null(result.Plan);
         var error = Assert.Single(result.Errors);
         Assert.Contains("Line 1", error, StringComparison.Ordinal);
         Assert.Contains("CORP-02", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PassingOrderWinsWhenProposedFails()
+    {
+        // CinderVolt first breaches: (5,600 + 1,100) / (10,000 + 1,100)
+        // = 60.4%. Meridian first passes: the CinderVolt line then closes
+        // (5,600 + 1,100) / (10,000 + 100 + 1,100) = 59.8%. Creation
+        // order is mechanics, so the plan stands reordered and the POs
+        // create Meridian first.
+        var (erp, file) = await SetupAsync();
+        var result = await VerifyAsync(
+            erp, file, ["V-A", "V-B"], ["V-A", "V-B"], [1100, 100],
+            "keep CinderVolt share high within the cap");
+
+        Assert.Empty(result.Errors);
+        var plan = result.Plan;
+        Assert.NotNull(plan);
+        Assert.Equal("V-B", plan.Lines[0].VendorId);
+        Assert.Equal(100m, plan.Lines[0].Quantity);
+        Assert.Equal("V-A", plan.Lines[1].VendorId);
+        Assert.Equal(1100m, plan.Lines[1].Quantity);
+        Assert.Equal(13300m, plan.SplitTotal);
+        Assert.Equal(14400m, plan.SingleVendorTotal);
+        Assert.Equal(1100m, plan.Saving);
     }
 
     [Fact]

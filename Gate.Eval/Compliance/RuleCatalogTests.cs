@@ -1,5 +1,5 @@
 // Catalog integrity: tier assignments, enforcement flags, and citations
-// match PROJECT.md section 6 (catalog v0.2). Deterministic by construction.
+// match PROJECT.md section 6 (catalog v1). Deterministic by construction.
 using Gate.Compliance;
 using Gate.Contracts;
 
@@ -45,7 +45,7 @@ public sealed class RuleCatalogTests
         {
             Assert.False(string.IsNullOrWhiteSpace(r.Source));
             Assert.False(string.IsNullOrWhiteSpace(r.Title));
-            Assert.Equal(r.Pack == "BAT-LI" ? "v2" : "v0.2", r.PackVersion);
+            Assert.Equal(r.Pack is "BAT-LI" or "CORP" ? "v2" : "v1", r.PackVersion);
         });
     }
 

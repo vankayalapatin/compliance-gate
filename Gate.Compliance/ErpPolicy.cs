@@ -45,7 +45,7 @@ public sealed class ErpPolicy : IErpPolicy
             return PolicyCheckResult.Pass();
         }
 
-        var rule = RuleCatalog.Find(block.RuleId);
+        var rule = _engine.FindRule(block.RuleId);
         return PolicyCheckResult.Block(new PolicyRefusal(
             block.RuleId, rule.Pack, rule.PackVersion, block.Reason));
     }
@@ -68,7 +68,7 @@ public sealed class ErpPolicy : IErpPolicy
         return ToResult(verdicts);
     }
 
-    private static PolicyCheckResult ToResult(IReadOnlyList<Verdict> verdicts)
+    private PolicyCheckResult ToResult(IReadOnlyList<Verdict> verdicts)
     {
         var block = verdicts.FirstOrDefault(v => v.Kind == VerdictKind.Block);
         if (block is null)
@@ -76,7 +76,7 @@ public sealed class ErpPolicy : IErpPolicy
             return PolicyCheckResult.Pass();
         }
 
-        var rule = RuleCatalog.Find(block.RuleId);
+        var rule = _engine.FindRule(block.RuleId);
         return PolicyCheckResult.Block(new PolicyRefusal(
             block.RuleId, rule.Pack, rule.PackVersion, block.Reason));
     }

@@ -212,7 +212,7 @@ public sealed class MemoConflictTests
     {
         var live = new List<RuleDefinition>
         {
-            new("ELEC-01", "ELEC", "v0.2", RuleTier.Tier2, ComplianceGate.Vendor,
+            new("ELEC-01", "ELEC", "v1", RuleTier.Tier2, ComplianceGate.Vendor,
                 "RoHS", "Fixture", true, MemoFixtures.FixtureProcurementOwner,
                 DateOnly.Parse(MemoFixtures.FixtureAdoptedDate), "RoHS", "RoHS declaration"),
         };

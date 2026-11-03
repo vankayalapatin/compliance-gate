@@ -259,7 +259,7 @@ Act as: Maya Planner. Screen: ERP, Purchase orders. Start a new
 purchase order for PR-1038 from CinderVolt Energy Ltd and submit it.
 The ERP refuses with "Refused." plus the sentence:
 
-> CORP-02 (CORP v0.2): Awarding 2,400 battery cells (BAT-1) to CN puts
+> CORP-02 (CORP v2): Awarding 2,400 battery cells (BAT-1) to CN puts
 > its share at 60.9% (5,900+2,400 of 11,200+40 open+2,400 battery
 > cells), including 40 battery cells on open orders, exceeding the 60%
 > country-of-origin cap.
@@ -277,15 +277,15 @@ to a second owner.
 
 Act as: Finn Finance. Screen: Governance, Memos. Open the proposal
 card, type the passing test names as evidence (required), press
-Approve. The pack publishes CORP v0.2 to v0.3, and the Rules page
+Approve. The pack publishes CORP v2 to v3, and the Rules page
 shows the CORP-02 company row with its own pack version and adoption
 date.
 
-The published rule takes effect in the app's checks after the next
-build and restart. Once live, the next battery order over the new cap
+The published rule takes effect in the app's checks at once, with no
+rebuild and no restart. The next battery order over the new cap
 is refused at the ERP; the live memo run recorded the sentence:
 
-> CORP-02 (CORP v0.2): Awarding 90 battery cells (BAT-1) to CN puts
+> CORP-02 (CORP v3): Awarding 90 battery cells (BAT-1) to CN puts
 > its share at 60.4% (6,000+90 of 10,000+90 battery cells), exceeding
 > the 40% country-of-origin cap.
 

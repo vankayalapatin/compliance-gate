@@ -46,8 +46,8 @@ public sealed class MemoApprovalTests
         Assert.NotNull(result.Activation);
         Assert.Equal("CORP-02", result.Activation.RuleId);
         Assert.Equal("CORP", result.Activation.PackId);
-        Assert.Equal("v0.2", result.Activation.PriorPackVersion);
-        Assert.Equal("v0.3", result.Activation.NewPackVersion);
+        Assert.Equal("v2", result.Activation.PriorPackVersion);
+        Assert.Equal("v3", result.Activation.NewPackVersion);
         Assert.Equal("MEMO-T1", result.Activation.MemoId);
         Assert.Contains("PublishRuleUpdate:CORP:CORP-02", h.Compliance.MemoCalls);
         Assert.Contains("0.40", h.Compliance.PriorPacks["CORP"], StringComparison.Ordinal);
@@ -71,7 +71,7 @@ public sealed class MemoApprovalTests
         Assert.NotNull(result.Activation);
         Assert.Equal("CORP", result.Activation.PackId);
         Assert.Equal("CORP-MEMO-T3", result.Activation.RuleId);
-        Assert.Equal("v0.3", result.Activation.NewPackVersion);
+        Assert.Equal("v3", result.Activation.NewPackVersion);
         Assert.Contains("PublishNewRule:CORP:CORP-MEMO-T3", h.Compliance.MemoCalls);
         Assert.Contains("COO declaration required.", h.Compliance.PriorPacks["CORP"], StringComparison.Ordinal);
     }

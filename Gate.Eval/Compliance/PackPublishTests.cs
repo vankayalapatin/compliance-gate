@@ -36,11 +36,11 @@ public sealed class PackPublishTests
             MemoFixtures.CorpPackJson(), proposal, validation, approval,
             ["MemoConflictTests.LowerCapTightensQuotingBothCaps"], "CORP-02", "ACT-1", MemoFixtures.FixedAt);
 
-        Assert.Equal("corp.v0.3.json", publication.FileName);
+        Assert.Equal("corp.v3.json", publication.FileName);
         Assert.Equal("CORP-02", publication.Activation.RuleId);
         Assert.Equal("CORP", publication.Activation.PackId);
-        Assert.Equal("v0.3", publication.Activation.NewPackVersion);
-        Assert.Equal("v0.2", publication.Activation.PriorPackVersion);
+        Assert.Equal("v3", publication.Activation.NewPackVersion);
+        Assert.Equal("v2", publication.Activation.PriorPackVersion);
         Assert.Equal("MEMO-1", publication.Activation.MemoId);
         Assert.Equal("kbv9", publication.Activation.KbVersion);
         Assert.Contains("MEMO-1", publication.Json);
@@ -53,7 +53,7 @@ public sealed class PackPublishTests
         var set = RulePackLoader.LoadPacks(inputs);
         Assert.Equal(0.40m, set.Corp.OriginCap);
         Assert.Equal(0.50m, set.Corp.VendorCap);
-        Assert.Equal("v0.3", set.Rules.Single(r => r.RuleId == "CORP-02").PackVersion);
+        Assert.Equal("v3", set.Rules.Single(r => r.RuleId == "CORP-02").PackVersion);
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public sealed class PackPublishTests
             new NewRuleSpec("COO declaration on file before award.", RuleTier.Tier1, "COO declaration"),
             "ACT-2", MemoFixtures.FixedAt);
 
-        Assert.Equal("corp.v0.3.json", publication.FileName);
+        Assert.Equal("corp.v3.json", publication.FileName);
         Assert.Equal("kbv9", publication.Activation.KbVersion);
         Assert.DoesNotContain("CORP-03", prior);
         Assert.Contains("CORP-03", publication.Json);
@@ -116,7 +116,7 @@ public sealed class PackPublishTests
     public void WrongPackRefuses()
     {
         var (proposal, validation, approval) = CapTrio();
-        var batli = MemoFixtures.PackJson("BAT-LI", "v0.2", MemoFixtures.RuleJson("BAT-LI-01"));
+        var batli = MemoFixtures.PackJson("BAT-LI", "v1", MemoFixtures.RuleJson("BAT-LI-01"));
         var ex = Assert.Throws<InvalidOperationException>(() => PackPublisher.BuildUpdate(
             batli, proposal, validation, approval, ["t"], "BAT-LI-01", "ACT-1", MemoFixtures.FixedAt));
         Assert.Contains("CORP", ex.Message);
@@ -158,9 +158,9 @@ public sealed class PackPublishTests
             "Board paused the tightening; restore 60%.",
             "CORP-02", "ACT-9", MemoFixtures.FixedAt.AddDays(61));
 
-        Assert.Equal("corp.v0.4.json", rollback.FileName);
-        Assert.Equal("v0.4", rollback.Activation.NewPackVersion);
-        Assert.Equal("v0.3", rollback.Activation.PriorPackVersion);
+        Assert.Equal("corp.v4.json", rollback.FileName);
+        Assert.Equal("v4", rollback.Activation.NewPackVersion);
+        Assert.Equal("v3", rollback.Activation.PriorPackVersion);
         Assert.Null(rollback.Activation.KbVersion);
         Assert.Contains("0.60", rollback.Json);
         Assert.Contains("MEMO-2", rollback.Json);

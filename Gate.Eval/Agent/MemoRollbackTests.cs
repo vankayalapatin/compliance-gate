@@ -28,20 +28,20 @@ public sealed class MemoRollbackTests
         var h = await PublishedAsync();
 
         var activation = await h.Runner.RequestRollbackAsync(
-            "MEMO-T1", "v0.2", "The 40% cap blocked every award path.", "Terry Owner");
+            "MEMO-T1", "v2", "The 40% cap blocked every award path.", "Terry Owner");
 
         Assert.Equal("CORP", activation.PackId);
         Assert.Equal("CORP-02", activation.RuleId);
-        Assert.Equal("v0.3", activation.PriorPackVersion);
-        Assert.Equal("v0.4", activation.NewPackVersion);
+        Assert.Equal("v3", activation.PriorPackVersion);
+        Assert.Equal("v4", activation.NewPackVersion);
         Assert.Equal("MEMO-T1", activation.MemoId);
         Assert.Equal("Terry Owner", activation.Approver);
-        Assert.Contains("PublishRollback:CORP:v0.2", h.Compliance.MemoCalls);
+        Assert.Contains("PublishRollback:CORP:v2", h.Compliance.MemoCalls);
         Assert.Contains("0.60", h.Compliance.PriorPacks["CORP"], StringComparison.Ordinal);
         var file = MemoStore.Load(h.CacheDir, "MEMO-T1")!;
         Assert.Equal(2, file.Activations.Count);
         Assert.Contains(file.Events, e =>
-            e.Summary.Contains("rolled back to v0.2", StringComparison.Ordinal));
+            e.Summary.Contains("rolled back to v2", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public sealed class MemoRollbackTests
         var effective = DateTimeOffset.UtcNow.AddDays(7);
 
         var activation = await h.Runner.RequestRollbackAsync(
-            "MEMO-T1", "v0.2", "Too tight.", "Terry Owner",
+            "MEMO-T1", "v2", "Too tight.", "Terry Owner",
             effectiveAt: effective, applicability: RuleApplicability.ProspectiveWithReview);
 
         Assert.Equal(effective, activation.EffectiveAt);
@@ -65,7 +65,7 @@ public sealed class MemoRollbackTests
         await MemoTestKit.IngestAsync(h);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => h.Runner.RequestRollbackAsync("MEMO-T1", "v0.2", "Why.", "Terry Owner"));
+            () => h.Runner.RequestRollbackAsync("MEMO-T1", "v2", "Why.", "Terry Owner"));
 
         Assert.Contains("no publication to roll back", ex.Message, StringComparison.Ordinal);
     }
@@ -88,11 +88,11 @@ public sealed class MemoRollbackTests
         var h = await PublishedAsync();
 
         var noReason = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => h.Runner.RequestRollbackAsync("MEMO-T1", "v0.2", " ", "Terry Owner"));
+            () => h.Runner.RequestRollbackAsync("MEMO-T1", "v2", " ", "Terry Owner"));
         Assert.Contains("reason", noReason.Message, StringComparison.OrdinalIgnoreCase);
 
         var noApprover = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => h.Runner.RequestRollbackAsync("MEMO-T1", "v0.2", "Why.", " "));
+            () => h.Runner.RequestRollbackAsync("MEMO-T1", "v2", "Why.", " "));
         Assert.Contains("approver", noApprover.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

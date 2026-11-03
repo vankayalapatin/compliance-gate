@@ -39,7 +39,7 @@ public sealed class WhatIfTests
             fiscal,
             "proposal-hash-9",
             "kbv9",
-            new Dictionary<string, string> { ["CORP"] = "v0.2" },
+            new Dictionary<string, string> { ["CORP"] = "v2" },
             MemoFixtures.FixedAt,
             probes);
 

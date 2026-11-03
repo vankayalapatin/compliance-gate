@@ -91,7 +91,7 @@ internal static class MemoFixtures
         editedParams, comment);
 
     public static string CorpPackJson(
-        string version = "v0.2",
+        string version = "v2",
         string originCap = "0.60",
         string vendorCap = "0.50",
         string owner = FixtureProcurementOwner,
@@ -121,11 +121,11 @@ internal static class MemoFixtures
         """;
 
     public static List<(string Name, string Json)> FourPacks(
-        string corpVersion = "v0.2", string corpOriginCap = "0.60") =>
+        string corpVersion = "v2", string corpOriginCap = "0.60") =>
     [
-        ("Packs.bat-li.json", PackJson("BAT-LI", "v0.2", RuleJson("BAT-LI-01"))),
-        ("Packs.elec.json", PackJson("ELEC", "v0.2", RuleJson("ELEC-01"))),
-        ("Packs.scr.json", PackJson("SCR", "v0.2", RuleJson("SCR-01"))),
+        ("Packs.bat-li.json", PackJson("BAT-LI", "v1", RuleJson("BAT-LI-01"))),
+        ("Packs.elec.json", PackJson("ELEC", "v1", RuleJson("ELEC-01"))),
+        ("Packs.scr.json", PackJson("SCR", "v1", RuleJson("SCR-01"))),
         ("Packs.corp.json", CorpPackJson(corpVersion, corpOriginCap)),
     ];
 

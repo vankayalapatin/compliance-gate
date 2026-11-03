@@ -10,18 +10,19 @@ public sealed class PackVersioningTests
     public void HighestVersionWinsWhilePriorStaysRetained()
     {
         var inputs = MemoFixtures.FourPacks();
-        inputs.Add(("Packs.corp.v0.3.json", MemoFixtures.CorpPackJson("v0.3", "0.40")));
+        inputs.Add(("Packs.corp.v3.json", MemoFixtures.CorpPackJson("v3", "0.40")));
         var set = RulePackLoader.LoadPacks(inputs);
         Assert.Equal(0.40m, set.Corp.OriginCap);
-        Assert.Equal("v0.3", set.Rules.Single(r => r.RuleId == "CORP-02").PackVersion);
-        Assert.Equal("v0.2", set.Rules.Single(r => r.RuleId == "ELEC-01").PackVersion);
+        Assert.Equal("v3", set.Rules.Single(r => r.RuleId == "CORP-02").PackVersion);
+        Assert.Equal("v1", set.Rules.Single(r => r.RuleId == "ELEC-01").PackVersion);
     }
 
     [Fact]
     public void NumericCompareBeatsLexicographic()
     {
         Assert.True(PackVersions.Compare("v0.10", "v0.9") > 0);
-        Assert.Equal("v0.3", PackVersions.Next("v0.2"));
+        Assert.Equal("v2", PackVersions.Next("v1"));
+        Assert.Equal("v1", PackVersions.Next("v0.2"));
         var (major, minor) = PackVersions.Parse("v1.12");
         Assert.Equal((1, 12), (major, minor));
     }
@@ -30,8 +31,8 @@ public sealed class PackVersioningTests
     public void MajorOnlyVersionMeansMinorZero()
     {
         Assert.Equal((2, 0), PackVersions.Parse("v2"));
-        Assert.True(PackVersions.Compare("v2", "v0.2") > 0);
-        Assert.Equal("v2.1", PackVersions.Next("v2"));
+        Assert.True(PackVersions.Compare("v2", "v1") > 0);
+        Assert.Equal("v3", PackVersions.Next("v2"));
     }
 
     [Fact]
@@ -49,7 +50,7 @@ public sealed class PackVersioningTests
     public void DuplicateVersionRefuses()
     {
         var inputs = MemoFixtures.FourPacks();
-        inputs.Add(("Packs.corp.v0.2.json", MemoFixtures.CorpPackJson("v0.2")));
+        inputs.Add(("Packs.corp.v2.json", MemoFixtures.CorpPackJson("v2")));
         var ex = Assert.Throws<InvalidOperationException>(() => RulePackLoader.LoadPacks(inputs));
         Assert.Contains("twice", ex.Message);
     }
@@ -58,10 +59,10 @@ public sealed class PackVersioningTests
     public void FilenameContentMismatchRefuses()
     {
         var inputs = MemoFixtures.FourPacks();
-        inputs.Add(("Packs.corp.v0.3.json", MemoFixtures.CorpPackJson("v0.4")));
+        inputs.Add(("Packs.corp.v3.json", MemoFixtures.CorpPackJson("v4")));
         var ex = Assert.Throws<InvalidOperationException>(() => RulePackLoader.LoadPacks(inputs));
-        Assert.Contains("v0.3", ex.Message);
-        Assert.Contains("v0.4", ex.Message);
+        Assert.Contains("v3", ex.Message);
+        Assert.Contains("v4", ex.Message);
     }
 
     [Fact]
@@ -76,13 +77,13 @@ public sealed class PackVersioningTests
     public void PublishedRuleFieldsRoundTripThroughTheLoader()
     {
         var json = """
-        {"pack":"CORP","version":"v0.3","owner":"Terry Owner","adopted":"2026-04-01","rules":[
+        {"pack":"CORP","version":"v3","owner":"Terry Owner","adopted":"2026-04-01","rules":[
         {"id":"CORP-02","tier":"Tier1","gate":"Vendor","title":"Country-of-origin cap.","source":"Board memo MEMO-9","enforced":true,"ruleType":"OriginShareCap","params":{"cap":"0.40","windowMonths":"12","partScope":"critical"}}
         ],"config":{"originCap":0.40,"vendorCap":0.50,"policySource":"Board memo MEMO-9"},
         "provenance":{"memoId":"MEMO-9","approver":"Terry Owner","effectiveAt":"2026-12-01T00:00:00+00:00"}}
         """;
         var inputs = MemoFixtures.FourPacks();
-        inputs.Add(("Packs.corp.v0.3.json", json));
+        inputs.Add(("Packs.corp.v3.json", json));
         var set = RulePackLoader.LoadPacks(inputs);
         var rule = set.Rules.Single(r => r.RuleId == "CORP-02");
         Assert.Equal("OriginShareCap", rule.RuleType);
@@ -91,12 +92,14 @@ public sealed class PackVersioningTests
     }
 
     [Fact]
-    public void EmbeddedCatalogShipsBatLiV2OverRetainedV02()
+    public void EmbeddedCatalogShipsBatLiV2OverRetainedV1()
     {
         // Each rule carries its own pack version: BAT-LI v2 wins over the
-        // retained v0.2 base; every other pack stays v0.2.
+        // retained v1 base; CORP ships v2 (the memo-adopted pack) while
+        // ELEC and SCR ship v1.
         Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "BAT-LI"), r => Assert.Equal("v2", r.PackVersion));
-        Assert.All(RuleCatalog.Rules.Where(r => r.Pack != "BAT-LI"), r => Assert.Equal("v0.2", r.PackVersion));
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack == "CORP"), r => Assert.Equal("v2", r.PackVersion));
+        Assert.All(RuleCatalog.Rules.Where(r => r.Pack is "ELEC" or "SCR"), r => Assert.Equal("v1", r.PackVersion));
         Assert.Equal(0.60m, RuleCatalog.Corp.OriginCap);
         Assert.Equal(0.50m, RuleCatalog.Corp.VendorCap);
         var corpAdopted = DateOnly.Parse("2026-10-01");
@@ -148,7 +151,7 @@ public sealed class PackVersioningTests
     {
         var inputs = MemoFixtures.FourPacks();
         inputs[0] = ("Packs.bat-li.json", MemoFixtures.PackJson(
-            "BAT-LI", "v0.2", MemoFixtures.RuleJson("BAT-LI-01"), adopted: "someday"));
+            "BAT-LI", "v1", MemoFixtures.RuleJson("BAT-LI-01"), adopted: "someday"));
         var ex = Assert.Throws<InvalidOperationException>(() => RulePackLoader.LoadPacks(inputs));
         Assert.Contains("adopted date", ex.Message);
         Assert.Contains("someday", ex.Message);
@@ -160,7 +163,7 @@ public sealed class PackVersioningTests
     public void LosingFileWithBadAdoptedStillRefuses()
     {
         var inputs = MemoFixtures.FourPacks();
-        inputs.Add(("Packs.corp.v0.3.json", MemoFixtures.CorpPackJson("v0.3")));
+        inputs.Add(("Packs.corp.v3.json", MemoFixtures.CorpPackJson("v3")));
         inputs[3] = ("Packs.corp.json", MemoFixtures.CorpPackJson(adopted: "someday"));
         var ex = Assert.Throws<InvalidOperationException>(() => RulePackLoader.LoadPacks(inputs));
         Assert.Contains("adopted date", ex.Message);

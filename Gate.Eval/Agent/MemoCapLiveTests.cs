@@ -186,14 +186,12 @@ public sealed class MemoCapLiveTests
             summary.PriorPackVersion = approved.Activation.PriorPackVersion;
             summary.NewPackVersion = approved.Activation.NewPackVersion;
 
-            var published = RulePackLoader.LoadPacks(
-                Directory.GetFiles(packDir, "*.json")
-                    .OrderBy(f => f, StringComparer.Ordinal)
-                    .Select(f => (Path.GetFileName(f), File.ReadAllText(f))));
-            Assert.Equal(0.40m, published.Corp.OriginCap);
-            summary.PublishedCap = published.Corp.OriginCap;
+            // No rebuild and no restart: the engine created before the memo
+            // was published enforces the published pack on its next check.
+            Assert.Equal(0.40m, engine.CurrentCorpConfig().OriginCap);
+            summary.PublishedCap = engine.CurrentCorpConfig().OriginCap;
 
-            var enforcing = new InMemoryErpAdapter(new ErpPolicy(new ComplianceEngine(published.Corp)));
+            var enforcing = new InMemoryErpAdapter(new ErpPolicy(engine));
             enforcing.SeedBaseCurrency("USD");
             enforcing.SeedAutoApproveThreshold(500m);
             enforcing.SeedPaymentTerms(new PaymentTermsDto("NET0", 0));
@@ -230,6 +228,7 @@ public sealed class MemoCapLiveTests
                 enforcing.CreatePoAsync(pr, "V-A", RecordSource.Human, "planner", Guid.NewGuid().ToString("N")));
             Assert.StartsWith(ComplianceEngine.CorpOriginCapId, ex.Message, StringComparison.Ordinal);
             Assert.Contains("40", ex.Message, StringComparison.Ordinal);
+            Assert.Contains($"(CORP {summary.NewPackVersion})", ex.Message, StringComparison.Ordinal);
             summary.Refusal = ex.Message;
 
             var controlPr = await ApprovedPrAsync(enforcing, 100);

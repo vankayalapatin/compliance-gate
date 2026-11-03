@@ -213,7 +213,7 @@ public sealed class Cycle200LiveTests
             Assert.False(scenes.LiveOn, "The library path proves this cycle; live scenes stay off.");
             var runner = new CaseRunner(
                 erp, new P2pAgent(erp, models, compliance), models, compliance,
-                new DockEvaluatorService(), liveCache, NullLogger<CaseRunner>.Instance,
+                new DockEvaluatorService(new ComplianceEngine()), liveCache, NullLogger<CaseRunner>.Instance,
                 visionReadCacheDir: visionReads,
                 dockImageOptions: new DockImageOptions(
                     Path.Combine(root, "assets", "dock-scenes", "bases"),

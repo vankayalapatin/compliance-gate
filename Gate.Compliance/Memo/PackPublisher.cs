@@ -38,12 +38,13 @@ public static class PackPublisher
         IReadOnlyList<string> testEvidence,
         string ruleId,
         string activationId,
-        DateTimeOffset publishedAt)
+        DateTimeOffset publishedAt,
+        IReadOnlyList<RuleDefinition>? liveRules = null)
     {
         var (prior, effectiveParams) = RequirePublishable(
             priorPackJson, proposal, validation, approval, testEvidence, activationId);
         var ruleType = proposal.ProposedRule!.RuleType;
-        RequirePackForType(ruleType, prior.Pack, effectiveParams);
+        RequirePackForType(ruleType, prior.Pack, effectiveParams, liveRules);
 
         var index = prior.Rules.FindIndex(r => r.Id == ruleId);
         if (index < 0)
@@ -84,7 +85,8 @@ public static class PackPublisher
         string ruleId,
         NewRuleSpec spec,
         string activationId,
-        DateTimeOffset publishedAt)
+        DateTimeOffset publishedAt,
+        IReadOnlyList<RuleDefinition>? liveRules = null)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentException.ThrowIfNullOrWhiteSpace(ruleId);
@@ -93,7 +95,7 @@ public static class PackPublisher
         var (prior, effectiveParams) = RequirePublishable(
             priorPackJson, proposal, validation, approval, testEvidence, activationId);
         var ruleType = proposal.ProposedRule!.RuleType;
-        RequirePackForType(ruleType, prior.Pack, effectiveParams);
+        RequirePackForType(ruleType, prior.Pack, effectiveParams, liveRules);
 
         if (prior.Rules.Any(r => r.Id == ruleId))
         {
@@ -340,7 +342,8 @@ public static class PackPublisher
     /// the live catalog, never hardcoded): known doc kinds join their home
     /// pack, company-declared kinds join CORP.</summary>
     private static void RequirePackForType(
-        string ruleType, string packId, IReadOnlyDictionary<string, string> paramsMap)
+        string ruleType, string packId, IReadOnlyDictionary<string, string> paramsMap,
+        IReadOnlyList<RuleDefinition>? liveRules = null)
     {
         var upper = packId.ToUpperInvariant();
         string expected = ruleType switch
@@ -349,7 +352,7 @@ public static class PackPublisher
             MemoRuleRegistry.ScreeningMatch => "SCR",
             MemoRuleRegistry.DockMarkPresence or MemoRuleRegistry.DockHandlingPresence or MemoRuleRegistry.DamageReview => "BAT-LI",
             MemoRuleRegistry.PrePayBlockOnOpen => "ELEC",
-            MemoRuleRegistry.DocumentPresence => PackForDocKind(paramsMap["docKind"]),
+            MemoRuleRegistry.DocumentPresence => PackForDocKind(paramsMap["docKind"], liveRules),
             _ => throw new InvalidOperationException($"Cannot publish unknown rule type '{ruleType}'."),
         };
 
@@ -360,9 +363,9 @@ public static class PackPublisher
         }
     }
 
-    private static string PackForDocKind(string docKind)
+    private static string PackForDocKind(string docKind, IReadOnlyList<RuleDefinition>? liveRules = null)
     {
-        var home = RuleCatalog.Rules.FirstOrDefault(r =>
+        var home = (liveRules ?? RuleCatalog.Rules).FirstOrDefault(r =>
             r.DocumentKind is not null && string.Equals(r.DocumentKind, docKind, StringComparison.Ordinal));
         return home?.Pack.ToUpperInvariant() ?? "CORP";
     }

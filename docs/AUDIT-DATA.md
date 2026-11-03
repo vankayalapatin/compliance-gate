@@ -278,7 +278,7 @@ The "Ask the agent why" box per decision card calls
   (engine loads `company-kb*.json` from the dir —
   `ComplianceEngineMemo.cs:371-378`); per-entry `version` fields exist
   but ride the file version. Rules version per pack file (`"version":
-  "v0.2"`), not per rule.
+  "v2"`), not per rule.
 
 ## 13. Dates, actors, stamps (why everything looks like today)
 

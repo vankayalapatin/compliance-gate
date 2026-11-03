@@ -122,7 +122,8 @@ public sealed class MemoBaselineTests
         foreach (var activation in memo.Activations)
         {
             Assert.Equal("CORP", activation.PackId);
-            Assert.Equal("v0.2", activation.NewPackVersion);
+            Assert.Equal("v1", activation.PriorPackVersion);
+            Assert.Equal("v2", activation.NewPackVersion);
             Assert.Equal("MEMO-0001", activation.MemoId);
             Assert.Equal("Finn Finance", activation.Approver);
             Assert.Equal(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), activation.EffectiveAt);

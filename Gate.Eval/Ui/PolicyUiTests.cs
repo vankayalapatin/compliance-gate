@@ -437,7 +437,7 @@ public sealed class PolicyUiTests
         Assert.Contains("version to restore", noVersion.Message);
 
         var noReason = await h.Outcomes.RequestRollbackAsync(
-            MemoId, "v0.2", "  ", "Terry Owner");
+            MemoId, "v2", "  ", "Terry Owner");
         Assert.False(noReason.Ok);
         Assert.Contains("reason", noReason.Message);
     }

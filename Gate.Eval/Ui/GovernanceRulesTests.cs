@@ -81,7 +81,7 @@ public sealed class GovernanceRulesTests
     {
         var live = new List<LivePackRule>
         {
-            new("PACK-T", "v0.2", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
+            new("PACK-T", "v1", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
                 "Fixture rule.", true, "Terry Owner", new DateOnly(2026, 3, 16),
                 "Fixture pack source."),
         };
@@ -89,7 +89,7 @@ public sealed class GovernanceRulesTests
             citations: [MemoFixtures.Cite("items", "BAT-9", "kbv4")],
             kbVersion: "kbv4", kbHash: "hash4", proposalId: "PROP-9", memoId: "MEMO-9");
         var stale = new RuleActivation(
-            "ACT-9", "PACK-T-02", "PACK-T", "v0.3", "v0.2", "MEMO-9", "Terry Owner",
+            "ACT-9", "PACK-T-02", "PACK-T", "v2", "v1", "MEMO-9", "Terry Owner",
             new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero),
             RuleApplicability.ProspectiveOnly, proposal.ProposalHash, FixedAt, "kbv4");
         var rollback = stale with
@@ -123,7 +123,7 @@ public sealed class GovernanceRulesTests
         Assert.False(shipped.NeedsReview);
 
         var company = rows.Single(r => r.IsCompanyRule && r.RuleId == "PACK-T-02");
-        Assert.Equal("v0.3", company.PackVersion);
+        Assert.Equal("v2", company.PackVersion);
         Assert.Equal("2026-12-01", company.EffectiveOrAdopted);
         Assert.Contains("MEMO-9", company.Source);
         Assert.Equal(1, company.BlockCount);
@@ -142,7 +142,7 @@ public sealed class GovernanceRulesTests
     {
         var live = new List<LivePackRule>
         {
-            new("PACK-T", "v0.2", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
+            new("PACK-T", "v1", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
                 "Fixture rule.", true, "Terry Owner", new DateOnly(2026, 3, 16)),
         };
 
@@ -172,7 +172,7 @@ public sealed class GovernanceRulesTests
             [], [],
             [
                 new RuleActivation(
-                    "ACT-A", "PACK-T-02", "PACK-T", "v0.3", "v0.2", "MEMO-A", "Terry Owner",
+                    "ACT-A", "PACK-T-02", "PACK-T", "v2", "v1", "MEMO-A", "Terry Owner",
                     FixedAt, RuleApplicability.ProspectiveOnly, citing.ProposalHash, FixedAt, "kbv9"),
             ]);
 
@@ -250,11 +250,11 @@ public sealed class GovernanceRulesTests
             [new MemoProposalRecord(proposal, new ProposalValidation(true, [], []), null, "Terry Owner")],
             [], [],
             [new RuleActivation(
-                "ACT-1", "PACK-T-02", "PACK-T", "v0.3", "v0.2", "MEMO-1", "Terry Owner",
+                "ACT-1", "PACK-T-02", "PACK-T", "v2", "v1", "MEMO-1", "Terry Owner",
                 FixedAt, RuleApplicability.ProspectiveOnly, proposal.ProposalHash, FixedAt, "kbv9")]));
         var engine = new GovernanceFakeEngine(MemoFixtures.TestKb());
         engine.LiveRules.Add(new LivePackRule(
-            "PACK-T", "v0.2", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
+            "PACK-T", "v1", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
             "Fixture rule.", true, "Terry Owner", new DateOnly(2026, 3, 16),
             "Fixture pack source."));
         var service = new GovernanceViewService(
@@ -308,7 +308,7 @@ public sealed class GovernanceRulesTests
         await cases.WriteAsync(CaseWith("CASE-1", []));
         var engine = new GovernanceFakeEngine(MemoFixtures.TestKb());
         engine.LiveRules.Add(new LivePackRule(
-            "PACK-T", "v0.2", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
+            "PACK-T", "v1", "PACK-T-01", null, RuleTier.Tier2, MemoRuleGate.Vendor,
             "Fixture rule.", true, "Terry Owner", new DateOnly(2026, 3, 16)));
         var service = new GovernanceViewService(
             engine, cases, memos, UiTestLogger<GovernanceViewService>.Instance);

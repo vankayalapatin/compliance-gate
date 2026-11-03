@@ -4,8 +4,8 @@
 //
 // Memo-to-rule publishing adds version-bumped pack files without ever
 // editing an existing pack file in place: the base file (corp.json) keeps
-// its version, and each publication lands as <packid>.vN.M.json
-// (e.g. corp.v0.3.json). The loader reads every candidate per pack and
+// its version, and each publication lands as <packid>.vN.json
+// (e.g. corp.v3.json). The loader reads every candidate per pack and
 // enforces the highest version, so prior versions stay retained for audit
 // and rollback while exactly one version enforces.
 using System.Reflection;
@@ -37,23 +37,69 @@ public static class RulePackLoader
 
     public static RulePackSet LoadEmbedded()
     {
-        var assembly = Assembly.GetExecutingAssembly();
-        var names = assembly.GetManifestResourceNames();
         var inputs = new List<(string Name, string Json)>();
         foreach (var packId in PackIdsInOrder)
         {
-            foreach (var resource in names.Where(n => IsPackResource(n, packId)).OrderBy(n => n, StringComparer.Ordinal))
-            {
-                inputs.Add((resource, ReadResource(assembly, resource)));
-            }
+            inputs.AddRange(EmbeddedInputs(packId));
         }
 
         return LoadPacks(inputs);
     }
 
+    /// <summary>Loads the CURRENT pack set: published pack files from the
+    /// pack directory overlaid over the embedded bases, per pack. A pack
+    /// with at least one file in the directory loads from disk alone (the
+    /// directory's highest version wins); a pack with no files there falls
+    /// back to its embedded files; a missing directory means all-embedded.
+    /// The engine calls this on every evaluation, so an approved memo
+    /// enforces with no rebuild and no restart.</summary>
+    public static RulePackSet LoadCurrent(string? packDirectory)
+    {
+        var inputs = new List<(string Name, string Json)>();
+        foreach (var packId in PackIdsInOrder)
+        {
+            var disk = DiskInputs(packId, packDirectory);
+            inputs.AddRange(disk.Count > 0 ? disk : EmbeddedInputs(packId));
+        }
+
+        return LoadPacks(inputs);
+    }
+
+    /// <summary>Embedded inputs for one pack, in resource-name order.</summary>
+    internal static List<(string Name, string Json)> EmbeddedInputs(string packId)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        return assembly.GetManifestResourceNames()
+            .Where(n => IsPackResource(n, packId))
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .Select(resource => (resource, ReadResource(assembly, resource)))
+            .ToList();
+    }
+
+    private static List<(string Name, string Json)> DiskInputs(string packId, string? packDirectory)
+    {
+        var found = new List<(string Name, string Json)>();
+        if (string.IsNullOrWhiteSpace(packDirectory) || !Directory.Exists(packDirectory))
+        {
+            return found;
+        }
+
+        foreach (var file in Directory.GetFiles(packDirectory, "*.json", SearchOption.TopDirectoryOnly)
+                     .OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(file);
+            if (IsPackResource(name, packId))
+            {
+                found.Add((name, File.ReadAllText(file)));
+            }
+        }
+
+        return found;
+    }
+
     /// <summary>Loads a pack set from named JSON contents. Embedded loading
     /// and tests share this core: names select the pack (plus an optional
-    /// .vN.M filename version), contents carry the authority. For each pack
+    /// .vN filename version), contents carry the authority. For each pack
     /// the highest content version wins; ties, malformed versions, and
     /// filename/content version mismatches refuse loudly.</summary>
     public static RulePackSet LoadPacks(IEnumerable<(string Name, string Json)> inputs)
@@ -121,8 +167,8 @@ public static class RulePackLoader
 
     /// <summary>True when the name addresses this pack's base file or a
     /// versioned file, as an embedded resource name
-    /// (Gate.Compliance.Packs.corp.v0.3.json) or a plain file name
-    /// (corp.v0.3.json).</summary>
+    /// (Gate.Compliance.Packs.corp.v3.json) or a plain file name
+    /// (corp.v3.json).</summary>
     private static bool IsPackResource(string name, string packId)
     {
         var file = FilePart(name);
@@ -197,8 +243,8 @@ public static class RulePackLoader
         return ordered[0].Pack;
     }
 
-    /// <summary>Extracts the .vN.M filename version from versioned pack
-    /// files (corp.v0.3.json), or null for base files (corp.json).</summary>
+    /// <summary>Extracts the .vN filename version from versioned pack
+    /// files (corp.v3.json), or null for base files (corp.json).</summary>
     private static string? FileVersionSuffix(string name, string packId)
     {
         var file = FilePart(name);

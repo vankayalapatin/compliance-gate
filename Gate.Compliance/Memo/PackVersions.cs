@@ -1,12 +1,13 @@
-// Pack version arithmetic shared by the loader and the publisher: versions
-// are vN.M (or vN, meaning vN.0), comparisons are numeric, bumps increment
-// the minor version. One rule in one place so publish and load can never
-// disagree.
+// Pack version arithmetic shared by the loader and the publisher: live
+// versions are v1, v2, ... vN; comparisons are numeric, bumps increment
+// the number. Parsing still accepts legacy vN.M files so old retained
+// packs keep loading, but nothing mints them anymore. One rule in one
+// place so publish and load can never disagree.
 namespace Gate.Compliance;
 
 public static class PackVersions
 {
-    /// <summary>Parses vN.M (or vN, meaning vN.0) into (N, M). Anything else
+    /// <summary>Parses vN (or legacy vN.M) into (N, M). Anything else
     /// throws loudly.</summary>
     public static (int Major, int Minor) Parse(string version)
     {
@@ -27,11 +28,11 @@ public static class PackVersions
         }
 
         throw new InvalidOperationException(
-            $"Pack version '{version}' is not of the form vN.M or vN (e.g. v0.2, v2); refusing to guess.");
+            $"Pack version '{version}' is not of the form vN (e.g. v2); refusing to guess.");
     }
 
-    /// <summary>Compares two versions numerically (v0.10 beats v0.9, v2 beats
-    /// v0.2).</summary>
+    /// <summary>Compares two versions numerically (v10 beats v9, v2 beats
+    /// v1).</summary>
     public static int Compare(string left, string right)
     {
         var (lmajor, lminor) = Parse(left);
@@ -39,12 +40,12 @@ public static class PackVersions
         return lmajor != rmajor ? lmajor.CompareTo(rmajor) : lminor.CompareTo(rminor);
     }
 
-    /// <summary>Bumps vN.M to vN.(M+1) (v2 bumps to v2.1). Rollback also
-    /// bumps: it publishes a new version restoring prior parameters, never
-    /// rewrites history.</summary>
+    /// <summary>Bumps vN to v(N+1) (a legacy vN.M bumps to v(N+1) too,
+    /// leaving the dotted scheme behind). Rollback also bumps: it publishes
+    /// a new version restoring prior parameters, never rewrites history.</summary>
     public static string Next(string version)
     {
-        var (major, minor) = Parse(version);
-        return $"v{major}.{minor + 1}";
+        var (major, _) = Parse(version);
+        return $"v{major + 1}";
     }
 }

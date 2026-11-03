@@ -203,7 +203,7 @@ public sealed class ComplianceEngineSeamTests
             new Dictionary<string, string> { ["cap"] = cap, ["windowMonths"] = "12", ["partScope"] = "critical" });
         var report = await engine.ComputeWhatIfAsync(
             history, [], Cap("0.60"), Cap("0.40"), "CORP-02", null,
-            "proposal-hash-9", "kbv9", new Dictionary<string, string> { ["CORP"] = "v0.2" },
+            "proposal-hash-9", "kbv9", new Dictionary<string, string> { ["CORP"] = "v2" },
             MemoFixtures.FixedAt, null);
         // (380 + 380) / (1000 + 380) = 55.1%: passes at 60%, blocks at 40%.
         var flip = Assert.Single(report.HistoryFlips, f => f.DocumentNumber == "PO-3");
@@ -251,10 +251,10 @@ public sealed class ComplianceEngineSeamTests
                 MemoFixtures.FixedAt, null);
 
             Assert.Equal(4, report.PackVersions.Count);
-            Assert.Equal("v0.3", report.PackVersions["CORP"]);
-            Assert.Equal("v0.2", report.PackVersions["BAT-LI"]);
-            Assert.Equal("v0.2", report.PackVersions["ELEC"]);
-            Assert.Equal("v0.2", report.PackVersions["SCR"]);
+            Assert.Equal("v3", report.PackVersions["CORP"]);
+            Assert.Equal("v1", report.PackVersions["BAT-LI"]);
+            Assert.Equal("v1", report.PackVersions["ELEC"]);
+            Assert.Equal("v1", report.PackVersions["SCR"]);
         }
         finally
         {
@@ -281,12 +281,12 @@ public sealed class ComplianceEngineSeamTests
                 new Dictionary<string, string> { ["cap"] = cap, ["windowMonths"] = "12", ["partScope"] = "critical" });
             var report = await engine.ComputeWhatIfAsync(
                 [], [], Cap("0.60"), Cap("0.40"), "CORP-02", null,
-                "proposal-hash-9", "kbv9", new Dictionary<string, string> { ["CORP"] = "v0.2" },
+                "proposal-hash-9", "kbv9", new Dictionary<string, string> { ["CORP"] = "v2" },
                 MemoFixtures.FixedAt, null);
 
             var pinned = Assert.Single(report.PackVersions);
             Assert.Equal("CORP", pinned.Key);
-            Assert.Equal("v0.2", pinned.Value);
+            Assert.Equal("v2", pinned.Value);
         }
         finally
         {
@@ -301,7 +301,7 @@ public sealed class ComplianceEngineSeamTests
         try
         {
             WritePacks(dir);
-            File.WriteAllText(Path.Combine(dir, "corp.v0.2.json"), MemoFixtures.CorpPackJson("v0.2"));
+            File.WriteAllText(Path.Combine(dir, "corp.v2.json"), MemoFixtures.CorpPackJson("v2"));
             var engine = new ComplianceEngine(new ComplianceMemoOptions(PackDirectory: dir));
             var newConfig = new WhatIfRuleConfig(
                 MemoRuleRegistry.OriginShareCap,
@@ -363,11 +363,11 @@ public sealed class ComplianceEngineSeamTests
                 "CORP", proposal, validation, approval, ["seam-test"],
                 "CORP-02", "ACT-1", MemoFixtures.FixedAt);
 
-            Assert.Equal("corp.v0.3.json", publication.FileName);
-            Assert.Equal("v0.3", publication.Activation.NewPackVersion);
-            Assert.Equal("v0.2", publication.Activation.PriorPackVersion);
+            Assert.Equal("corp.v3.json", publication.FileName);
+            Assert.Equal("v3", publication.Activation.NewPackVersion);
+            Assert.Equal("v2", publication.Activation.PriorPackVersion);
             Assert.Equal("CORP-02", publication.Activation.RuleId);
-            Assert.True(File.Exists(Path.Combine(dir, "corp.v0.3.json")));
+            Assert.True(File.Exists(Path.Combine(dir, "corp.v3.json")));
             Assert.Equal(prior, File.ReadAllText(Path.Combine(dir, "corp.json")));
             Assert.Contains("0.40", publication.Json);
         }
@@ -394,10 +394,10 @@ public sealed class ComplianceEngineSeamTests
                 "CORP", proposal, validation, approval, ["seam-test"],
                 "CORP-02", "ACT-2", MemoFixtures.FixedAt);
 
-            Assert.Equal("corp.v0.3.json", first.FileName);
-            Assert.Equal("corp.v0.4.json", second.FileName);
-            Assert.Equal("v0.3", second.Activation.PriorPackVersion);
-            Assert.Equal("v0.4", second.Activation.NewPackVersion);
+            Assert.Equal("corp.v3.json", first.FileName);
+            Assert.Equal("corp.v4.json", second.FileName);
+            Assert.Equal("v3", second.Activation.PriorPackVersion);
+            Assert.Equal("v4", second.Activation.NewPackVersion);
         }
         finally
         {
@@ -471,8 +471,8 @@ public sealed class ComplianceEngineSeamTests
                 new NewRuleSpec("COO declaration on file before award.", RuleTier.Tier1, "COO declaration"),
                 "ACT-2", MemoFixtures.FixedAt);
 
-            Assert.Equal("corp.v0.3.json", publication.FileName);
-            Assert.True(File.Exists(Path.Combine(dir, "corp.v0.3.json")));
+            Assert.Equal("corp.v3.json", publication.FileName);
+            Assert.True(File.Exists(Path.Combine(dir, "corp.v3.json")));
 
             var inputs = Directory.GetFiles(dir, "*.json")
                 .OrderBy(f => f, StringComparer.Ordinal)
@@ -481,7 +481,7 @@ public sealed class ComplianceEngineSeamTests
             var set = RulePackLoader.LoadPacks(inputs);
             var added = set.Rules.Single(r => r.RuleId == "CORP-03");
             Assert.Equal(RuleTier.Tier1, added.Tier);
-            Assert.Equal("v0.3", added.PackVersion);
+            Assert.Equal("v3", added.PackVersion);
         }
         finally
         {
@@ -535,14 +535,14 @@ public sealed class ComplianceEngineSeamTests
             Assert.Contains("0.40", first.Json);
 
             var rollback = await engine.PublishRollbackAsync(
-                "CORP", "v0.2", "MEMO-2", "Terry Owner", MemoFixtures.FixedAt.AddDays(60),
+                "CORP", "v2", "MEMO-2", "Terry Owner", MemoFixtures.FixedAt.AddDays(60),
                 RuleApplicability.ProspectiveOnly, "rollback-hash-9",
                 "Board paused the tightening; restore 60%.",
                 "CORP-02", "ACT-9", MemoFixtures.FixedAt.AddDays(61));
 
-            Assert.Equal("corp.v0.4.json", rollback.FileName);
-            Assert.Equal("v0.4", rollback.Activation.NewPackVersion);
-            Assert.Equal("v0.3", rollback.Activation.PriorPackVersion);
+            Assert.Equal("corp.v4.json", rollback.FileName);
+            Assert.Equal("v4", rollback.Activation.NewPackVersion);
+            Assert.Equal("v3", rollback.Activation.PriorPackVersion);
             Assert.Contains("0.60", rollback.Json);
             Assert.Contains("MEMO-2", rollback.Json);
         }

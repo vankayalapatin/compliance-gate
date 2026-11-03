@@ -1,9 +1,13 @@
-// Versioned compliance rule catalog (PROJECT.md section 6; each rule
-// carries its own pack version, e.g. BAT-LI v2, ELEC v0.2).
+// Embedded compliance rule catalog (PROJECT.md section 6; each rule
+// carries its own pack version, e.g. BAT-LI v2, ELEC v1).
 // Rule records plus pack thresholds load from per-pack JSON (see
 // RulePacks.cs); C# holds the shape only. Versions live in the pack files.
-// C# decides pass/block/hold/human-review; the model only explains.
-// Tier 3 rules are documented here and never enforced in the demo.
+// This static is the SHIPPED base only. Live evaluation never reads it:
+// the engine resolves the current pack set per evaluation through
+// RulePackLoader.LoadCurrent, which overlays published pack files from
+// the pack directory over these embedded bases. C# decides
+// pass/block/hold/human-review; the model only explains.
+// Tier 3 rules are documented here and never enforced.
 // RuleTier lives in Gate.Contracts; RuleDefinition.Tier is that enum.
 using Gate.Contracts;
 
@@ -30,14 +34,14 @@ public sealed record RuleDefinition(
     string? DocumentKind = null,
     string? DocumentLabel = null,
     // Memo-to-rule registry type for published rules (null for the shipped
-    // v0.2 rules, which predate the registry).
+    // base rules, which predate the registry).
     string? RuleType = null,
     // Published rule params (null when the rule carries none).
     IReadOnlyDictionary<string, string>? Params = null);
 
 public static class RuleCatalog
 {
-    public const string CatalogVersion = "v0.2";
+    public const string CatalogVersion = "v1";
 
     private static readonly Lazy<RulePackSet> Loaded = new(RulePackLoader.LoadEmbedded);
 

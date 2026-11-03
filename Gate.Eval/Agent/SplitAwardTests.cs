@@ -223,6 +223,61 @@ public sealed class SplitAwardTests
     }
 
     [Fact]
+    public async Task ReorderedSplitCreatesPosInPassingOrder()
+    {
+        // CinderVolt first would breach at the ERP's own check
+        // (6,700/11,100 = 60.4%), but Meridian first passes, so the
+        // verified plan reorders and the POs create Meridian first.
+        var h = Create(policy: true);
+        var cases = await h.Runner.OnOrderWebhookAsync(
+            new OrderWebhookInput("test", "SO-SPLIT-1", "planner", Candidates()));
+        var battery = cases.Single(c => c.EndsWith(SeededErp.Battery, StringComparison.Ordinal));
+
+        QueueTexts(h.Models, 2, "shortfall then raise");
+        await h.Runner.AdvanceAsync(battery);
+        var raised = Load(h, battery);
+        var prDecision = PendingDecision(raised, DecisionKind.PrApproval);
+        await h.Runner.ResolveDecisionAsync(battery, prDecision.DecisionId, true, prDecision.RequestedTo, "ok");
+
+        h.Models.QueueText("screen");
+        h.Models.QueueToolCalls("split 1100/100",
+            ("p1", AgentTools.ProposeSplit, SplitArgs(battery, ["V-A", "V-B"], [1100, 100], "keep dual supply for resilience")));
+        var parked = await h.Runner.AdvanceAsync(battery);
+        Assert.Equal(CaseNextStep.AwaitDecision, parked.Step);
+        var proposed = Load(h, battery);
+        var split = PendingDecision(proposed, DecisionKind.SplitApproval);
+        var plan = split.Split;
+        Assert.NotNull(plan);
+        Assert.Equal("V-B", plan.Lines[0].VendorId);
+        Assert.Equal(100m, plan.Lines[0].Quantity);
+        Assert.Equal("V-A", plan.Lines[1].VendorId);
+        Assert.Equal(1100m, plan.Lines[1].Quantity);
+        Assert.Equal(0.5982m, Math.Round(plan.FinalShares.Single(s => s.CountryCode == "CN").Share, 4));
+
+        await h.Runner.ResolveDecisionAsync(battery, split.DecisionId, true, split.RequestedTo, "ok");
+        h.Models.QueueToolCalls("create children",
+            ("c1", AgentTools.CreateSplitChildren, Args(battery)));
+        var ordered = await h.Runner.AdvanceAsync(battery);
+        Assert.Equal(CaseNextStep.AwaitSplitChildren, ordered.Step);
+
+        var children = ChildrenOf(h, battery);
+        Assert.Equal(2, children.Count);
+        var childA = children.Single(c => c.Case.AwardedVendorId == "V-A");
+        var childB = children.Single(c => c.Case.AwardedVendorId == "V-B");
+        Assert.NotNull(childA.Case.PoNumber);
+        Assert.NotNull(childB.Case.PoNumber);
+        Assert.True(
+            string.Compare(childB.Case.PoNumber, childA.Case.PoNumber, StringComparison.Ordinal) < 0,
+            "Split POs are created in verified passing order (Meridian first).");
+        var poA = await h.Erp.GetPurchaseOrderAsync(childA.Case.PoNumber!);
+        var poB = await h.Erp.GetPurchaseOrderAsync(childB.Case.PoNumber!);
+        Assert.NotNull(poA);
+        Assert.NotNull(poB);
+        Assert.Equal(1100m, Assert.Single(poA.Lines).QtyOrdered);
+        Assert.Equal(100m, Assert.Single(poB.Lines).QtyOrdered);
+    }
+
+    [Fact]
     public async Task RejectSplitRunsSingleVendorAward()
     {
         var h = Create();

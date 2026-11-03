@@ -2,7 +2,9 @@
 // (scripted compute, raise, and screen), then live Spark awards through the
 // tool loop. The SupplierAwarded event must name each losing vendor plus its
 // blocking rule id, proving Spark wrote the loser detail (C# validates the
-// tokens but never appends them). Keys come from user secrets or the
+// tokens but never appends them). Splits stay off: with them on, Spark
+// proposes the optimal 50/40 split (which verifies Meridian-first) instead
+// of the single award this proof needs. Keys come from user secrets or the
 // environment, never from a file in the repo.
 using Gate.Agent;
 using Gate.Compliance;
@@ -32,7 +34,8 @@ public sealed class AwardReasonLiveTests
         var caseDir = Path.Combine(Path.GetTempPath(), "gate-award-live", Guid.NewGuid().ToString("N"));
         var scripted = new RecordingModelClient();
         var setup = new CaseRunner(erp, new P2pAgent(erp, scripted, compliance), scripted,
-            compliance, new DockEvaluatorAdapter(), caseDir);
+            compliance, new DockEvaluatorAdapter(), caseDir,
+            splitProposals: new SplitProposals { IsOn = false });
         var cases = await setup.OnOrderWebhookAsync(new OrderWebhookInput(
             "live", "SO-1001", "planner",
             new Dictionary<string, IReadOnlyList<string>> { [SeededErp.Battery] = ["V-A", "V-B"] }));
@@ -69,7 +72,8 @@ public sealed class AwardReasonLiveTests
         var modelCache = Path.Combine(Path.GetTempPath(), "gate-award-live-cache", Guid.NewGuid().ToString("N"));
         var live = new CachedModelClient(spark, modelCache);
         var runner = new CaseRunner(erp, new P2pAgent(erp, live, compliance), live,
-            compliance, new DockEvaluatorAdapter(), caseDir);
+            compliance, new DockEvaluatorAdapter(), caseDir,
+            splitProposals: new SplitProposals { IsOn = false });
 
         var outcome = await runner.AdvanceAsync(caseId);
 

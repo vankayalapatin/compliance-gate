@@ -32,7 +32,7 @@ public sealed class GovernanceCleanupTests
 
     private static RuleActivation ActivationFor(
         RuleProposal proposal, string ruleId = "PACK-T-02", string approver = "Amy Approver") =>
-        new("ACT-9", ruleId, "PACK-T", "v0.3", "v0.2", "MEMO-9", approver,
+        new("ACT-9", ruleId, "PACK-T", "v2", "v1", "MEMO-9", approver,
             new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero),
             RuleApplicability.ProspectiveOnly, proposal.ProposalHash, FixedAt, "kbv9");
 
@@ -41,18 +41,18 @@ public sealed class GovernanceCleanupTests
     {
         var live = new List<LivePackRule>
         {
-            LiveRule("PACK-T-01", "v0.2", new DateOnly(2026, 3, 16)),
-            LiveRule("PACK-T-02", "v0.3", new DateOnly(2026, 6, 2)),
+            LiveRule("PACK-T-01", "v1", new DateOnly(2026, 3, 16)),
+            LiveRule("PACK-T-02", "v2", new DateOnly(2026, 6, 2)),
         };
 
         var rows = GovernanceRuleBoard.BuildRows(
             live, [], new Dictionary<string, int>(StringComparer.Ordinal), "kbv9");
 
         var first = rows.Single(r => r.RuleId == "PACK-T-01");
-        Assert.Equal("v0.2", first.PackVersion);
+        Assert.Equal("v1", first.PackVersion);
         Assert.Equal("2026-03-16", first.EffectiveOrAdopted);
         var second = rows.Single(r => r.RuleId == "PACK-T-02");
-        Assert.Equal("v0.3", second.PackVersion);
+        Assert.Equal("v2", second.PackVersion);
         Assert.Equal("2026-06-02", second.EffectiveOrAdopted);
     }
 
@@ -65,11 +65,11 @@ public sealed class GovernanceCleanupTests
         var memo = MemoWithActivation(proposal, "Polly Owner", ActivationFor(proposal));
 
         var rows = GovernanceRuleBoard.BuildRows(
-            [LiveRule("PACK-T-01", "v0.2", new DateOnly(2026, 3, 16))],
+            [LiveRule("PACK-T-01", "v1", new DateOnly(2026, 3, 16))],
             [memo], new Dictionary<string, int>(StringComparer.Ordinal), "kbv9");
 
         var company = rows.Single(r => r.IsCompanyRule);
-        Assert.Equal("v0.3", company.PackVersion);
+        Assert.Equal("v2", company.PackVersion);
         Assert.Equal("Polly Owner", company.Owner);
         Assert.NotEqual("Pack Owner", company.Owner);
         Assert.Equal("2026-12-01", company.EffectiveOrAdopted);
@@ -83,7 +83,7 @@ public sealed class GovernanceCleanupTests
         var memo = MemoWithActivation(proposal, "Polly Owner", orphan);
 
         var rows = GovernanceRuleBoard.BuildRows(
-            [LiveRule("PACK-T-01", "v0.2", new DateOnly(2026, 3, 16))],
+            [LiveRule("PACK-T-01", "v1", new DateOnly(2026, 3, 16))],
             [memo], new Dictionary<string, int>(StringComparer.Ordinal), "kbv9");
 
         var company = rows.Single(r => r.IsCompanyRule);
@@ -105,7 +105,7 @@ public sealed class GovernanceCleanupTests
         var memo = MemoWithActivation(proposal, "Polly Owner", ActivationFor(proposal));
 
         var rows = GovernanceRuleBoard.BuildRows(
-            [LiveRule("PACK-T-01", "v0.2", new DateOnly(2026, 3, 16))],
+            [LiveRule("PACK-T-01", "v1", new DateOnly(2026, 3, 16))],
             [memo], new Dictionary<string, int>(StringComparer.Ordinal), "kbv9");
 
         var grounded = Assert.Single(rows.Single(r => r.IsCompanyRule).GroundedEntries);
@@ -125,7 +125,7 @@ public sealed class GovernanceCleanupTests
         var memo = MemoWithActivation(proposal, "Polly Owner", ActivationFor(proposal));
 
         var rows = GovernanceRuleBoard.BuildRows(
-            [LiveRule("PACK-T-01", "v0.2", new DateOnly(2026, 3, 16))],
+            [LiveRule("PACK-T-01", "v1", new DateOnly(2026, 3, 16))],
             [memo], new Dictionary<string, int>(StringComparer.Ordinal), "kbv9");
 
         Assert.Single(rows.Single(r => r.IsCompanyRule).GroundedEntries);

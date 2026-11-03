@@ -8,7 +8,12 @@ namespace Gate.Web.Services;
 
 public sealed class DockEvaluatorService : IDockEvaluator
 {
-    private readonly DockEvaluator _inner = new();
+    private readonly ComplianceEngine _engine;
+
+    public DockEvaluatorService(ComplianceEngine engine)
+    {
+        _engine = engine;
+    }
 
     public string MarkRuleId => DockEvaluator.MarkRuleId;
 
@@ -23,9 +28,10 @@ public sealed class DockEvaluatorService : IDockEvaluator
         IReadOnlyList<DockCartonRead> reads,
         string expectedPoNumber,
         IReadOnlyDictionary<string, string> cartonLots) =>
-        _inner.EvaluateDock(asnCartonIds, reads.Select(r => new CartonRead(
-            r.CartonId, r.Part, r.PoNumber, r.LotCode, r.UnitsPerCarton,
-            r.MarkPresent, r.MarkLegible, r.UnNumber, r.Class9Required,
-            r.Class9Visible, r.DamageVisible, r.DamageNote, r.ImageId,
-            r.ReadConfidence)).ToList(), expectedPoNumber, cartonLots);
+        new DockEvaluator(_engine.CurrentRules()).EvaluateDock(
+            asnCartonIds, reads.Select(r => new CartonRead(
+                r.CartonId, r.Part, r.PoNumber, r.LotCode, r.UnitsPerCarton,
+                r.MarkPresent, r.MarkLegible, r.UnNumber, r.Class9Required,
+                r.Class9Visible, r.DamageVisible, r.DamageNote, r.ImageId,
+                r.ReadConfidence)).ToList(), expectedPoNumber, cartonLots);
 }

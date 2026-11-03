@@ -31,6 +31,28 @@ public sealed class DockEvaluator
     public const string DamageRuleId = "BAT-LI-05";
     public const string LabelRuleId = "BAT-LI-06";
 
+    private readonly IReadOnlyList<RuleDefinition>? _rules;
+
+    /// <summary>Evaluator with explicit rule records (the host passes the
+    /// engine's current set so memo-updated dock sources cite live). Null
+    /// means the shipped catalog.</summary>
+    public DockEvaluator(IReadOnlyList<RuleDefinition>? rules = null)
+    {
+        _rules = rules;
+    }
+
+    private string SourceFor(string ruleId)
+    {
+        var rule = (_rules ?? RuleCatalog.Rules).FirstOrDefault(r =>
+            string.Equals(r.RuleId, ruleId, StringComparison.Ordinal));
+        if (rule is null)
+        {
+            throw new InvalidOperationException($"Unknown compliance rule id '{ruleId}' for the dock gate.");
+        }
+
+        return rule.Source;
+    }
+
     /// <summary>Evaluates every ASN carton in ASN order, then any read carton
     /// missing from the ASN in sorted order (never silently dropped). The
     /// label check compares each read against the PO being received and the
@@ -76,13 +98,13 @@ public sealed class DockEvaluator
     /// and the read lot must be the carton's ASN lot. Mismatches hold for
     /// reconciliation; an unreadable label goes to human review. Cartons
     /// with no reads have nothing to check and pass this rule.</summary>
-    private static Verdict EvaluateLabel(
+    private Verdict EvaluateLabel(
         string cartonId,
         IReadOnlyList<CartonRead> reads,
         string expectedPoNumber,
         IReadOnlyDictionary<string, string> cartonLots)
     {
-        var source = RuleCatalog.Find(LabelRuleId).Source;
+        var source = SourceFor(LabelRuleId);
         if (reads.Count == 0)
         {
             return new Verdict(LabelRuleId, VerdictKind.Pass,
@@ -137,9 +159,9 @@ public sealed class DockEvaluator
             $"{cartonId} labels PO {expectedPoNumber} lot {expectedLot ?? "on the ASN"}.", source);
     }
 
-    private static Verdict EvaluateMark(string cartonId, IReadOnlyList<CartonRead> reads)
+    private Verdict EvaluateMark(string cartonId, IReadOnlyList<CartonRead> reads)
     {
-        var source = RuleCatalog.Find(MarkRuleId).Source;
+        var source = SourceFor(MarkRuleId);
         if (reads.Count == 0)
         {
             return new Verdict(MarkRuleId, VerdictKind.HumanReview,
@@ -167,9 +189,9 @@ public sealed class DockEvaluator
             source);
     }
 
-    private static Verdict EvaluateClass9(string cartonId, IReadOnlyList<CartonRead> reads)
+    private Verdict EvaluateClass9(string cartonId, IReadOnlyList<CartonRead> reads)
     {
-        var source = RuleCatalog.Find(Class9RuleId).Source;
+        var source = SourceFor(Class9RuleId);
         var required = reads.Any(r => r.Class9Required);
         if (!required)
         {
@@ -184,9 +206,9 @@ public sealed class DockEvaluator
                 $"{cartonId} requires Class 9 handling marks but none is visible; hold.", source);
     }
 
-    private static Verdict EvaluateDamage(string cartonId, IReadOnlyList<CartonRead> reads)
+    private Verdict EvaluateDamage(string cartonId, IReadOnlyList<CartonRead> reads)
     {
-        var source = RuleCatalog.Find(DamageRuleId).Source;
+        var source = SourceFor(DamageRuleId);
         var damaged = reads.Where(r => r.DamageVisible).ToList();
         if (damaged.Count == 0)
         {

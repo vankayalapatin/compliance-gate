@@ -1,6 +1,7 @@
 // Compliance engine: vendor gate plus pre-pay gate with tiered, cited,
-// deterministic verdicts. Rule ids, tiers, and sources come from RuleCatalog;
-// policy values stay in named rule config, never demo literals.
+// deterministic verdicts. Rule ids, tiers, and sources come from the
+// current pack set (published files over embedded bases, resolved per
+// evaluation); policy values stay in named rule config, never literals.
 using Gate.Contracts;
 
 namespace Gate.Compliance;
@@ -13,21 +14,23 @@ public sealed partial class ComplianceEngine : IComplianceEngine
 
     private readonly IReadOnlyList<ScreeningEntry>? _screeningEntries;
     private readonly string? _screeningError;
-    private readonly CorpPackConfig _corp = RuleCatalog.Corp;
+    private readonly CorpPackConfig? _explicitCorp;
 
     /// <summary>Default engine: screening runs against the bundled
-    /// compliance-side snapshot, thresholds come from the CORP pack JSON.</summary>
+    /// compliance-side snapshot, thresholds come from the current CORP pack
+    /// (published files over embedded bases, resolved per evaluation).</summary>
     public ComplianceEngine()
         : this(LoadDefaultSnapshot)
     {
     }
 
     /// <summary>Engine with explicit pack thresholds (tests, policy trials).
-    /// Screening still runs against the bundled snapshot.</summary>
+    /// Screening still runs against the bundled snapshot; rule records
+    /// still resolve live.</summary>
     public ComplianceEngine(CorpPackConfig corp)
         : this(LoadDefaultSnapshot)
     {
-        _corp = corp;
+        _explicitCorp = corp;
     }
 
     /// <summary>Engine with an explicit screening snapshot (tests, refresh).</summary>
@@ -53,6 +56,42 @@ public sealed partial class ComplianceEngine : IComplianceEngine
     private static IReadOnlyList<ScreeningEntry> LoadDefaultSnapshot() =>
         ScreeningSnapshotLoader.LoadEmbedded().Entries;
 
+    /// <summary>Current CORP thresholds: the explicit override when one was
+    /// supplied, else the pack directory's current winner overlaid over the
+    /// embedded base, resolved fresh on every call. An approved memo
+    /// enforces on the next evaluation with no rebuild and no restart.</summary>
+    public CorpPackConfig CurrentCorpConfig() =>
+        _explicitCorp ?? CurrentPacks().Corp;
+
+    /// <summary>Current rule records for every pack, resolved fresh like
+    /// the thresholds.</summary>
+    public IReadOnlyList<RuleDefinition> CurrentRules() => CurrentPacks().Rules;
+
+    /// <summary>Current record for one rule id. Unknown ids throw, like the
+    /// shipped catalog.</summary>
+    public RuleDefinition FindRule(string ruleId)
+    {
+        var rule = CurrentPacks().Rules.FirstOrDefault(r =>
+            string.Equals(r.RuleId, ruleId, StringComparison.Ordinal));
+        if (rule is null)
+        {
+            throw new InvalidOperationException($"Unknown compliance rule id '{ruleId}' in the current pack set.");
+        }
+
+        return rule;
+    }
+
+    /// <summary>Null when the id is not a current rule (tool names, match
+    /// codes). Screens use this so unknown ids render honestly instead of
+    /// throwing.</summary>
+    public RuleDefinition? TryFindRule(string? ruleId) =>
+        string.IsNullOrWhiteSpace(ruleId)
+            ? null
+            : CurrentPacks().Rules.FirstOrDefault(r =>
+                string.Equals(r.RuleId, ruleId, StringComparison.Ordinal));
+
+    private RulePackSet CurrentPacks() => RulePackLoader.LoadCurrent(TryResolvePackDirectory());
+
     public Task<IReadOnlyList<Verdict>> EvaluateVendorAsync(
         VendorDto vendor,
         ItemDto item,
@@ -68,7 +107,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
     /// (including the ERP-block marker) are not document rules.</summary>
     public bool IsDocumentRule(string ruleId) =>
         !string.IsNullOrWhiteSpace(ruleId)
-        && RuleCatalog.Rules.Any(r =>
+        && CurrentRules().Any(r =>
             string.Equals(r.RuleId, ruleId, StringComparison.Ordinal)
             && !string.IsNullOrWhiteSpace(r.DocumentKind));
 
@@ -92,20 +131,36 @@ public sealed partial class ComplianceEngine : IComplianceEngine
                 $"Item {item.ItemId} does not match award item {award.ItemId}; pack scope cannot be evaluated.");
         }
 
+        // One pack resolution per evaluation: every verdict below cites the
+        // same current set, and the next evaluation re-resolves.
+        var packs = CurrentPacks();
+        var corp = _explicitCorp ?? packs.Corp;
         var verdicts = new List<Verdict>();
         if (vendor.IsBlocked)
         {
             verdicts.Add(new Verdict(ComplianceVerdictIds.VendorBlock, VerdictKind.Block, $"Vendor {vendor.VendorId} is blocked: {vendor.BlockReason}.", "ERP vendor master"));
         }
 
-        verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("BAT-LI-01")));
-        verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("BAT-LI-02")));
-        verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("ELEC-01")));
-        verdicts.Add(EvaluateDocument(documents, item, RuleCatalog.Find("ELEC-02")));
-        verdicts.Add(EvaluateScreening(vendor));
-        verdicts.Add(EvaluateOriginCap(vendor.VendorId, item, award, history, exception, openOrders ?? []));
+        verdicts.Add(EvaluateDocument(documents, item, FindIn(packs, "BAT-LI-01")));
+        verdicts.Add(EvaluateDocument(documents, item, FindIn(packs, "BAT-LI-02")));
+        verdicts.Add(EvaluateDocument(documents, item, FindIn(packs, "ELEC-01")));
+        verdicts.Add(EvaluateDocument(documents, item, FindIn(packs, "ELEC-02")));
+        verdicts.Add(EvaluateScreening(vendor, FindIn(packs, "SCR-01")));
+        verdicts.Add(EvaluateOriginCap(vendor.VendorId, item, award, history, exception, openOrders ?? [], corp));
 
         return Task.FromResult<IReadOnlyList<Verdict>>(verdicts);
+    }
+
+    private static RuleDefinition FindIn(RulePackSet packs, string ruleId)
+    {
+        var rule = packs.Rules.FirstOrDefault(r =>
+            string.Equals(r.RuleId, ruleId, StringComparison.Ordinal));
+        if (rule is null)
+        {
+            throw new InvalidOperationException($"Unknown compliance rule id '{ruleId}' in the current pack set.");
+        }
+
+        return rule;
     }
 
     private static Verdict EvaluateDocument(
@@ -129,9 +184,8 @@ public sealed partial class ComplianceEngine : IComplianceEngine
             : new Verdict(rule.RuleId, VerdictKind.Block, $"{rule.DocumentLabel} missing for lot.", rule.Source);
     }
 
-    private Verdict EvaluateScreening(VendorDto vendor)
+    private Verdict EvaluateScreening(VendorDto vendor, RuleDefinition rule)
     {
-        var rule = RuleCatalog.Find("SCR-01");
         if (_screeningError is not null)
         {
             return new Verdict(rule.RuleId, VerdictKind.HumanReview,
@@ -150,7 +204,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
     private Verdict EvaluateOriginCap(
         string vendorId, ItemDto item, ProposedAward award,
         IReadOnlyList<VolumeHistory> history, CorpExceptionApproval? exception,
-        IReadOnlyList<OpenOrderQty> openOrders)
+        IReadOnlyList<OpenOrderQty> openOrders, CorpPackConfig corp)
     {
         var total = history.Sum(h => h.Cells);
         var countryCells = history
@@ -166,13 +220,13 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         OriginCapFigures? capFigures = total + totalOpen + award.Quantity > 0
             ? new OriginCapFigures(
                 award.ItemId, countryCells, total, countryOpen, totalOpen,
-                award.Quantity, _corp.OriginCap,
+                award.Quantity, corp.OriginCap,
                 (countryCells + countryOpen + award.Quantity) / (total + totalOpen + award.Quantity))
             : null;
         if (!item.IsCritical)
         {
             return new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"CORP-02 caps critical battery volume only; {award.ItemId} is not critical, so the cap is not applicable.", _corp.PolicySource, capFigures);
+                $"CORP-02 caps critical battery volume only; {award.ItemId} is not critical, so the cap is not applicable.", corp.PolicySource, capFigures);
         }
 
         if (total + totalOpen <= 0)
@@ -183,7 +237,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
             // path. The empty-history human-review boundary from the
             // scenario plan is still open.
             return new Verdict(CorpOriginCapId, VerdictKind.Pass,
-                $"No 12-month volume history or open orders for {award.ItemId}; country-of-origin cap not applicable.", _corp.PolicySource);
+                $"No 12-month volume history or open orders for {award.ItemId}; country-of-origin cap not applicable.", corp.PolicySource);
         }
 
         var share = capFigures!.Share;
@@ -199,25 +253,25 @@ public sealed partial class ComplianceEngine : IComplianceEngine
             (totalOpen > 0 ? $"+{DisplayWords.Qty(totalOpen)} open" : string.Empty) +
             $"+{DisplayWords.Qty(award.Quantity)} {noun})";
         var cap = capFigures;
-        if (share <= _corp.OriginCap)
+        if (share <= corp.OriginCap)
         {
             return new Verdict(CorpOriginCapId, VerdictKind.Pass,
                 $"Awarding {DisplayWords.Qty(award.Quantity)} {noun} ({award.ItemId}) to {award.Country} " +
-                $"puts its share at {share:P1} {figures}{openNote}, within the {_corp.OriginCap:P0} cap.", _corp.PolicySource, cap);
+                $"puts its share at {share:P1} {figures}{openNote}, within the {corp.OriginCap:P0} cap.", corp.PolicySource, cap);
         }
 
         if (exception is not null && exception.IsValidFor(CorpOriginCapId, vendorId))
         {
             return new Verdict(CorpOriginCapId, VerdictKind.Pass,
                 $"Awarding {DisplayWords.Qty(award.Quantity)} {noun} ({award.ItemId}) to {award.Country} " +
-                $"puts its share at {share:P1} {figures}{openNote}, exceeding the {_corp.OriginCap:P0} cap, " +
+                $"puts its share at {share:P1} {figures}{openNote}, exceeding the {corp.OriginCap:P0} cap, " +
                 $"but overridden by logged exception from {exception.Approver} at {DisplayWords.When(exception.At)}: {exception.Reason}.",
-                _corp.PolicySource, cap);
+                corp.PolicySource, cap);
         }
 
         return new Verdict(CorpOriginCapId, VerdictKind.Block,
             $"Awarding {DisplayWords.Qty(award.Quantity)} {noun} ({award.ItemId}) to {award.Country} " +
-            $"puts its share at {share:P1} {figures}{openNote}, exceeding the {_corp.OriginCap:P0} country-of-origin cap.", _corp.PolicySource, cap);
+            $"puts its share at {share:P1} {figures}{openNote}, exceeding the {corp.OriginCap:P0} country-of-origin cap.", corp.PolicySource, cap);
     }
 
     public Task<IReadOnlyList<Verdict>> EvaluatePayableAsync(
@@ -225,7 +279,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         CancellationToken ct = default)
     {
         _ = ct;
-        var source = RuleCatalog.Find(PrePayHoldId).Source;
+        var source = FindRule(PrePayHoldId).Source;
         if (state.OpenReviews.Count == 0)
         {
             IReadOnlyList<Verdict> pass =
@@ -243,7 +297,7 @@ public sealed partial class ComplianceEngine : IComplianceEngine
         PrePayState state,
         CancellationToken ct = default)
     {
-        var source = RuleCatalog.Find(PrePayHoldId).Source;
+        var source = FindRule(PrePayHoldId).Source;
         if (state.OpenHolds.Count == 0
             && state.QuarantinedLotRefs.Count == 0
             && state.OpenReviews.Count == 0)

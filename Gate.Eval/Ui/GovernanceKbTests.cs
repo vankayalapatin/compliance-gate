@@ -117,7 +117,7 @@ public sealed class GovernanceKbTests
                 [new MemoProposalRecord(proposal, new ProposalValidation(true, [], []), null, "Terry Owner")],
                 [], [],
                 [new RuleActivation(
-                    "ACT-1", "PACK-T-02", "PACK-T", "v0.3", "v0.2", "MEMO-1", "Terry Owner",
+                    "ACT-1", "PACK-T-02", "PACK-T", "v2", "v1", "MEMO-1", "Terry Owner",
                     FixedAt, RuleApplicability.ProspectiveOnly, proposal.ProposalHash, FixedAt, "kbv9")]),
         };
 
