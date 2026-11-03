@@ -115,7 +115,8 @@ public partial class CaseRunner
                 $"Dock view {Path.GetFileName(image.FilePath)} labeled for PO {asn.PoNumber} " +
                 $"via {image.Path.ToString().ToLowerInvariant()}" +
                 (image.FallbackReason is null ? string.Empty : $" (fallback: {image.FallbackReason})") +
-                (image.ReadFromCache ? "; read reused from cache." : "; read live."),
+                (image.ReadFromCache ? "; read reused from cache." : "; read live.") +
+                (image.ReadWarning is null ? string.Empty : $" Read warning: {image.ReadWarning}."),
                 documentType: "ASN", documentNumber: asn.AsnNumber);
         }
 
@@ -204,7 +205,8 @@ public partial class CaseRunner
             $"Relabeled close-up {Path.GetFileName(image.FilePath)} minted for {cartonId} " +
             $"via {image.Path.ToString().ToLowerInvariant()}" +
             (image.FallbackReason is null ? string.Empty : $" (fallback: {image.FallbackReason})") +
-            (image.ReadFromCache ? "; read reused from cache." : "; read live."),
+            (image.ReadFromCache ? "; read reused from cache." : "; read live.") +
+            (image.ReadWarning is null ? string.Empty : $" Read warning: {image.ReadWarning}."),
             documentType: "ASN", documentNumber: asn.AsnNumber);
         work.Save(_cacheDir);
         return new MintedReshotImage(

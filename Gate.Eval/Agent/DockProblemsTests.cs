@@ -55,6 +55,15 @@ public sealed class DockProblemsTests
             ImageCacheDir: Path.Combine(dir, "imgcache"),
             ReadCacheDir: Path.Combine(dir, "readcache"));
 
+    private static DockImageOptions LibraryOptions(string dir) =>
+        new(
+            BasesDir: VisionFiles.DockScenesBasesDir(),
+            ImageSpecsPath: VisionFiles.DockScenesPath(),
+            CartonsPath: Path.Combine(dir, "unused-truth.json"),
+            OutputDir: Path.Combine(dir, "dockout"),
+            ImageCacheDir: Path.Combine(dir, "dockimg"),
+            ReadCacheDir: Path.Combine(dir, "dockreads"));
+
     private static string Args(string caseId) =>
         $$"""{"case_id":"{{caseId}}"}""";
 
@@ -170,6 +179,40 @@ public sealed class DockProblemsTests
         Assert.Contains("C-1 (Crushed)", problems, StringComparison.Ordinal);
         Assert.Contains("C-2 (Hidden)", problems, StringComparison.Ordinal);
         Assert.DoesNotContain("MissingMark", problems, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LibraryReadMismatchWarnsOnTimelineAndKeepsViews()
+    {
+        // Code-drawn labels are certain: a persistent reader miss records
+        // a timeline warning and the views still build.
+        var first = Create();
+        var caseId = await OpenAsnCaseAsync(first);
+        var h = new Harness(
+            first.Erp,
+            new CaseRunner(
+                first.Erp,
+                new P2pAgent(first.Erp, first.Models, first.Compliance),
+                first.Models, first.Compliance, new DockEvaluatorAdapter(), first.CaseDir,
+                dockImageOptions: LibraryOptions(first.CaseDir)),
+            first.Models, first.Compliance, first.CaseDir);
+        var wrong = $$"""[{"carton_id":"C-1","part":"{{SeededErp.Battery}}","po_number":"PO-WRONG","lot_code":"LOT-T1","units_per_carton":5,"mark_present":true,"mark_legible":true,"un_number":"UN3480","class9_visible":true,"damage_visible":false,"damage_note":null,"read_confidence":0.99}]""";
+        h.Models.QueueText(wrong);
+        h.Models.QueueText(wrong);
+
+        var set = await h.Runner.BuildDockImagesAsync(caseId);
+
+        Assert.NotNull(set);
+        var image = Assert.Single(set.Images);
+        Assert.NotNull(image.ReadWarning);
+        Assert.Contains("C-1", image.ReadWarning, StringComparison.Ordinal);
+        var timeline = CaseStore.Load(h.CaseDir, caseId)!.Events
+            .Where(e => e.Kind == CaseEventKind.Note)
+            .Select(e => e.Summary)
+            .ToList();
+        var view = Assert.Single(timeline, s => s.Contains("Dock view", StringComparison.Ordinal));
+        Assert.Contains("Read warning:", view, StringComparison.Ordinal);
+        Assert.Contains("C-1", view, StringComparison.Ordinal);
     }
 
     [Fact]

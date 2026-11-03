@@ -377,8 +377,11 @@ public sealed class DockScenesTests
     }
 
     [Fact]
-    public async Task VerifyMismatchRebuildsOnceThenThrowsWithDetail()
+    public async Task VerifyMismatchWarnsAndKeepsTheView()
     {
+        // Library labels are code-drawn and certain: a persistent reader
+        // miss warns instead of failing the build, and the mismatched
+        // read is never cached, so the next run reads live again.
         var po = "PO-LIB-MM";
         var asn = MakeAsn("ASN-LIB-MM", po, 2);
         var models = new FakeModelClient();
@@ -388,12 +391,89 @@ public sealed class DockScenesTests
             models.QueueResponse(MatchingLibraryReadJson(chunk.Cartons, [], "PO-WRONG"));
         }
 
-        var boom = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new DockImagePipeline(new NullImageLabeler(), models)
-                .BuildLibraryAsync(asn, po, [], LibraryOptions("mm")));
-        Assert.Contains("CTN-01", boom.Message);
-        Assert.Contains("po_number", boom.Message);
+        var options = LibraryOptions("mm");
+        var set = await new DockImagePipeline(new NullImageLabeler(), models)
+            .BuildLibraryAsync(asn, po, [], options);
+
+        var image = Assert.Single(set.Images);
+        Assert.NotNull(image.ReadWarning);
+        Assert.Contains("CTN-01", image.ReadWarning, StringComparison.Ordinal);
+        Assert.Contains("po_number", image.ReadWarning, StringComparison.Ordinal);
         Assert.Equal(2, models.CallCount);
+        Assert.True(File.Exists(image.FilePath));
+        Assert.Null(new VisionReadCache(options.ReadCacheDir)
+            .TryRead(image.ImageSha256, options.ReadPromptVersion));
+    }
+
+    [Fact]
+    public async Task CompositedLabelCarriesALegibleClass9Diamond()
+    {
+        // One carton on the 1-carton scene: the Class 9 diamond must
+        // render yellow with a black outline and 9, large enough to
+        // read (the old solid-black mark misread repeatedly).
+        var po = "PO-LIB-DIA";
+        var asn = MakeAsn("ASN-LIB-DIA", po, 1);
+        var models = new FakeModelClient();
+        foreach (var chunk in Assign("dia", asn))
+        {
+            models.QueueResponse(MatchingLibraryReadJson(chunk.Cartons, [], po));
+        }
+
+        var set = await new DockImagePipeline(new NullImageLabeler(), models)
+            .BuildLibraryAsync(asn, po, [], LibraryOptions("dia"));
+        var image = Assert.Single(set.Images);
+        Assert.Null(image.ReadWarning);
+
+        using var doc = VisionFiles.LoadJson(VisionFiles.DockScenesPath());
+        var face = doc.RootElement.GetProperty("scenes").EnumerateArray()
+            .First(s => s.GetProperty("id").GetString() == image.ImageId)
+            .GetProperty("faces").EnumerateArray().First();
+        using var bitmap = SKBitmap.Decode(File.ReadAllBytes(image.FilePath));
+        Assert.NotNull(bitmap);
+        var lx = (int)(face.GetProperty("x").GetDouble() * bitmap!.Width);
+        var ly = (int)(face.GetProperty("y").GetDouble() * bitmap.Height);
+        var lw = (int)(face.GetProperty("w").GetDouble() * bitmap.Width);
+        var lh = (int)(face.GetProperty("h").GetDouble() * bitmap.Height);
+
+        var yellow = 0;
+        var minX = int.MaxValue;
+        var minY = int.MaxValue;
+        var maxX = int.MinValue;
+        var maxY = int.MinValue;
+        for (var y = ly; y < ly + lh && y < bitmap.Height; y++)
+        {
+            for (var x = lx; x < lx + lw && x < bitmap.Width; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.Red > 200 && pixel.Green > 200 && pixel.Blue < 150)
+                {
+                    yellow++;
+                    minX = Math.Min(minX, x);
+                    minY = Math.Min(minY, y);
+                    maxX = Math.Max(maxX, x);
+                    maxY = Math.Max(maxY, y);
+                }
+            }
+        }
+
+        Assert.True(yellow > 800, $"Yellow diamond pixels: {yellow}.");
+        Assert.True(maxX - minX >= 55, $"Diamond width: {maxX - minX}.");
+        Assert.True(maxY - minY >= 55, $"Diamond height: {maxY - minY}.");
+
+        var dark = 0;
+        for (var y = Math.Max(ly, minY - 8); y <= Math.Min(ly + lh - 1, maxY + 8) && y < bitmap.Height; y++)
+        {
+            for (var x = Math.Max(lx, minX - 8); x <= Math.Min(lx + lw - 1, maxX + 8) && x < bitmap.Width; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.Red < 100 && pixel.Green < 100 && pixel.Blue < 100)
+                {
+                    dark++;
+                }
+            }
+        }
+
+        Assert.True(dark > 200, $"Dark outline/9 pixels around the diamond: {dark}.");
     }
 
     [Fact]

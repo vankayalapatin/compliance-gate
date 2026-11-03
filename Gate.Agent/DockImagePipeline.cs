@@ -40,7 +40,8 @@ public sealed record DockImageResult(
     int LabelAttempts,
     bool ReadFromCache,
     string ReadText,
-    string? FallbackReason = null);
+    string? FallbackReason = null,
+    string? ReadWarning = null);
 
 public sealed record DockImageSet(string PoNumber, IReadOnlyList<DockImageResult> Images);
 
@@ -711,14 +712,14 @@ public sealed class DockImagePipeline(
         }
 
         await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
-        var (bytes, sha, readText, readFromCache) = await ReadVerifyLibraryAsync(
+        var (bytes, sha, readText, readFromCache, warning) = await ReadVerifyLibraryAsync(
             imageId, "Close-up", () => DockLabelCompositor.CompositeLibrary(
                 workBase, labels, damage, [], imageId),
             finalBytes, cachedFile, outFile, labels, damageVisible,
             readCache, options, ct).ConfigureAwait(false);
         _ = bytes;
         return new DockImageResult(
-            imageId, outFile, sha, DockImagePath.Composited, 0, readFromCache, readText, null);
+            imageId, outFile, sha, DockImagePath.Composited, 0, readFromCache, readText, null, warning);
     }
 
     /// <summary>Live path: generates one text-free pallet photo for the
@@ -965,17 +966,24 @@ public sealed class DockImagePipeline(
         }
 
         await File.WriteAllBytesAsync(outFile, finalBytes, ct).ConfigureAwait(false);
-        var (bytes, sha, readText, readFromCache) = await ReadVerifyLibraryAsync(
+        var (bytes, sha, readText, readFromCache, warning) = await ReadVerifyLibraryAsync(
             imageId, "Library view",
             () => DockLabelCompositor.CompositeLibrary(baseBytes, labels, damage, occlude, imageId),
             finalBytes, cachedFile, outFile, labels, damageVisible,
             readCache, options, ct).ConfigureAwait(false);
         _ = bytes;
         return new DockImageResult(
-            imageId, outFile, sha, DockImagePath.Composited, 0, readFromCache, readText, null);
+            imageId, outFile, sha, DockImagePath.Composited, 0, readFromCache, readText, null, warning);
     }
 
-    private async Task<(byte[] Bytes, string Sha, string ReadText, bool ReadFromCache)> ReadVerifyLibraryAsync(
+    /// <summary>Reads a library view back against its code-drawn labels.
+    /// The label content is certain, so a persistent read mismatch is a
+    /// reader miss, not a bad photo: it comes back as a warning and the
+    /// view still builds (the mismatched read is never cached, so the
+    /// next run reads live again). Only the live generated-scene path
+    /// hard-gates on read-back, because there the pixels themselves are
+    /// uncertain.</summary>
+    private async Task<(byte[] Bytes, string Sha, string ReadText, bool ReadFromCache, string? Warning)> ReadVerifyLibraryAsync(
         string imageId,
         string viewNoun,
         Func<byte[]> rebuild,
@@ -992,7 +1000,7 @@ public sealed class DockImagePipeline(
         var cached = readCache.TryRead(sha, options.ReadPromptVersion);
         if (cached is not null)
         {
-            return (finalBytes, sha, cached.Text, true);
+            return (finalBytes, sha, cached.Text, true, null);
         }
 
         var readText = await ReadWithOneRetryAsync(imageId, finalBytes, ct).ConfigureAwait(false);
@@ -1008,13 +1016,15 @@ public sealed class DockImagePipeline(
             readText = await ReadWithOneRetryAsync(imageId, finalBytes, ct).ConfigureAwait(false);
             if (!TryVerifyReads(readText, labels, damageVisible, out mismatch))
             {
-                throw new InvalidOperationException(
-                    $"{viewNoun} {imageId}: composited read mismatched the label manifest after one retry: {mismatch}; refusing to cache it.");
+                var warning =
+                    $"read mismatched the code-drawn labels after one retry ({mismatch}); view kept, read not cached";
+                _logger.LogWarning("{Noun} {ImageId}: {Warning}.", viewNoun, imageId, warning);
+                return (finalBytes, sha, readText, false, warning);
             }
         }
 
         readCache.Write(sha, options.ReadPromptVersion, models.ModelName, readText);
-        return (finalBytes, sha, readText, false);
+        return (finalBytes, sha, readText, false, null);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlySet<SimulatedProblemKind>> ProblemMap(

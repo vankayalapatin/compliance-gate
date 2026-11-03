@@ -155,7 +155,6 @@ internal static class DockLabelCompositor
 
         using var white = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill };
         using var black = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(2, w / 120) };
-        using var blackFill = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Fill, IsAntialias = true };
         using var red = new SKPaint { Color = SKColors.Red, Style = SKPaintStyle.Stroke, StrokeWidth = Math.Max(2, w / 150), IsAntialias = true };
         using var yellow = new SKPaint { Color = SKColors.Yellow, Style = SKPaintStyle.Fill };
         var box = new SKRect(x, y, x + w, y + h);
@@ -163,7 +162,7 @@ internal static class DockLabelCompositor
         draw.DrawRect(box, black);
 
         var pad = w * 0.04f;
-        var markW = Math.Min(w * 0.3f, h * 0.55f);
+        var markW = Math.Min(w * 0.34f, h * 0.44f);
         var textWidth = w - pad * 2 - markW;
         using var text = new SKPaint
         {
@@ -216,13 +215,17 @@ internal static class DockLabelCompositor
             }
 
             draw.Restore();
+            FitText(markText, ["UN3480"], markW * 0.88f);
             draw.DrawText("UN3480", mark.Left + markW * 0.06f, mark.Top + markW * 0.58f, markText);
         }
 
-        // Class 9 diamond below the mark zone.
+        // Class 9 diamond below the mark zone: yellow with a black
+        // outline and a centered 9, filling the zone so it reads at any
+        // label size. Skipped only when no legible diamond fits.
+        var leftover = box.Bottom - pad - mark.Bottom;
         var cx = mark.Left + markW / 2;
-        var cy = mark.Bottom + (box.Bottom - pad - mark.Bottom) / 2;
-        var r = Math.Min(markW / 2, (box.Bottom - pad - mark.Bottom) / 2) * 0.9f;
+        var cy = mark.Bottom + leftover / 2;
+        var r = Math.Min(markW * 0.5f, leftover * 0.48f);
         if (r > 4)
         {
             using var diamond = new SKPath();
@@ -232,8 +235,14 @@ internal static class DockLabelCompositor
             diamond.LineTo(cx - r, cy);
             diamond.Close();
             draw.DrawPath(diamond, yellow);
-            draw.DrawPath(diamond, blackFill);
-            draw.DrawText("9", cx - r * 0.18f, cy + r * 0.32f, markText);
+            draw.DrawPath(diamond, black);
+            using var nine = new SKPaint
+            {
+                Color = SKColors.Black, IsAntialias = true,
+                Typeface = SKTypeface.Default, TextSize = r * 1.05f
+            };
+            var nineW = nine.MeasureText("9");
+            draw.DrawText("9", cx - nineW / 2, cy + r * 0.36f, nine);
         }
     }
 
