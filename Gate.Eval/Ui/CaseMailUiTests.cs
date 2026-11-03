@@ -134,6 +134,22 @@ public sealed class CaseMailUiTests
     }
 
     [Fact]
+    public async Task ListSkipsProblemSidecars()
+    {
+        var dir = UiTestSupport.NewDir("gate-ui-cache");
+        var store = new CaseCacheStore(dir);
+        await store.WriteAsync(UiTestSupport.CaseFileWith("CASE-1", "SO-1", "ITEM-1"));
+        Gate.Agent.CaseStore.SaveProblems(dir, new Gate.Agent.DockProblems(
+            "CASE-1", [new Gate.Agent.SimulatedProblem("C-1", Gate.Agent.SimulatedProblemKind.Crushed)],
+            DateTimeOffset.UtcNow));
+
+        var listed = await store.ListAsync();
+
+        var single = Assert.Single(listed);
+        Assert.Equal("CASE-1", single.Case.CaseId);
+    }
+
+    [Fact]
     public void NewEventLabelsAreClear()
     {
         Assert.Equal("Vendor emailed", CaseEventLabels.Label(CaseEventKind.VendorEmailed));

@@ -190,4 +190,71 @@ public sealed record CaseFile(
     Case Case,
     IReadOnlyList<CaseEvent> Events,
     IReadOnlyList<Decision> Decisions,
-    AwardScreeningSnapshot? ScreeningSnapshot = null);
+    AwardScreeningSnapshot? ScreeningSnapshot = null)
+{
+    /// <summary>Null-tolerant read: JSON that predates (or omits) a
+    /// collection deserializes it as null, and a foreign file sharing the
+    /// cache dir parses with every collection null. Readers see empty
+    /// lists instead, so a case file never carries null collections in
+    /// memory. A missing Case stays missing: the file is not a case and
+    /// every scan skips it. Both lanes call this on every read.</summary>
+    public CaseFile Normalized()
+    {
+        var file = Case is null
+            ? this
+            : this with
+            {
+                Case = Case with
+                {
+                    Invoices = Case.Invoices ?? [],
+                    PaymentNumbers = Case.PaymentNumbers ?? [],
+                },
+            };
+        return file with
+        {
+            Events = file.Events ?? [],
+            Decisions = (file.Decisions ?? (IReadOnlyList<Decision>)[]).Select(NormalizeDecision).ToList(),
+            ScreeningSnapshot = NormalizeSnapshot(file.ScreeningSnapshot),
+        };
+    }
+
+    private static Decision NormalizeDecision(Decision decision)
+    {
+        var split = decision.Split;
+        if (split is not null)
+        {
+            split = split with
+            {
+                Lines = (split.Lines ?? (IReadOnlyList<SplitPlanLine>)[])
+                    .Select(l => l.Verdicts is null ? l with { Verdicts = [] } : l)
+                    .ToList(),
+                FinalShares = split.FinalShares ?? [],
+            };
+        }
+
+        return decision with
+        {
+            EvidenceRefs = decision.EvidenceRefs ?? [],
+            Split = split,
+        };
+    }
+
+    private static AwardScreeningSnapshot? NormalizeSnapshot(AwardScreeningSnapshot? snapshot) =>
+        snapshot is null
+            ? null
+            : snapshot with
+            {
+                Rows = (snapshot.Rows ?? (IReadOnlyList<AwardScreeningRow>)[])
+                    .Select(NormalizeRow)
+                    .ToList(),
+            };
+
+    private static AwardScreeningRow NormalizeRow(AwardScreeningRow row) =>
+        row with
+        {
+            Verdicts = row.Verdicts ?? [],
+            Math = row.Math is null
+                ? null
+                : row.Math with { Segments = row.Math.Segments ?? [] },
+        };
+}

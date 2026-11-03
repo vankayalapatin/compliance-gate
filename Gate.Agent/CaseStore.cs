@@ -145,8 +145,9 @@ public static class CaseStore
     }
 
     private static CaseFile ReadFile(string path) =>
-        JsonSerializer.Deserialize<CaseFile>(File.ReadAllText(path), JsonOpts)
-        ?? throw new InvalidOperationException($"Case file {path} did not parse as a CaseFile.");
+        (JsonSerializer.Deserialize<CaseFile>(File.ReadAllText(path), JsonOpts)
+            ?? throw new InvalidOperationException($"Case file {path} did not parse as a CaseFile."))
+        .Normalized();
 
     private static void WriteFile(string path, CaseFile file) =>
         File.WriteAllText(path, JsonSerializer.Serialize(file, JsonOpts));

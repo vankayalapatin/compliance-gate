@@ -44,12 +44,26 @@ public sealed class CaseViewService
     {
         var files = await _cases.ListAsync(ct).ConfigureAwait(false);
         var cards = new List<DecisionCardVm>();
+        var missing = 0;
         foreach (var file in files)
         {
+            if (file.Case is null)
+            {
+                missing++;
+                continue;
+            }
+
             foreach (var decision in file.Decisions)
             {
                 cards.Add(await BuildCardAsync(file.Case, decision, ct).ConfigureAwait(false));
             }
+        }
+
+        if (missing > 0)
+        {
+            _log.LogWarning(
+                "Decision cards skipped {Count} cached file(s) with no case payload.",
+                missing);
         }
 
         return cards

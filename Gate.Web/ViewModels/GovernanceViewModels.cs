@@ -156,7 +156,8 @@ public static class KbDisplay
 // VendorScreened (failed) plus VendorBlocked; dock holds timeline as
 // HoldSet, ReviewOpened, or agent-side Note with the rule id; pre-pay
 // blocks timeline as Note with the rule id. Resolutions (HoldReleased,
-// ReviewClosed) are never blocks and are excluded.</summary>
+// ReviewClosed) are never blocks and are excluded. Files with no case
+// payload are not cases and are skipped before the scanned count.</summary>
 public static class RuleBlockScan
 {
     public static readonly IReadOnlySet<CaseEventKind> BlockKinds =
@@ -183,6 +184,11 @@ public static class RuleBlockScan
         var dockFiles = 0;
         foreach (var file in files)
         {
+            if (file.Case is null)
+            {
+                continue;
+            }
+
             scanned++;
             var docked = false;
             foreach (var e in file.Events)
@@ -612,6 +618,7 @@ public static class ExceptionBoard
 {
     public static IReadOnlyList<ExceptionRowVm> Rows(IEnumerable<CaseFile> files) =>
         files
+            .Where(f => f.Case is not null)
             .SelectMany(f => f.Decisions
                 .Where(d => d.Kind == DecisionKind.ExceptionApproval)
                 .Select(d => new ExceptionRowVm(

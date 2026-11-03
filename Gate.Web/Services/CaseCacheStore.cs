@@ -36,13 +36,15 @@ public sealed class CaseCacheStore
 
         // Mail files (<CaseId>.mail.json), vendor-identity pendings
         // (<CaseId>.vendor-identity.json), dock evidence sidecars
-        // (<CaseId>.dock.json), and memo files (<MemoId>.memo.json) share
-        // the dir but are not cases (mirrors the agent CaseStore
+        // (<CaseId>.dock.json), dock-problem sidecars
+        // (<CaseId>.problems.json), and memo files (<MemoId>.memo.json)
+        // share the dir but are not cases (mirrors the agent CaseStore
         // exclusions; memo files belong to MemoFileStore).
         var files = Directory.GetFiles(_dir, "*.json")
             .Where(f => !f.EndsWith(".mail.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".vendor-identity.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".dock.json", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.EndsWith(".problems.json", StringComparison.OrdinalIgnoreCase))
             .Where(f => !f.EndsWith(".memo.json", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         Array.Sort(files, StringComparer.Ordinal);
@@ -53,7 +55,7 @@ public sealed class CaseCacheStore
             var json = await File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
             var parsed = JsonSerializer.Deserialize<CaseFile>(json, JsonOpts)
                 ?? throw new InvalidOperationException($"Case cache file did not parse: {file}.");
-            result.Add(parsed);
+            result.Add(parsed.Normalized());
         }
 
         return result;
@@ -68,8 +70,9 @@ public sealed class CaseCacheStore
         }
 
         var json = await File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
-        return JsonSerializer.Deserialize<CaseFile>(json, JsonOpts)
-            ?? throw new InvalidOperationException($"Case cache file did not parse: {file}.");
+        return (JsonSerializer.Deserialize<CaseFile>(json, JsonOpts)
+            ?? throw new InvalidOperationException($"Case cache file did not parse: {file}."))
+            .Normalized();
     }
 
     public async Task WriteAsync(CaseFile file, CancellationToken ct = default)

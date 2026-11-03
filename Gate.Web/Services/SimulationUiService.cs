@@ -783,7 +783,16 @@ public sealed class SimulationUiService
         try
         {
             var files = await _cases.ListAsync(ct).ConfigureAwait(false);
+            var missing = files.Count(f => f.Case is null);
+            if (missing > 0)
+            {
+                _log.LogWarning(
+                    "Case lookup skipped {Count} cached file(s) with no case payload.",
+                    missing);
+            }
+
             return files
+                .Where(f => f.Case is not null)
                 .OrderBy(f => f.Case.CaseId, StringComparer.Ordinal)
                 .FirstOrDefault(f => string.Equals(f.Case.PoNumber, poNumber, StringComparison.Ordinal))
                 ?.Case.CaseId;
