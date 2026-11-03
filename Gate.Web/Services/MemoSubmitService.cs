@@ -59,7 +59,7 @@ public sealed class MemoSubmitService
                 "Memo text is required; paste the memo or upload a file.");
         }
 
-        var memoId = $"MEMO-{Guid.NewGuid():N}";
+        var memoId = await NextMemoIdAsync(ct).ConfigureAwait(false);
         var text = fullText.Trim();
         var wire = new
         {
@@ -109,5 +109,48 @@ public sealed class MemoSubmitService
         var first = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .FirstOrDefault() ?? string.Empty;
         return first.Length <= ExcerptChars ? first : first[..ExcerptChars];
+    }
+
+    /// <summary>Next memo number from the platform MEMO sequence: one past
+    /// the highest MEMO-NNN on file (MEMO-0001, MEMO-0002, ...). Older
+    /// free-form ids never parse and are skipped; the bump-until-free
+    /// loop keeps overlapping submits from sharing a number.</summary>
+    private async Task<string> NextMemoIdAsync(CancellationToken ct)
+    {
+        var memos = await _memos.ListAsync(ct).ConfigureAwait(false);
+        var max = 0;
+        foreach (var file in memos)
+        {
+            if (TryParseMemoNumber(file.Memo.MemoId, out var n) && n > max)
+            {
+                max = n;
+            }
+        }
+
+        string candidate;
+        do
+        {
+            max++;
+            candidate = $"MEMO-{max:0000}";
+        }
+        while (await _memos.ReadAsync(candidate, ct).ConfigureAwait(false) is not null);
+
+        return candidate;
+    }
+
+    public static bool TryParseMemoNumber(string memoId, out int value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(memoId)
+            || !memoId.StartsWith("MEMO-", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var tail = memoId["MEMO-".Length..];
+        return tail.Length > 0
+            && tail.All(char.IsDigit)
+            && int.TryParse(tail, out value)
+            && value > 0;
     }
 }

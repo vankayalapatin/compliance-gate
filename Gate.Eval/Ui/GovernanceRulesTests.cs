@@ -125,16 +125,75 @@ public sealed class GovernanceRulesTests
         var company = rows.Single(r => r.IsCompanyRule && r.RuleId == "PACK-T-02");
         Assert.Equal("v2", company.PackVersion);
         Assert.Equal("2026-12-01", company.EffectiveOrAdopted);
-        Assert.Contains("MEMO-9", company.Source);
+        Assert.Equal(
+            "MEMO-9 by Board, approved by Terry Owner, effective Dec 1, 2026",
+            company.Source);
         Assert.Equal(1, company.BlockCount);
-        Assert.Equal("kb:items#BAT-9@version 4", PolicyLabels.Citation(Assert.Single(company.GroundedEntries)));
+        Assert.Equal("Items: BAT 9, v4", PolicyLabels.CitationLabel(Assert.Single(company.GroundedEntries)));
         Assert.True(company.NeedsReview);
         Assert.Contains("version 4", company.NeedsReviewReason);
         Assert.Contains("version 9", company.NeedsReviewReason);
         Assert.DoesNotContain("kbv", company.NeedsReviewReason);
+        Assert.Equal("History (v1)", company.HistoryLabel);
+        Assert.Contains("ACT-9", company.HistoryHref);
 
         var rolled = rows.Single(r => r.IsCompanyRule && r.KbVersion is null);
         Assert.False(rolled.NeedsReview);
+    }
+
+    [Fact]
+    public void BuildRowsCollapsesToCurrentVersionPerRule()
+    {
+        var proposal = MemoFixtures.Proposal(
+            citations: [MemoFixtures.Cite("sourcing-policy", "origin-cap", "kbv9")],
+            kbVersion: "kbv9", kbHash: "hash9", proposalId: "PROP-9", memoId: "MEMO-9");
+        var old = new RuleActivation(
+            "ACT-OLD", "PACK-T-02", "PACK-T", "v1", "", "MEMO-9", "Terry Owner",
+            new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero),
+            RuleApplicability.ProspectiveOnly, "hash-old",
+            new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.Zero), "kbv1");
+        var current = new RuleActivation(
+            "ACT-NEW", "PACK-T-02", "PACK-T", "v3", "v2", "MEMO-9", "Terry Owner",
+            new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero),
+            RuleApplicability.ProspectiveOnly, proposal.ProposalHash,
+            new DateTimeOffset(2026, 12, 2, 0, 0, 0, TimeSpan.Zero), "kbv9");
+        var nine = new RuleActivation(
+            "ACT-N9", "PACK-T-03", "PACK-T", "v9", "v8", "MEMO-9", "Terry Owner",
+            new DateTimeOffset(2026, 12, 4, 0, 0, 0, TimeSpan.Zero),
+            RuleApplicability.ProspectiveOnly, "hash-nine",
+            new DateTimeOffset(2026, 12, 5, 0, 0, 0, TimeSpan.Zero), "kbv9");
+        var ten = new RuleActivation(
+            "ACT-N10", "PACK-T-03", "PACK-T", "v10", "v9", "MEMO-9", "Terry Owner",
+            new DateTimeOffset(2026, 12, 3, 0, 0, 0, TimeSpan.Zero),
+            RuleApplicability.ProspectiveOnly, "hash-ten",
+            new DateTimeOffset(2026, 12, 3, 12, 0, 0, TimeSpan.Zero), "kbv9");
+        var memo = new MemoFile(
+            new PolicyMemo("MEMO-9", FixedAt, "Board", "Excerpt."),
+            "Full text.",
+            [new MemoProposalRecord(proposal, new ProposalValidation(true, [], []), null, "Terry Owner")],
+            [], [],
+            [old, current, nine, ten]);
+
+        var rows = GovernanceRuleBoard.BuildRows(
+            [], [memo],
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            "kbv9");
+
+        Assert.Equal(2, rows.Count);
+        var rule2 = rows.Single(r => r.RuleId == "PACK-T-02");
+        Assert.Equal("v3", rule2.PackVersion);
+        Assert.False(rule2.NeedsReview);
+        Assert.Equal("History (v2)", rule2.HistoryLabel);
+        Assert.Contains("ACT-NEW", rule2.HistoryHref);
+        Assert.Equal(
+            "Sourcing policy: origin cap, v9",
+            PolicyLabels.CitationLabel(Assert.Single(rule2.GroundedEntries)));
+
+        // Version rank is numeric: v10 beats v9 even though it published
+        // earlier ("v10" sorts before "v9" as text).
+        var rule3 = rows.Single(r => r.RuleId == "PACK-T-03");
+        Assert.Equal("v10", rule3.PackVersion);
+        Assert.Equal("History (v9)", rule3.HistoryLabel);
     }
 
     [Fact]

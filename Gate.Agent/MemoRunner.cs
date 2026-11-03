@@ -326,6 +326,11 @@ public sealed class MemoRunner
                 $"Decision {decisionId} on memo {memoId} names no approver; the KB approval matrix names who must decide.");
         }
 
+        if (input.Approved)
+        {
+            await RequireAnotherOwnerAsync(file, decisionId, input.Approver, ct).ConfigureAwait(false);
+        }
+
         var snapshot = await _compliance.LoadKbSnapshotAsync(ct).ConfigureAwait(false);
         var approval = new RuleApproval(
             current.Proposal.ProposalHash, current.Proposal.KbVersion,
@@ -610,6 +615,38 @@ public sealed class MemoRunner
                 $"Decision {decisionId} on memo {memoId} cannot resolve: blocking questions " +
                 $"{string.Join(", ", declined.Select(d => d.DecisionId))} were declined; " +
                 "the memo is closed without publication.");
+        }
+    }
+
+    /// <summary>Separation of duties on memo approval: the author can't
+    /// approve their own memo, and neither can anyone deciding for the
+    /// author under an active delegation. Refusals name the reason; the
+    /// card stays pending for another owner.</summary>
+    private async Task RequireAnotherOwnerAsync(
+        MemoFile file, string decisionId, string approver, CancellationToken ct)
+    {
+        var memoId = file.Memo.MemoId;
+        var author = file.Memo.Author;
+        if (!string.IsNullOrWhiteSpace(author)
+            && string.Equals(approver, author.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Decision {decisionId} on memo {memoId} is refused: the author can't approve " +
+                "their own memo; it needs another owner.");
+        }
+
+        var delegations = await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        var decidingForAuthor = delegations.Any(d =>
+            !string.IsNullOrWhiteSpace(author)
+            && string.Equals(d.FromUser, author.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(d.ToUser, approver, StringComparison.OrdinalIgnoreCase)
+            && today >= d.Start && today <= d.End);
+        if (decidingForAuthor)
+        {
+            throw new InvalidOperationException(
+                $"Decision {decisionId} on memo {memoId} is refused: {approver} decides for the author " +
+                "under an active delegation; the memo needs another owner.");
         }
     }
 

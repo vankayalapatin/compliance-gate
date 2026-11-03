@@ -140,6 +140,81 @@ public sealed class MemoApprovalTests
     }
 
     [Fact]
+    public async Task AuthorCannotApproveOwnMemo()
+    {
+        var h = MemoTestKit.Create();
+        var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-SOD1",
+            "Cap the awarded-country share of critical battery cells.",
+            "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",
+            "Terry Owner");
+        await h.Runner.IngestMemoAsync(h.InboxDir, file);
+        h.Models.QueueText(MemoTestKit.CapProposalJson());
+        var outcome = await h.Runner.AdvanceAsync("MEMO-SOD1");
+        Assert.Equal(MemoNextStep.AwaitApproval, outcome.Step);
+        var card = MemoStore.Load(h.CacheDir, "MEMO-SOD1")!.Decisions
+            .Single(d => d.Kind == DecisionKind.PolicyApproval);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => h.Runner.ResolvePolicyApprovalAsync("MEMO-SOD1", card.DecisionId, Approve()));
+
+        Assert.Contains("can't approve their own memo", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(h.Compliance.Published);
+        Assert.Equal(DecisionStatus.Pending,
+            MemoStore.Load(h.CacheDir, "MEMO-SOD1")!.Decisions.Single(d => d.Kind == DecisionKind.PolicyApproval).Status);
+    }
+
+    [Fact]
+    public async Task AuthorDelegateCannotApproveUnderActiveDelegation()
+    {
+        var (h, card) = await CapAtApprovalAsync("MEMO-SOD2");
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        h.Erp.SeedDelegation(new DelegationDto("The board", "Terry Owner", today.AddDays(-1), today.AddDays(30)));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => h.Runner.ResolvePolicyApprovalAsync("MEMO-SOD2", card.DecisionId, Approve()));
+
+        Assert.Contains("decides for the author under an active delegation", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(h.Compliance.Published);
+        Assert.Equal(DecisionStatus.Pending,
+            MemoStore.Load(h.CacheDir, "MEMO-SOD2")!.Decisions.Single(d => d.Kind == DecisionKind.PolicyApproval).Status);
+    }
+
+    [Fact]
+    public async Task ExpiredDelegationDoesNotBlockApproval()
+    {
+        var (h, card) = await CapAtApprovalAsync("MEMO-SOD3");
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        h.Erp.SeedDelegation(new DelegationDto("The board", "Terry Owner", today.AddDays(-30), today.AddDays(-1)));
+
+        var result = await h.Runner.ResolvePolicyApprovalAsync("MEMO-SOD3", card.DecisionId, Approve());
+
+        Assert.Equal(DecisionStatus.Approved, result.Decision.Status);
+        Assert.NotNull(result.Activation);
+    }
+
+    [Fact]
+    public async Task AuthorMayRejectOwnMemo()
+    {
+        var h = MemoTestKit.Create();
+        var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-SOD4",
+            "Cap the awarded-country share of critical battery cells.",
+            "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",
+            "Terry Owner");
+        await h.Runner.IngestMemoAsync(h.InboxDir, file);
+        h.Models.QueueText(MemoTestKit.CapProposalJson());
+        var outcome = await h.Runner.AdvanceAsync("MEMO-SOD4");
+        Assert.Equal(MemoNextStep.AwaitApproval, outcome.Step);
+        var card = MemoStore.Load(h.CacheDir, "MEMO-SOD4")!.Decisions
+            .Single(d => d.Kind == DecisionKind.PolicyApproval);
+        var input = Approve() with { Approved = false, Comment = "Withdrawing my own proposal." };
+
+        var result = await h.Runner.ResolvePolicyApprovalAsync("MEMO-SOD4", card.DecisionId, input);
+
+        Assert.Equal(DecisionStatus.Rejected, result.Decision.Status);
+        Assert.Null(result.Activation);
+    }
+
+    [Fact]
     public async Task RejectRecordsTheRefusal()
     {
         var (h, card) = await CapAtApprovalAsync();

@@ -84,7 +84,7 @@ public sealed class PolicyMemoSubmitTests
     }
 
     [Fact]
-    public async Task Submit_MintsUniqueIds()
+    public async Task Submit_MintsSequenceNumbersInOrder()
     {
         var (kit, submit) = Create();
         kit.Models.QueueText(MemoTestKit.CapProposalJson());
@@ -95,6 +95,39 @@ public sealed class PolicyMemoSubmitTests
 
         Assert.True(first.Ok, first.Error);
         Assert.True(second.Ok, second.Error);
-        Assert.NotEqual(first.MemoId, second.MemoId);
+        Assert.Equal("MEMO-0001", first.MemoId);
+        Assert.Equal("MEMO-0002", second.MemoId);
+    }
+
+    [Fact]
+    public async Task Submit_ContinuesPastNumberedMemosAndSkipsFreeFormIds()
+    {
+        var (kit, submit) = Create();
+        await MemoTestKit.IngestAsync(kit, "MEMO-0001");
+        await MemoTestKit.IngestAsync(kit, "MEMO-0003");
+        await MemoTestKit.IngestAsync(kit, "MEMO-9f8e7d6c5b4a");
+        kit.Models.QueueText(MemoTestKit.CapProposalJson());
+
+        var result = await submit.SubmitAsync("The board", "Third memo text here.");
+
+        Assert.True(result.Ok, result.Error);
+        Assert.Equal("MEMO-0004", result.MemoId);
+    }
+
+    [Theory]
+    [InlineData("MEMO-0001", 1, true)]
+    [InlineData("MEMO-0002", 2, true)]
+    [InlineData("MEMO-12", 12, true)]
+    [InlineData("MEMO-9f8e7d6c5b4a", 0, false)]
+    [InlineData("MEMO-T1", 0, false)]
+    [InlineData("MEMO-", 0, false)]
+    [InlineData("MEMO-0000", 0, false)]
+    [InlineData("", 0, false)]
+    public void TryParseMemoNumber_ReadsSequenceIdsOnly(string memoId, int expected, bool parses)
+    {
+        var ok = MemoSubmitService.TryParseMemoNumber(memoId, out var value);
+
+        Assert.Equal(parses, ok);
+        Assert.Equal(expected, value);
     }
 }

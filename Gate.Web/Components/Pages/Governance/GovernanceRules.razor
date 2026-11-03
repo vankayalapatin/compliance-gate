@@ -45,7 +45,7 @@
             {
                 <table class="gate-table">
                     <thead>
-                        <tr><th>Rule</th><th>Pack</th><th>Pack version</th><th>Owner</th><th>Adopted / Effective</th><th>Source</th><th class="gate-num">Blocks</th><th>Grounded entries</th><th>Review</th></tr>
+                        <tr><th>Rule</th><th>Pack</th><th>Pack version</th><th>Owner</th><th>Adopted / Effective</th><th>Source</th><th class="gate-num">Blocks</th><th>Grounded entries</th><th>Review</th><th>History</th></tr>
                     </thead>
                     <tbody>
                         @foreach (var row in _rows)
@@ -73,7 +73,7 @@
                                     {
                                         @foreach (var citation in row.GroundedEntries)
                                         {
-                                            <a href="/@GovernanceRoutes.CitationHref(citation)"><code>@PolicyLabels.Citation(citation)</code></a><span> </span>
+                                            <a href="/@GovernanceRoutes.CitationHref(citation)">@PolicyLabels.CitationLabel(citation)</a><span> </span>
                                         }
                                     }
                                 </td>
@@ -86,6 +86,16 @@
                                     else
                                     {
                                         <span class="gate-meta">current</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (row.HistoryHref is not null)
+                                    {
+                                        <a href="/@row.HistoryHref">@row.HistoryLabel</a>
+                                    }
+                                    else
+                                    {
+                                        <span class="gate-meta">—</span>
                                     }
                                 </td>
                             </tr>

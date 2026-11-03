@@ -141,6 +141,48 @@ public static class PolicyLabels
     public static string Citation(KbCitation citation) =>
         $"kb:{citation.Section}#{citation.EntryId}@{KbDisplay.Version(citation.KbVersion)}";
 
+    /// <summary>Readable citation label for the Rules page: "Sourcing
+    /// policy: origin cap, v3". Section and entry ids render as words;
+    /// the KB version renders short.</summary>
+    public static string CitationLabel(KbCitation citation)
+    {
+        ArgumentNullException.ThrowIfNull(citation);
+        return $"{Words(citation.Section, capitalize: true)}: {Words(citation.EntryId, capitalize: false)}, " +
+            $"{ShortVersion(citation.KbVersion)}";
+    }
+
+    private static string Words(string id, bool capitalize)
+    {
+        var words = (id ?? string.Empty).Replace('-', ' ').Replace('_', ' ').Trim();
+        if (words.Length == 0)
+        {
+            return "—";
+        }
+
+        return capitalize
+            ? char.ToUpperInvariant(words[0]) + words[1..]
+            : words;
+    }
+
+    private static string ShortVersion(string? version)
+    {
+        if (!string.IsNullOrWhiteSpace(version)
+            && version!.StartsWith("kbv", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(version[3..], out var n))
+        {
+            return $"v{n}";
+        }
+
+        return string.IsNullOrWhiteSpace(version) ? "—" : version.Trim();
+    }
+
+    /// <summary>Company-rule source in plain words: "MEMO-0002 by Dana
+    /// Director, approved by Finn Finance, effective Nov 3, 2026".</summary>
+    public static string RuleSource(
+        string memoId, string author, string approver, DateTimeOffset effectiveAt) =>
+        $"{memoId} by {author}, approved by {approver}, " +
+        $"effective {effectiveAt.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)}";
+
     /// <summary>One flip's money, always with its currency.</summary>
     public static string FlipMoney(decimal amount, string? currency) =>
         ErpFormat.Money(amount, currency);

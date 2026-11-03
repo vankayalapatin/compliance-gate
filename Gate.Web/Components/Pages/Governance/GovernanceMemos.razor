@@ -590,7 +590,7 @@ else
     @foreach (var activation in _activations)
     {
         var a = activation.Activation;
-        <section class="gate-card">
+        <section class="gate-card" id="activation-@a.ActivationId">
             <div class="gate-card-head">
                 <p class="gate-card-title">@a.PackId @a.NewPackVersion</p>
                 <div class="gate-card-badges">
