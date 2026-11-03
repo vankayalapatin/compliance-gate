@@ -26,10 +26,13 @@ public sealed class DockProblemsPageProofTests
     private static readonly JsonSerializerOptions WebOpts = new(JsonSerializerDefaults.Web);
 
     /// <summary>Serves the UI service's dock POSTs with the real endpoint
-    /// logic: rebuilds run the real endpoint helper on the real runner, and
-    /// photo sends transcribe, judge, and advance exactly like the real
-    /// handlers. Only the transport is test-owned.</summary>
-    private sealed class RunnerHttpHandler(CaseRunner runner) : HttpMessageHandler
+    /// logic: rebuilds validate through the real accept helper and run the
+    /// real rebuild inline (the background half, done before answering so
+    /// the views exist when the panel polls), photo sends transcribe,
+    /// judge, and advance exactly like the real background half, and the
+    /// progress GET runs the real progress helper. Only the transport is
+    /// test-owned.</summary>
+    private sealed class RunnerHttpHandler(Flow flow) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
@@ -41,18 +44,19 @@ public sealed class DockProblemsPageProofTests
             if (string.Equals(path, SimulationUiService.RebuildViewsPath, StringComparison.Ordinal)
                 && request.Method == HttpMethod.Post)
             {
-                var rebuild = await SimulationEndpoints.RebuildDockViewsAsync(
-                    JsonSerializer.Deserialize<DockRebuildViewsRequest>(body, WebOpts),
-                    runner, cancellationToken).ConfigureAwait(false);
-                return rebuild.Ok
-                    ? Ok(new
-                    {
-                        caseId = rebuild.CaseId,
-                        images = rebuild.Images,
-                        problems = rebuild.Problems
-                            .Select(p => new { cartonId = p.CartonId, kind = p.Kind }).ToList(),
-                    })
-                    : BadRequest(rebuild.Error ?? "Rebuild refused.");
+                var accepted = SimulationEndpoints.AcceptRebuildAsync(
+                    JsonSerializer.Deserialize<DockRebuildViewsRequest>(body, WebOpts));
+                if (!accepted.Ok)
+                {
+                    return BadRequest(accepted.Error ?? "Rebuild refused.");
+                }
+
+                await flow.Runner.RebuildDockViewsAsync(
+                    new RebuildDockViewsInput(
+                        accepted.CaseId,
+                        SimulationEndpoints.ToSimulatedProblems(accepted.Problems)),
+                    cancellationToken).ConfigureAwait(false);
+                return Ok(new { accepted = true });
             }
 
             if (string.Equals(path, SimulationUiService.DockPhotosPath, StringComparison.Ordinal)
@@ -60,16 +64,49 @@ public sealed class DockProblemsPageProofTests
             {
                 var photos = JsonSerializer.Deserialize<DockPhotosRequest>(body, WebOpts)
                     ?? throw new InvalidOperationException("Dock photos request did not parse.");
-                var reads = await runner.TranscribeDockPhotosAsync(
+                var reads = await flow.Runner.TranscribeDockPhotosAsync(
                     photos.CaseId, photos.Photos, cancellationToken).ConfigureAwait(false);
-                var verdicts = await runner.OnDockReadsAsync(
+                await flow.Runner.OnDockReadsAsync(
                     photos.CaseId, reads, cancellationToken).ConfigureAwait(false);
-                var advanced = await runner.AdvanceAsync(photos.CaseId, cancellationToken).ConfigureAwait(false);
+                await flow.Runner.AdvanceAsync(photos.CaseId, cancellationToken).ConfigureAwait(false);
+                return Ok(new { accepted = true, photoCount = photos.Photos.Count });
+            }
+
+            if (string.Equals(path, SimulationUiService.ProgressPath, StringComparison.Ordinal)
+                && request.Method == HttpMethod.Get)
+            {
+                var query = ParseQuery(request.RequestUri?.Query ?? string.Empty);
+                query.TryGetValue("caseId", out var queryCase);
+                query.TryGetValue("since", out var querySince);
+                var progress = await SimulationEndpoints.CaseProgressAsync(
+                    new CaseCacheStore(flow.CaseDir), flow.Erp,
+                    queryCase, querySince, cancellationToken).ConfigureAwait(false);
                 return Ok(new
                 {
-                    cartons = verdicts.Keys.Order(StringComparer.Ordinal).ToList(),
-                    step = advanced.Step.ToString(),
-                    advanced.Complete,
+                    dock = progress.Dock is null
+                        ? null
+                        : new
+                        {
+                            receivedAt = progress.Dock.ReceivedAt,
+                            progress.Dock.Cartons,
+                            issues = progress.Dock.Issues.Select(i => new
+                            {
+                                cartonId = i.CartonId,
+                                ruleId = i.RuleId,
+                                kind = i.Kind,
+                                reason = i.Reason,
+                            }).ToList(),
+                        },
+                    invoices = progress.Invoices.Select(i => new
+                    {
+                        vendorId = i.VendorId,
+                        supplierInvoiceNumber = i.SupplierInvoiceNumber,
+                        currency = i.Currency,
+                        acceptedValue = i.AcceptedValue,
+                        heldValue = i.HeldValue,
+                        receivedAt = i.ReceivedAt,
+                    }).ToList(),
+                    events = progress.Events,
                 });
             }
 
@@ -91,6 +128,24 @@ public sealed class DockProblemsPageProofTests
                     JsonSerializer.Serialize(new { error }, WebOpts),
                     System.Text.Encoding.UTF8, "application/json"),
             };
+
+        private static Dictionary<string, string> ParseQuery(string query)
+        {
+            var parsed = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var part in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var cut = part.IndexOf('=');
+                if (cut <= 0)
+                {
+                    continue;
+                }
+
+                parsed[Uri.UnescapeDataString(part[..cut])] =
+                    Uri.UnescapeDataString(part[(cut + 1)..]);
+            }
+
+            return parsed;
+        }
     }
 
     private sealed record Flow(
@@ -189,7 +244,7 @@ public sealed class DockProblemsPageProofTests
     {
         var cases = new CaseCacheStore(flow.CaseDir);
         var photos = new DockPhotoService(flow.DockDir, flow.DockDir + "-vision");
-        var http = new HttpClient(new RunnerHttpHandler(flow.Runner)) { BaseAddress = new Uri("http://localhost/") };
+        var http = new HttpClient(new RunnerHttpHandler(flow)) { BaseAddress = new Uri("http://localhost/") };
         return new SimulationUiService(
             http, flow.Erp, cases, photos, UiTestLogger<SimulationUiService>.Instance);
     }
@@ -231,7 +286,7 @@ public sealed class DockProblemsPageProofTests
         ClickButton(page, "Rebuild views");
         var fresh = $"{flow.AsnNumber}-SCENE-04.jpg";
         page.WaitForAssertion(
-            () => Assert.Contains($"Rebuilt 1 view(s): {fresh}.", page.Markup, StringComparison.Ordinal),
+            () => Assert.Contains($"Rebuilt views ready: {fresh}.", page.Markup, StringComparison.Ordinal),
             TimeSpan.FromSeconds(15));
         Assert.Contains($"id=\"dockimg-{flow.AsnNumber}-{fresh}\"", page.Markup, StringComparison.Ordinal);
         Assert.DoesNotContain(stale, page.Markup);

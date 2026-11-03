@@ -18,17 +18,23 @@ public sealed class DockProblemsTests
         RecordingComplianceEngine Compliance,
         string CaseDir);
 
-    private sealed class StubSceneGenerator(Func<int, byte[]> generate) : ISceneGenerator
+    private sealed class StubSceneGenerator(Func<int, int, byte[]> generate) : ISceneGenerator
     {
         public string GeneratorName => "stub-scenes";
 
         public int CallCount { get; private set; }
 
-        public Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default)
+        public int LastCartonCount { get; private set; }
+
+        public int LastCrushedCount { get; private set; }
+
+        public Task<byte[]> GenerateSceneAsync(int cartonCount, int crushedCount, CancellationToken ct = default)
         {
             _ = ct;
             CallCount++;
-            return Task.FromResult(generate(cartonCount));
+            LastCartonCount = cartonCount;
+            LastCrushedCount = crushedCount;
+            return Task.FromResult(generate(cartonCount, crushedCount));
         }
     }
 
@@ -222,7 +228,7 @@ public sealed class DockProblemsTests
     {
         var first = Create();
         var caseId = await OpenAsnCaseAsync(first);
-        var generator = new StubSceneGenerator(_ =>
+        var generator = new StubSceneGenerator((_, _) =>
             throw new InvalidOperationException("live painter offline"));
         var scene = new DockSceneLive { LiveOn = true, SceneGenerator = generator };
         var h = new Harness(
@@ -254,7 +260,7 @@ public sealed class DockProblemsTests
         var caseId = await OpenAsnCaseAsync(first);
         var poNumber = CaseStore.Load(first.CaseDir, caseId)!.Case.PoNumber!;
         var baseBytes = File.ReadAllBytes(Path.Combine(VisionFiles.DockScenesBasesDir(), "scene-01.jpg"));
-        var generator = new StubSceneGenerator(_ => baseBytes);
+        var generator = new StubSceneGenerator((_, _) => baseBytes);
         var scene = new DockSceneLive { LiveOn = true, SceneGenerator = generator };
         var h = new Harness(
             first.Erp,
@@ -282,11 +288,118 @@ public sealed class DockProblemsTests
     }
 
     [Fact]
+    public void ScenePromptDrawsCrushedInNeutralWords()
+    {
+        var plain = MetaSceneGenerator.ScenePrompt(3);
+        Assert.Contains("exactly 3", plain, StringComparison.Ordinal);
+        Assert.DoesNotContain("caved-in", plain);
+
+        var one = MetaSceneGenerator.ScenePrompt(3, 1);
+        Assert.Contains("exactly 3", one, StringComparison.Ordinal);
+        Assert.Contains(
+            "One carton with a caved-in corner and a torn side.", one, StringComparison.Ordinal);
+
+        var two = MetaSceneGenerator.ScenePrompt(4, 2);
+        Assert.Contains(
+            "2 cartons with caved-in corners and torn sides.", two, StringComparison.Ordinal);
+
+        // The damage wording tripped the image content filter before.
+        foreach (var prompt in new[] { plain, one, two })
+        {
+            Assert.DoesNotContain("damage", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("crushed", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("destroyed", prompt, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task LiveBuildPassesCrushedCount()
+    {
+        var first = Create();
+        var caseId = await OpenAsnCaseAsync(first, cartons:
+        [
+            new AsnCartonInput("C-1", SeededErp.Battery, 5, "LOT-T1"),
+            new AsnCartonInput("C-2", SeededErp.Battery, 5, "LOT-T2"),
+        ]);
+        var poNumber = CaseStore.Load(first.CaseDir, caseId)!.Case.PoNumber!;
+        var baseBytes = File.ReadAllBytes(Path.Combine(VisionFiles.DockScenesBasesDir(), "scene-01.jpg"));
+        var generator = new StubSceneGenerator((_, _) => baseBytes);
+        var scene = new DockSceneLive { LiveOn = true, SceneGenerator = generator };
+        var h = new Harness(
+            first.Erp,
+            new CaseRunner(
+                first.Erp,
+                new P2pAgent(first.Erp, first.Models, first.Compliance),
+                first.Models, first.Compliance, new DockEvaluatorAdapter(), first.CaseDir,
+                dockImageOptions: BadSpecsOptions(first.CaseDir), dockSceneLive: scene),
+            first.Models, first.Compliance, first.CaseDir);
+        h.Models.QueueText("""[{"x":0.05,"y":0.1,"w":0.4,"h":0.35},{"x":0.5,"y":0.55,"w":0.4,"h":0.35}]""");
+        h.Models.QueueText(
+            $$"""[{"carton_id":"C-1","part":"{{SeededErp.Battery}}","po_number":"{{poNumber}}","lot_code":"LOT-T1","units_per_carton":5,"mark_present":true,"mark_legible":true,"un_number":"UN3480","class9_visible":true,"damage_visible":false,"damage_note":null,"read_confidence":0.99},{"carton_id":"C-2","part":"{{SeededErp.Battery}}","po_number":"{{poNumber}}","lot_code":"LOT-T2","units_per_carton":5,"mark_present":true,"mark_legible":true,"un_number":"UN3480","class9_visible":true,"damage_visible":true,"damage_note":"caved corner with tear","read_confidence":0.97}]""");
+
+        var set = await h.Runner.RebuildDockViewsAsync(new RebuildDockViewsInput(
+            caseId, [new SimulatedProblem("C-2", SimulatedProblemKind.Crushed)]));
+
+        Assert.NotNull(set);
+        Assert.Equal(2, generator.LastCartonCount);
+        Assert.Equal(1, generator.LastCrushedCount);
+        Assert.Equal("LIVE-01", Assert.Single(set.Images).ImageId);
+        var timeline = CaseStore.Load(h.CaseDir, caseId)!.Events
+            .Where(e => e.Kind == CaseEventKind.Note)
+            .Select(e => e.Summary)
+            .ToList();
+        Assert.Contains(timeline, s => s.Contains("built live", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LiveDamageOnWrongCartonFallsBack()
+    {
+        var first = Create();
+        var caseId = await OpenAsnCaseAsync(first, cartons:
+        [
+            new AsnCartonInput("C-1", SeededErp.Battery, 5, "LOT-T1"),
+            new AsnCartonInput("C-2", SeededErp.Battery, 5, "LOT-T2"),
+        ]);
+        var poNumber = CaseStore.Load(first.CaseDir, caseId)!.Case.PoNumber!;
+        var baseBytes = File.ReadAllBytes(Path.Combine(VisionFiles.DockScenesBasesDir(), "scene-01.jpg"));
+        var generator = new StubSceneGenerator((_, _) => baseBytes);
+        var scene = new DockSceneLive { LiveOn = true, SceneGenerator = generator };
+        var h = new Harness(
+            first.Erp,
+            new CaseRunner(
+                first.Erp,
+                new P2pAgent(first.Erp, first.Models, first.Compliance),
+                first.Models, first.Compliance, new DockEvaluatorAdapter(), first.CaseDir,
+                dockImageOptions: BadSpecsOptions(first.CaseDir), dockSceneLive: scene),
+            first.Models, first.Compliance, first.CaseDir);
+        h.Models.QueueText("""[{"x":0.05,"y":0.1,"w":0.4,"h":0.35},{"x":0.5,"y":0.55,"w":0.4,"h":0.35}]""");
+        // The read puts the damage on C-1 while the manifest has C-2
+        // crushed: the check fails, retries once, then falls back.
+        var swapped =
+            $$"""[{"carton_id":"C-1","part":"{{SeededErp.Battery}}","po_number":"{{poNumber}}","lot_code":"LOT-T1","units_per_carton":5,"mark_present":true,"mark_legible":true,"un_number":"UN3480","class9_visible":true,"damage_visible":true,"damage_note":"caved corner","read_confidence":0.9},{"carton_id":"C-2","part":"{{SeededErp.Battery}}","po_number":"{{poNumber}}","lot_code":"LOT-T2","units_per_carton":5,"mark_present":true,"mark_legible":true,"un_number":"UN3480","class9_visible":true,"damage_visible":false,"damage_note":null,"read_confidence":0.9}]""";
+        h.Models.QueueText(swapped);
+        h.Models.QueueText(swapped);
+
+        var set = await h.Runner.RebuildDockViewsAsync(new RebuildDockViewsInput(
+            caseId, [new SimulatedProblem("C-2", SimulatedProblemKind.Crushed)]));
+
+        Assert.Null(set);
+        Assert.Equal(1, generator.CallCount);
+        var timeline = CaseStore.Load(h.CaseDir, caseId)!.Events
+            .Where(e => e.Kind == CaseEventKind.Note)
+            .Select(e => e.Summary)
+            .ToList();
+        var fallback = Assert.Single(timeline, s => s.Contains("library views used", StringComparison.Ordinal));
+        Assert.Contains("damage_visible", fallback, StringComparison.Ordinal);
+        Assert.Contains("damage_visible", scene.LastFallbackReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task LiveOffSkipsGenerator()
     {
         var first = Create();
         var caseId = await OpenAsnCaseAsync(first);
-        var generator = new StubSceneGenerator(_ =>
+        var generator = new StubSceneGenerator((_, _) =>
             throw new InvalidOperationException("Generator must not run while live is off."));
         var h = new Harness(
             first.Erp,

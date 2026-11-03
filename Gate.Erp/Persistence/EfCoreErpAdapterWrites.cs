@@ -531,10 +531,13 @@ public sealed partial class EfCoreErpAdapter
             if (await db.Asns.FindAsync([number], ct).ConfigureAwait(false) is not null)
                 throw new InvalidOperationException($"Duplicate ASN {number}.");
         }
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var c in cartons)
         {
-            var dup = await db.AsnCartons.FindAsync([c.CartonId], ct).ConfigureAwait(false);
-            if (dup is not null) throw new InvalidOperationException($"Duplicate carton {c.CartonId}.");
+            if (!seen.Add(c.CartonId))
+                throw new InvalidOperationException($"Duplicate carton {c.CartonId} on ASN {number}.");
+            var dup = await db.AsnCartons.FindAsync([number, c.CartonId], ct).ConfigureAwait(false);
+            if (dup is not null) throw new InvalidOperationException($"Duplicate carton {c.CartonId} on ASN {number}.");
         }
         db.Asns.Add(new AsnRow
         {
@@ -805,7 +808,7 @@ public sealed partial class EfCoreErpAdapter
         await tx.CommitAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default)
+    public async Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default, string? asnNumber = null)
     {
         using var db = _factory.CreateDbContext();
         var replay = await ReplayAsync<HoldDto>(db, $"hold:{idempotencyKey}", ct).ConfigureAwait(false);
@@ -818,10 +821,10 @@ public sealed partial class EfCoreErpAdapter
             HoldId = holdId, ReasonCode = reasonCode, Note = note, RuleId = ruleId, CaseId = caseId,
             SetBy = setBy, SetAt = Text(setAt), Status = HoldStatus.Set.ToString(),
             DocumentType = documentType, DocumentNumber = documentNumber,
-            PoLineRef = poLineRef, LotRef = lotRef, CartonId = cartonId
+            PoLineRef = poLineRef, LotRef = lotRef, CartonId = cartonId, AsnNumber = asnNumber
         });
         var hold = new HoldDto(holdId, reasonCode, note, ruleId, caseId, setBy, setAt,
-            HoldStatus.Set, documentType, documentNumber, poLineRef, lotRef, cartonId);
+            HoldStatus.Set, documentType, documentNumber, poLineRef, lotRef, cartonId, asnNumber);
         RecordReplay(db, $"hold:{idempotencyKey}", hold);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         await tx.CommitAsync(ct).ConfigureAwait(false);
@@ -1008,14 +1011,14 @@ public sealed partial class EfCoreErpAdapter
         var asnNumbers = await db.Asns
             .Where(a => a.PoNumber == poNumber).Select(a => a.AsnNumber)
             .ToListAsync(ct).ConfigureAwait(false);
-        var cartonLots = new Dictionary<string, string>(StringComparer.Ordinal);
+        var cartonLots = new Dictionary<(string AsnNumber, string CartonId), string>();
         foreach (var asn in asnNumbers)
         {
             var cartons = await db.AsnCartons
                 .Where(c => c.AsnNumber == asn).ToListAsync(ct).ConfigureAwait(false);
             foreach (var carton in cartons)
             {
-                cartonLots.TryAdd(carton.CartonId, carton.LotRef);
+                cartonLots.TryAdd((asn, carton.CartonId), carton.LotRef);
             }
         }
 
@@ -1026,7 +1029,7 @@ public sealed partial class EfCoreErpAdapter
 
         var passed = await _policyContext
             .FindDockPassedCartonsAsync(invoices, ct).ConfigureAwait(false);
-        var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+        var passedSet = passed.Select(p => (p.AsnNumber, p.CartonId)).ToHashSet();
         var pendingLots = cartonLots
             .Where(kv => !passedSet.Contains(kv.Key))
             .Select(kv => kv.Value)

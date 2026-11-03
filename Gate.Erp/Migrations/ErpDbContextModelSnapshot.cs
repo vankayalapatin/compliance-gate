@@ -348,8 +348,7 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("ItemId").HasColumnType("TEXT");
             b.Property<int>("UnitsPerCarton").HasColumnType("INTEGER");
             b.Property<string>("LotRef").HasColumnType("TEXT");
-            b.HasKey("CartonId");
-            b.HasIndex("AsnNumber");
+            b.HasKey("AsnNumber", "CartonId");
             b.ToTable("AsnCartons", (string)null);
         });
 
@@ -411,6 +410,7 @@ public partial class ErpDbContextModelSnapshot : ModelSnapshot
             b.Property<string>("PoLineRef").HasColumnType("TEXT");
             b.Property<string>("LotRef").HasColumnType("TEXT");
             b.Property<string>("CartonId").HasColumnType("TEXT");
+            b.Property<string>("AsnNumber").HasColumnType("TEXT");
             b.HasKey("HoldId");
             b.ToTable("Holds", (string)null);
         });

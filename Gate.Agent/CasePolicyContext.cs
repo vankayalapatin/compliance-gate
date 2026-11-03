@@ -91,13 +91,13 @@ public sealed class CasePolicyContext(string cacheDir) : IErpPolicyContext
         return Task.FromResult<IReadOnlyList<OpenReview>>(reviews);
     }
 
-    public Task<IReadOnlyList<string>> FindDockPassedCartonsAsync(
+    public Task<IReadOnlyList<DockPassedCarton>> FindDockPassedCartonsAsync(
         IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default)
     {
         var keys = invoices
             .Select(k => $"{k.VendorId}/{k.SupplierInvoiceNumber}")
             .ToHashSet(StringComparer.Ordinal);
-        var passed = new HashSet<string>(StringComparer.Ordinal);
+        var passed = new HashSet<DockPassedCarton>();
         foreach (var caseId in CaseStore.ListCaseIds(cacheDir))
         {
             ct.ThrowIfCancellationRequested();
@@ -110,6 +110,13 @@ public sealed class CasePolicyContext(string cacheDir) : IErpPolicyContext
             var touched = file.Case.Invoices
                 .Any(k => keys.Contains($"{k.VendorId}/{k.SupplierInvoiceNumber}"));
             if (!touched)
+            {
+                continue;
+            }
+
+            // Pairs only: a case with no ASN cannot scope its passes, so
+            // they stay pending rather than releasing a namesake carton.
+            if (file.Case.AsnNumber is null)
             {
                 continue;
             }
@@ -127,13 +134,14 @@ public sealed class CasePolicyContext(string cacheDir) : IErpPolicyContext
             {
                 if (verdicts.Count > 0 && verdicts.All(v => v.Kind == VerdictKind.Pass))
                 {
-                    passed.Add(cartonId);
+                    passed.Add(new DockPassedCarton(file.Case.AsnNumber, cartonId));
                 }
             }
         }
 
-        return Task.FromResult<IReadOnlyList<string>>(
-            passed.OrderBy(c => c, StringComparer.Ordinal).ToList());
+        return Task.FromResult<IReadOnlyList<DockPassedCarton>>(
+            passed.OrderBy(c => c.AsnNumber, StringComparer.Ordinal)
+                .ThenBy(c => c.CartonId, StringComparer.Ordinal).ToList());
     }
 
     private static string? CartonFromEvidence(Decision decision) =>

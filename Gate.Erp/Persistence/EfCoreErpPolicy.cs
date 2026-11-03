@@ -87,6 +87,16 @@ public sealed partial class EfCoreErpAdapter
         }
     }
 
+    /// <summary>Hold carton scope: the hold touches a carton only on its
+    /// own ASN. Holds that predate the ASN stamp fall back to the bare
+    /// carton id.</summary>
+    private static bool HoldCartonInScope(
+        HoldRow hold, IReadOnlyDictionary<(string AsnNumber, string CartonId), string> cartonLots) =>
+        hold.AsnNumber is not null
+            ? cartonLots.ContainsKey((hold.AsnNumber, hold.CartonId!))
+            : cartonLots.Keys.Any(k =>
+                string.Equals(k.CartonId, hold.CartonId, StringComparison.Ordinal));
+
     private async Task<PayableCheckInput?> BuildPayableInputAsync(
         ErpDbContext db, IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
     {
@@ -140,7 +150,7 @@ public sealed partial class EfCoreErpAdapter
         }
 
         var cartonIds = new HashSet<string>(StringComparer.Ordinal);
-        var cartonLots = new Dictionary<string, string>(StringComparer.Ordinal);
+        var cartonLots = new Dictionary<(string AsnNumber, string CartonId), string>();
         foreach (var po in poNumbers)
         {
             var asnNumbers = await db.Asns
@@ -153,7 +163,7 @@ public sealed partial class EfCoreErpAdapter
                 foreach (var carton in cartons)
                 {
                     cartonIds.Add(carton.CartonId);
-                    cartonLots.TryAdd(carton.CartonId, carton.LotRef);
+                    cartonLots.TryAdd((asn, carton.CartonId), carton.LotRef);
                 }
             }
         }
@@ -166,10 +176,10 @@ public sealed partial class EfCoreErpAdapter
                         || poNumbers.Contains(h.DocumentNumber)
                         || receiptNumbers.Contains(h.DocumentNumber)))
                 || (h.LotRef is not null && lots.Contains(h.LotRef))
-                || (h.CartonId is not null && cartonIds.Contains(h.CartonId)))
+                || (h.CartonId is not null && HoldCartonInScope(h, cartonLots)))
             .Select(h => new HoldDto(h.HoldId, h.ReasonCode, h.Note, h.RuleId, h.CaseId, h.SetBy,
                 DateTime(h.SetAt), Enum<HoldStatus>(h.Status), h.DocumentType, h.DocumentNumber,
-                h.PoLineRef, h.LotRef, h.CartonId))
+                h.PoLineRef, h.LotRef, h.CartonId, h.AsnNumber))
             .ToList();
         // Client-side sum: SQLite cannot aggregate decimals server-side.
         var quarantined = (await db.InventoryTransactions
@@ -192,7 +202,7 @@ public sealed partial class EfCoreErpAdapter
         {
             var passed = await _policyContext
                 .FindDockPassedCartonsAsync(invoices, ct).ConfigureAwait(false);
-            var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+            var passedSet = passed.Select(p => (p.AsnNumber, p.CartonId)).ToHashSet();
             dockPending = cartonLots
                 .Where(kv => !passedSet.Contains(kv.Key))
                 .Select(kv => kv.Value)

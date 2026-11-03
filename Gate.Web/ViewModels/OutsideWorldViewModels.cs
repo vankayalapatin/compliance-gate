@@ -114,7 +114,8 @@ public sealed record NewShopOrder(
 public sealed record ShopOrderPlaced(
     SimulationOutcome Outcome,
     string ShopOrderId,
-    IReadOnlyList<string> MintedSoNumbers);
+    IReadOnlyList<string> MintedSoNumbers,
+    IReadOnlyList<string> CaseIds);
 
 /// <summary>One carton on an expected truck, straight from the ASN.</summary>
 public sealed record ExpectedTruckCarton(
@@ -138,6 +139,31 @@ public sealed record ExpectedTruckVm(
 public sealed record ExpectedTrucks(
     IReadOnlyList<ExpectedTruckVm> Trucks,
     IReadOnlyList<string> Notes);
+
+/// <summary>One non-passing carton verdict in the progress poll.</summary>
+public sealed record CaseProgressIssueVm(
+    string CartonId, string RuleId, string Kind, string Reason);
+
+/// <summary>Newest dock outcome on the case for the progress poll.</summary>
+public sealed record CaseProgressDockVm(
+    IReadOnlyList<string> Cartons,
+    IReadOnlyList<CaseProgressIssueVm> Issues);
+
+/// <summary>One case invoice in the progress poll, with match values.</summary>
+public sealed record CaseProgressInvoiceVm(
+    string VendorId,
+    string SupplierInvoiceNumber,
+    string Currency,
+    string AcceptedValue,
+    string HeldValue);
+
+/// <summary>Local progress read for the outside-world panels: the newest
+/// dock outcome plus recent invoices and timeline lines. Missing
+/// sections mean nothing new yet, never an error.</summary>
+public sealed record CaseProgressVm(
+    CaseProgressDockVm? Dock,
+    IReadOnlyList<CaseProgressInvoiceVm> Invoices,
+    IReadOnlyList<string> Events);
 
 /// <summary>Pure ship-plan builder: cartons per PO line from the item pack
 /// size. Count is ceil(ordered qty / units per carton); ids derive from

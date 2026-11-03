@@ -213,8 +213,7 @@ public sealed class ErpDbContext : DbContext
         modelBuilder.Entity<AsnCartonRow>(b =>
         {
             b.ToTable("AsnCartons");
-            b.HasKey(x => x.CartonId);
-            b.HasIndex(x => x.AsnNumber);
+            b.HasKey(x => new { x.AsnNumber, x.CartonId });
         });
         modelBuilder.Entity<ReceiptRow>(b =>
         {

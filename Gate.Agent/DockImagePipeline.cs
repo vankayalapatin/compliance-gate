@@ -361,11 +361,11 @@ public sealed class DockImagePipeline(
                 return false;
             }
 
-            // Expected damage verifies through the note: a damaged carton
-            // must carry a damage note, and the flag is only checked for
-            // cartons expected clean.
-            if (!damaged
-                && !ExpectBool(read, label.CartonId, "damage_visible", false, out mismatchDetail))
+            // Expected damage verifies through the flag and the note: a
+            // damaged carton must read damage_visible with a non-blank
+            // note, so the damage sits on the right carton, and cartons
+            // expected clean must read no damage.
+            if (!ExpectBool(read, label.CartonId, "damage_visible", damaged, out mismatchDetail))
             {
                 return false;
             }
@@ -541,7 +541,7 @@ public sealed class DockImagePipeline(
         return File.Exists(marker) ? File.ReadAllText(marker) : null;
     }
 
-    public const string NoLiveScenesMessage = "live scenes unavailable: MetaImages not configured";
+    public const string NoLiveScenesMessage = "live scenes unavailable: image generation is not configured";
 
     public const string LiveFacePromptTemplate =
         "Locate every cardboard carton front face in this dock photo. " +
@@ -769,10 +769,13 @@ public sealed class DockImagePipeline(
         byte[] sceneBytes;
         try
         {
+            // Crushed cartons arrive damaged in the generated scene; the
+            // read-back below checks the damage sits on the right cartons.
+            var crushedCount = problems?.Count(p => p.Kind == SimulatedProblemKind.Crushed) ?? 0;
             using var genCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             genCts.CancelAfter(TimeSpan.FromMinutes(5));
             sceneBytes = await sceneGenerator.GenerateSceneAsync(
-                asn.Cartons.Count, genCts.Token).ConfigureAwait(false);
+                asn.Cartons.Count, crushedCount, genCts.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
         {
@@ -1413,28 +1416,40 @@ public interface ISceneGenerator
     string GeneratorName { get; }
 
     /// <summary>Generates one text-free pallet photo showing exactly
-    /// <paramref name="cartonCount"/> cartons. Throws on transport or
+    /// <paramref name="cartonCount"/> cartons, of which <paramref name="crushedCount"/>
+    /// show transit wear in the scene itself. Throws on transport or
     /// payload failures; the live path turns those into a fallback
     /// reason, never a silent pass.</summary>
-    Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default);
+    Task<byte[]> GenerateSceneAsync(int cartonCount, int crushedCount, CancellationToken ct = default);
 }
 
 public sealed record MetaSceneOptions(string BaseUrl, string SceneModel, string ApiKey);
 
-/// <summary>Meta image generation for live scenes. Model and credentials
-/// arrive via options (host binds MetaImages:SceneModel, defaulting to
-/// MetaImages:ImageModel, plus BaseUrl and ApiKey).</summary>
+/// <summary>Meta image generation for live scenes. The address and key
+/// arrive via options from the MetaApi settings; the model is the
+/// MetaImages scene model, defaulting to the image model.</summary>
 public sealed class MetaSceneGenerator(HttpClient http, MetaSceneOptions options) : ISceneGenerator
 {
     public string GeneratorName => "meta-images-generations";
 
-    public static string ScenePrompt(int cartonCount) =>
+    /// <summary>Pallet prompt for the shipment's own carton count. Crushed
+    /// cartons arrive damaged in the scene itself, in neutral words: the
+    /// damage wording tripped the image content filter before.</summary>
+    public static string ScenePrompt(int cartonCount, int crushedCount = 0) =>
         "Photorealistic warehouse dock photograph, straight-on view of a wooden pallet " +
         $"stacked with exactly {cartonCount} plain brown cardboard shipping cartons, " +
         "every visible carton face completely blank with no text, no labels, no logos, " +
-        "no markings, soft daylight, concrete floor, blurred dock door background, no people.";
+        "no markings, soft daylight, concrete floor, blurred dock door background, no people."
+        + CrushedClause(crushedCount);
 
-    public async Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default)
+    private static string CrushedClause(int crushedCount) =>
+        crushedCount <= 0
+            ? string.Empty
+            : crushedCount == 1
+                ? " One carton with a caved-in corner and a torn side."
+                : $" {crushedCount} cartons with caved-in corners and torn sides.";
+
+    public async Task<byte[]> GenerateSceneAsync(int cartonCount, int crushedCount, CancellationToken ct = default)
     {
         if (cartonCount <= 0)
         {
@@ -1442,12 +1457,18 @@ public sealed class MetaSceneGenerator(HttpClient http, MetaSceneOptions options
                 $"Cannot generate a pallet photo for {cartonCount} cartons.");
         }
 
+        if (crushedCount < 0 || crushedCount > cartonCount)
+        {
+            throw new InvalidOperationException(
+                $"Cannot show {crushedCount} worn carton(s) on a {cartonCount}-carton pallet.");
+        }
+
         var endpoint = options.BaseUrl.TrimEnd('/') + "/images/generations";
         using var message = new HttpRequestMessage(HttpMethod.Post, endpoint);
         message.Headers.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", options.ApiKey);
         message.Content = new StringContent(
-            JsonSerializer.Serialize(new { model = options.SceneModel, prompt = ScenePrompt(cartonCount), n = 1 }),
+            JsonSerializer.Serialize(new { model = options.SceneModel, prompt = ScenePrompt(cartonCount, crushedCount), n = 1 }),
             Encoding.UTF8,
             "application/json");
 

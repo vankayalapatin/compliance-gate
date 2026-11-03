@@ -11,17 +11,17 @@ namespace Gate.Eval;
 
 public sealed class DockScenesTests
 {
-    private sealed class FakeSceneGenerator(Func<int, byte[]> generate) : ISceneGenerator
+    private sealed class FakeSceneGenerator(Func<int, int, byte[]> generate) : ISceneGenerator
     {
         public string GeneratorName => "fake-scenes";
         public int CallCount { get; private set; }
         public int LastCount { get; private set; }
 
-        public Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default)
+        public Task<byte[]> GenerateSceneAsync(int cartonCount, int crushedCount, CancellationToken ct = default)
         {
             CallCount++;
             LastCount = cartonCount;
-            return Task.FromResult(generate(cartonCount));
+            return Task.FromResult(generate(cartonCount, crushedCount));
         }
     }
 
@@ -29,10 +29,15 @@ public sealed class DockScenesTests
     {
         public HttpRequestMessage? Seen { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public string? SeenBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Seen = request;
-            return Task.FromResult(respond(request));
+            SeenBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return respond(request);
         }
     }
 
@@ -484,14 +489,14 @@ public sealed class DockScenesTests
             new("CTN-01", "BAT-1", 100, "LOT-1", true, 0, 0, 0.1, 0.1, "PO-1")
         };
         var clean = new HashSet<string>(StringComparer.Ordinal);
-        string Good(string? note = null) => JsonSerializer.Serialize(new[]
+        string Good(string? note = null, bool damage = false) => JsonSerializer.Serialize(new[]
         {
             new Dictionary<string, object?>
             {
                 ["carton_id"] = "CTN-01", ["part"] = "BAT-1", ["po_number"] = "PO-1",
                 ["lot_code"] = "LOT-1", ["units_per_carton"] = 100,
                 ["mark_present"] = true, ["mark_legible"] = true, ["un_number"] = "UN3480",
-                ["class9_visible"] = true, ["damage_visible"] = false,
+                ["class9_visible"] = true, ["damage_visible"] = damage,
                 ["damage_note"] = note, ["read_confidence"] = 0.99
             }
         });
@@ -507,9 +512,13 @@ public sealed class DockScenesTests
         Assert.Contains("mark_present", markDetail);
 
         var damaged = new HashSet<string>(["CTN-01"], StringComparer.Ordinal);
-        Assert.False(DockImagePipeline.TryVerifyReads(Good(), labels, damaged, out var noteDetail));
+        Assert.False(DockImagePipeline.TryVerifyReads(Good(), labels, damaged, out var flagDetail));
+        Assert.Contains("damage_visible", flagDetail);
+        Assert.False(DockImagePipeline.TryVerifyReads(Good("torn corner"), labels, damaged, out var flagOffDetail));
+        Assert.Contains("damage_visible", flagOffDetail);
+        Assert.False(DockImagePipeline.TryVerifyReads(Good(null, damage: true), labels, damaged, out var noteDetail));
         Assert.Contains("damage_note", noteDetail);
-        Assert.True(DockImagePipeline.TryVerifyReads(Good("torn corner"), labels, damaged, out _));
+        Assert.True(DockImagePipeline.TryVerifyReads(Good("torn corner", damage: true), labels, damaged, out _));
 
         Assert.False(DockImagePipeline.TryVerifyReads("[]", labels, clean, out var countDetail));
         Assert.Contains("expected 1", countDetail);
@@ -536,7 +545,7 @@ public sealed class DockScenesTests
     public async Task LivePathGenerationFailureReturnsTransportReason()
     {
         var asn = MakeAsn("ASN-LIB-GF", "PO-LIB-GF", 2);
-        var generator = new FakeSceneGenerator(_ => throw new HttpRequestException("generation endpoint gone"));
+        var generator = new FakeSceneGenerator((_, _) => throw new HttpRequestException("generation endpoint gone"));
         var (set, reason) = await new DockImagePipeline(
                 new NullImageLabeler(), new FakeModelClient(), sceneGenerator: generator)
             .TryBuildLiveSceneAsync(asn, "PO-LIB-GF", [], LibraryOptions("gf"));
@@ -550,7 +559,7 @@ public sealed class DockScenesTests
     {
         var asn = MakeAsn("ASN-LIB-FC", "PO-LIB-FC", 2);
         var baseBytes = File.ReadAllBytes(Path.Combine(VisionFiles.DockScenesBasesDir(), "scene-02.jpg"));
-        var generator = new FakeSceneGenerator(_ => baseBytes);
+        var generator = new FakeSceneGenerator((_, _) => baseBytes);
         var models = new FakeModelClient();
         models.QueueResponse("""[{"x":0.1,"y":0.2,"w":0.2,"h":0.3}]""");
         var (set, reason) = await new DockImagePipeline(
@@ -566,7 +575,7 @@ public sealed class DockScenesTests
         var po = "PO-LIB-LIVE";
         var asn = MakeAsn("ASN-LIB-LIVE", po, 2);
         var baseBytes = File.ReadAllBytes(Path.Combine(VisionFiles.DockScenesBasesDir(), "scene-02.jpg"));
-        var generator = new FakeSceneGenerator(_ => baseBytes);
+        var generator = new FakeSceneGenerator((_, _) => baseBytes);
         var scene = DockImagePipeline.LoadScenes(VisionFiles.DockScenesPath())
             .Single(s => s.Faces.Count == 2);
         var models = new FakeModelClient();
@@ -636,11 +645,12 @@ public sealed class DockScenesTests
         using var http = new HttpClient(handler);
         var bytes = await new MetaSceneGenerator(
                 http, new MetaSceneOptions("https://api.meta.ai/v1", "scene-model", "KEY-9"))
-            .GenerateSceneAsync(4);
+            .GenerateSceneAsync(4, 1);
         Assert.NotEmpty(bytes);
         Assert.NotNull(handler.Seen);
         Assert.Equal("Bearer", handler.Seen!.Headers.Authorization?.Scheme);
         Assert.EndsWith("/images/generations", handler.Seen.RequestUri!.AbsolutePath);
+        Assert.Contains("caved-in corner", handler.SeenBody, StringComparison.Ordinal);
 
         var failing = new CaptureHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.NotFound)
         {
@@ -650,13 +660,19 @@ public sealed class DockScenesTests
         var boom = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new MetaSceneGenerator(
                     failingHttp, new MetaSceneOptions("https://api.meta.ai/v1", "scene-model", "KEY-9"))
-                .GenerateSceneAsync(2));
+                .GenerateSceneAsync(2, 0));
         Assert.Contains("HTTP 404", boom.Message);
 
         var zero = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new MetaSceneGenerator(
                     failingHttp, new MetaSceneOptions("https://api.meta.ai/v1", "scene-model", "KEY-9"))
-                .GenerateSceneAsync(0));
+                .GenerateSceneAsync(0, 0));
         Assert.Contains("0 cartons", zero.Message);
+
+        var over = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new MetaSceneGenerator(
+                    failingHttp, new MetaSceneOptions("https://api.meta.ai/v1", "scene-model", "KEY-9"))
+                .GenerateSceneAsync(2, 3));
+        Assert.Contains("3 worn", over.Message);
     }
 }

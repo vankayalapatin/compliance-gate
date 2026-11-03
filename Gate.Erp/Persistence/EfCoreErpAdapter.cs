@@ -798,7 +798,7 @@ public sealed partial class EfCoreErpAdapter : IErpAdapter
             .Where(h => documentNumber == null || h.DocumentNumber == documentNumber)
             .Select(h => new HoldDto(h.HoldId, h.ReasonCode, h.Note, h.RuleId, h.CaseId, h.SetBy,
                 DateTime(h.SetAt), Enum<HoldStatus>(h.Status), h.DocumentType, h.DocumentNumber,
-                h.PoLineRef, h.LotRef, h.CartonId)).ToList();
+                h.PoLineRef, h.LotRef, h.CartonId, h.AsnNumber)).ToList();
     }
 
     public async Task<IReadOnlyList<HoldRelease>> GetHoldHistoryAsync(string holdId, CancellationToken ct = default)

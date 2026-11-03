@@ -32,7 +32,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
     private readonly Dictionary<string, PurchaseOrder> _pos = new();
     private readonly Dictionary<string, VendorConfirmation> _confirmations = new();
     private readonly Dictionary<string, AsnDto> _asns = new();
-    private readonly HashSet<string> _cartonIds = new();
+    private readonly HashSet<(string AsnNumber, string CartonId)> _cartonIds = new();
     private readonly Dictionary<string, ShipmentReceipt> _receipts = new();
     private readonly Dictionary<(string Vendor, string Invoice), VendorInvoice> _invoices = new();
     private readonly Dictionary<string, DateTimeOffset> _invoicePostedAt = new();
@@ -229,6 +229,16 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         }
     }
 
+    /// <summary>Hold carton scope: the hold touches a carton only on its
+    /// own ASN. Holds that predate the ASN stamp fall back to the bare
+    /// carton id.</summary>
+    private static bool HoldCartonInScope(
+        HoldDto hold, IReadOnlyDictionary<(string AsnNumber, string CartonId), string> cartonLots) =>
+        hold.AsnNumber is not null
+            ? cartonLots.ContainsKey((hold.AsnNumber, hold.CartonId!))
+            : cartonLots.Keys.Any(k =>
+                string.Equals(k.CartonId, hold.CartonId, StringComparison.Ordinal));
+
     private async Task<PayableCheckInput?> BuildPayableInputAsync(
         IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
     {
@@ -265,9 +275,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             .ToHashSet(StringComparer.Ordinal);
         var cartonLots = _asns.Values
             .Where(a => poNumbers.Contains(a.PoNumber))
-            .SelectMany(a => a.Cartons)
-            .GroupBy(c => c.CartonId, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First().LotRef, StringComparer.Ordinal);
+            .SelectMany(a => a.Cartons.Select(c => ((a.AsnNumber, c.CartonId), c.LotRef)))
+            .ToDictionary(kv => kv.Item1, kv => kv.Item2);
         var holds = _holds.Values
             .Where(h => h.Status == HoldStatus.Set)
             .Where(h => (h.DocumentNumber is not null
@@ -275,7 +284,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                         || poNumbers.Contains(h.DocumentNumber)
                         || receiptNumbers.Contains(h.DocumentNumber)))
                 || (h.LotRef is not null && lots.Contains(h.LotRef))
-                || (h.CartonId is not null && cartonIds.Contains(h.CartonId)))
+                || (h.CartonId is not null && HoldCartonInScope(h, cartonLots)))
             .OrderBy(h => h.HoldId, StringComparer.Ordinal)
             .ToList();
         var quarantined = _inventory.Values.SelectMany(v => v)
@@ -296,7 +305,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         {
             var passed = await _policyContext
                 .FindDockPassedCartonsAsync(invoices, ct).ConfigureAwait(false);
-            var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+            var passedSet = passed.Select(p => (p.AsnNumber, p.CartonId)).ToHashSet();
             dockPending = cartonLots
                 .Where(kv => !passedSet.Contains(kv.Key))
                 .Select(kv => kv.Value)
@@ -934,7 +943,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
                 if (_asns.ContainsKey(number)) throw new InvalidOperationException($"Duplicate ASN {number}.");
             }
             foreach (var c in cartons)
-                if (!_cartonIds.Add(c.CartonId)) throw new InvalidOperationException($"Duplicate carton {c.CartonId}.");
+                if (!_cartonIds.Add((number, c.CartonId))) throw new InvalidOperationException($"Duplicate carton {c.CartonId} on ASN {number}.");
             var asn = new AsnDto(number, poNumber, source, createdBy, idempotencyKey, cartons.ToList());
             _asns[number] = asn;
             return asn;
@@ -1131,11 +1140,11 @@ public sealed class InMemoryErpAdapter : IErpAdapter
         return Task.CompletedTask;
     }
 
-    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default) =>
+    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default, string? asnNumber = null) =>
         Task.FromResult(Idem($"hold:{idempotencyKey}", () =>
         {
             var hold = new HoldDto(Next("HLD"), reasonCode, note, ruleId, caseId, setBy, DateTimeOffset.UtcNow,
-                HoldStatus.Set, documentType, documentNumber, poLineRef, lotRef, cartonId);
+                HoldStatus.Set, documentType, documentNumber, poLineRef, lotRef, cartonId, asnNumber);
             _holds[hold.HoldId] = hold;
             return hold;
         }));
@@ -1255,9 +1264,8 @@ public sealed class InMemoryErpAdapter : IErpAdapter
 
         var cartonLots = _asns.Values
             .Where(a => a.PoNumber == inv.PoNumber)
-            .SelectMany(a => a.Cartons)
-            .GroupBy(c => c.CartonId, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First().LotRef, StringComparer.Ordinal);
+            .SelectMany(a => a.Cartons.Select(c => ((a.AsnNumber, c.CartonId), c.LotRef)))
+            .ToDictionary(kv => kv.Item1, kv => kv.Item2);
         if (cartonLots.Count == 0)
         {
             return empty;
@@ -1265,7 +1273,7 @@ public sealed class InMemoryErpAdapter : IErpAdapter
 
         var passed = await _policyContext.FindDockPassedCartonsAsync(
             [new InvoiceKey(vendorId, supplierInvoiceNumber)], ct).ConfigureAwait(false);
-        var passedSet = passed.ToHashSet(StringComparer.Ordinal);
+        var passedSet = passed.Select(p => (p.AsnNumber, p.CartonId)).ToHashSet();
         var pendingLots = cartonLots
             .Where(kv => !passedSet.Contains(kv.Key))
             .Select(kv => kv.Value)

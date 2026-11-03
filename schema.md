@@ -91,7 +91,9 @@ settlements, paid amounts, approvals, requesters, routed-to.
 Conventions (enforced in the ERP layer, tested per refusal): every business
 document is header plus lines; money is decimal with a currency code on the
 header; holds use native reason code plus note (rule id and case link travel
-in the DTO, never as foreign keys); SO/PR/PO numbers assign at creation,
+in the DTO, never as foreign keys); carton numbers are unique per shipment
+notice only, and every carton-keyed check (holds, dock passes, reviews)
+scopes by ASN plus carton; SO/PR/PO numbers assign at creation,
 receipt/voucher/payment numbers mint at posting; every write carries an
 idempotency key; posted rows are immutable, corrections go through new
 documents or the held-release path.

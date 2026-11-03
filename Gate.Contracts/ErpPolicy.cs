@@ -112,11 +112,11 @@ public interface IErpPolicyContext
         IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default);
 
     /// <summary>Cartons behind these invoices whose dock check is complete
-    /// with every verdict a pass. The ERP intersects with its own ASN
-    /// cartons: anything declared but not passed is dock-pending, held
-    /// with "Awaiting dock check" and unreleasable until it passes. Lots
-    /// with no ASN cartons are never pending: nothing photographable was
-    /// declared for them.</summary>
-    Task<IReadOnlyList<string>> FindDockPassedCartonsAsync(
+    /// with every verdict a pass, as (ASN, carton) pairs. The ERP
+    /// intersects with its own ASN cartons: anything declared but not
+    /// passed is dock-pending, held with "Awaiting dock check" and
+    /// unreleasable until it passes. Lots with no ASN cartons are never
+    /// pending: nothing photographable was declared for them.</summary>
+    Task<IReadOnlyList<DockPassedCarton>> FindDockPassedCartonsAsync(
         IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default);
 }

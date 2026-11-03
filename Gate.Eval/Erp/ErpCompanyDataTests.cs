@@ -45,6 +45,40 @@ public sealed class ErpCompanyDataTests
     }
 
     [Fact]
+    public async Task AsnCartonScopePerNotice_Fake()
+    {
+        await AsnCartonScopeAsync(SeededErp.Create());
+    }
+
+    [Fact]
+    public async Task AsnCartonScopePerNotice_EfCore()
+    {
+        await using var fx = await EfCoreTestDb.CreateAsync();
+        await AsnCartonScopeAsync(fx.Adapter);
+    }
+
+    private static async Task AsnCartonScopeAsync(IErpAdapter erp)
+    {
+        // Carton numbers repeat across shipment notices: two suppliers can
+        // both ship CTN-01, while a duplicate inside one notice is refused.
+        var po = await ConfirmedPoAsync(erp, "V-B", "BAT-1", 10m);
+        var first = await erp.CreateAsnAsync(null, po, RecordSource.Vendor, "V-B",
+            [new AsnCarton("CTN-01", "BAT-1", 5, "LOT-S1")], Idem());
+        var second = await erp.CreateAsnAsync(null, po, RecordSource.Vendor, "V-B",
+            [new AsnCarton("CTN-01", "BAT-1", 5, "LOT-S2")], Idem());
+        Assert.NotEqual(first.AsnNumber, second.AsnNumber);
+        var reread = await erp.GetAsnAsync(second.AsnNumber);
+        Assert.NotNull(reread);
+        Assert.Equal("LOT-S2", Assert.Single(reread.Cartons).LotRef);
+
+        var dup = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            erp.CreateAsnAsync(null, po, RecordSource.Vendor, "V-B",
+                [new AsnCarton("CTN-09", "BAT-1", 5, "LOT-S3"),
+                 new AsnCarton("CTN-09", "BAT-1", 5, "LOT-S4")], Idem()));
+        Assert.Contains("Duplicate carton CTN-09", dup.Message);
+    }
+
+    [Fact]
     public async Task BusinessDatesHonored_Fake()
     {
         await BusinessDatesAsync(SeededErp.Create());

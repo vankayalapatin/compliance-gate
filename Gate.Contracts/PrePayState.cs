@@ -17,6 +17,12 @@ public sealed record OpenReview(
     DateTimeOffset OpenedAt,
     string Reason);
 
+/// <summary>One carton whose dock check is complete with every verdict a
+/// pass. Carton numbers repeat across shipment notices, so the pair, not
+/// the carton alone, is the identity: a passed CTN-01 on one supplier's
+/// ASN never releases another supplier's CTN-01.</summary>
+public sealed record DockPassedCarton(string AsnNumber, string CartonId);
+
 public sealed record PrePayState(
     IReadOnlyList<HoldDto> OpenHolds,
     IReadOnlyList<string> QuarantinedLotRefs,

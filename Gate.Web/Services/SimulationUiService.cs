@@ -32,6 +32,11 @@ public sealed class SimulationUiService
     public const string InvoicePhotoPath = "/simulation/supplier/invoice-photo";
     public const string EmailReplyPath = "/simulation/supplier/email-reply";
     public const string PickupPath = "/agent/pickup";
+    public const string ProgressPath = "/simulation/case-progress";
+
+    /// <summary>Standard tail on instant confirmations: the POST answered
+    /// from its ERP write while the agent works off the request.</summary>
+    private const string BackgroundNote = "The agent continues in the background.";
 
     private const int BodyExcerptChars = 2000;
 
@@ -270,14 +275,14 @@ public sealed class SimulationUiService
         if (submission is null)
         {
             return new ShopOrderPlaced(
-                Refusal("No order submission was provided."), string.Empty, []);
+                Refusal("No order submission was provided."), string.Empty, [], []);
         }
 
         if (submission.Lines.Count == 0)
         {
             return new ShopOrderPlaced(
                 Refusal("Add at least one order line; the ERP cannot mint an empty order."),
-                string.Empty, []);
+                string.Empty, [], []);
         }
 
         var shopId = $"SHOP-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
@@ -287,10 +292,14 @@ public sealed class SimulationUiService
             submission.Lines, submission.Currency), ct).ConfigureAwait(false);
         if (!outcome.Ok)
         {
-            return new ShopOrderPlaced(outcome, shopId, []);
+            return new ShopOrderPlaced(outcome, shopId, [], outcome.CaseIds);
         }
 
-        return new ShopOrderPlaced(outcome, shopId, await ResolveSoNumbersAsync(outcome.CaseIds, ct).ConfigureAwait(false));
+        var soNumbers = await ResolveSoNumbersAsync(outcome.CaseIds, ct).ConfigureAwait(false);
+        var received = soNumbers.Count == 0
+            ? outcome
+            : outcome with { Summary = $"Order {soNumbers[0]} received." };
+        return new ShopOrderPlaced(received, shopId, soNumbers, outcome.CaseIds);
     }
 
     /// <summary>SO numbers behind posted case ids, read back from the case
@@ -474,11 +483,12 @@ public sealed class SimulationUiService
         }
     }
 
-    /// <summary>Rebuilds the case's dock views with simulated problems:
-    /// posts the case plus the picked carton problems and returns the
-    /// rebuilt file names to send through the normal dock photo flow.
-    /// Refusals (no case, no problems, unknown kind) happen before any
-    /// POST; endpoint failures surface with the reason.</summary>
+    /// <summary>Starts a rebuild of the case's dock views with simulated
+    /// problems: posts the case plus the picked carton problems and
+    /// returns on acceptance. The new views land in the background;
+    /// the panel polls the dock options for them. Refusals (no case,
+    /// no problems, unknown kind) happen before any POST; endpoint
+    /// failures surface with the reason.</summary>
     public async Task<RebuiltDockViewsVm> RebuildDockViewsAsync(
         string? caseId, IReadOnlyList<DockProblemForm>? problems, CancellationToken ct = default)
     {
@@ -533,11 +543,8 @@ public sealed class SimulationUiService
                 return new RebuiltDockViewsVm(false, [], $"Dock view rebuild refused: {ErrorText(body)}.");
             }
 
-            using var doc = JsonDocument.Parse(body);
-            var files = StringArray(doc.RootElement, "images");
-            return files.Count == 0
-                ? new RebuiltDockViewsVm(false, [], "Dock view rebuild returned no views; nothing was rebuilt.")
-                : new RebuiltDockViewsVm(true, files, $"Rebuilt {files.Count} view(s): {string.Join(", ", files)}.");
+            return new RebuiltDockViewsVm(
+                true, [], "Rebuild started; new views tick themselves when they land.");
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -575,6 +582,235 @@ public sealed class SimulationUiService
             photos!.Select(p => new DockPhoto(p.ImageId, p.Jpeg, BlankToNull(p.CartonHint))).ToList());
         return await PostAsync(ReshotPath, request, body => ParseDock(body, "Reshot"), ct)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>Local progress read: the newest dock outcome plus case
+    /// invoices newer than since. Missing sections mean nothing new yet,
+    /// never an error.</summary>
+    public async Task<CaseProgressVm> GetCaseProgressAsync(
+        string? caseId, DateTimeOffset since, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(caseId))
+        {
+            return new CaseProgressVm(null, [], []);
+        }
+
+        var path = $"{ProgressPath}?caseId={Uri.EscapeDataString(caseId.Trim())}" +
+            $"&since={Uri.EscapeDataString(since.ToString("O"))}";
+        return await GetAsync(path, ParseProgress, ct).ConfigureAwait(false);
+    }
+
+    private static CaseProgressVm ParseProgress(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        CaseProgressDockVm? dock = null;
+        if (TryProp(root, "dock") is { ValueKind: JsonValueKind.Object } dockEl)
+        {
+            var issues = new List<CaseProgressIssueVm>();
+            if (TryProp(dockEl, "issues") is { ValueKind: JsonValueKind.Array } arr)
+            {
+                foreach (var issue in arr.EnumerateArray())
+                {
+                    issues.Add(new CaseProgressIssueVm(
+                        Text(issue, "cartonId") ?? "?",
+                        Text(issue, "ruleId") ?? "?",
+                        Text(issue, "kind") ?? "?",
+                        Text(issue, "reason") ?? string.Empty));
+                }
+            }
+
+            dock = new CaseProgressDockVm(StringArray(dockEl, "cartons"), issues);
+        }
+
+        var invoices = new List<CaseProgressInvoiceVm>();
+        if (TryProp(root, "invoices") is { ValueKind: JsonValueKind.Array } inv)
+        {
+            foreach (var item in inv.EnumerateArray())
+            {
+                invoices.Add(new CaseProgressInvoiceVm(
+                    Text(item, "vendorId") ?? "?",
+                    Text(item, "supplierInvoiceNumber") ?? "?",
+                    Text(item, "currency") ?? "?",
+                    Text(item, "acceptedValue") ?? "?",
+                    Text(item, "heldValue") ?? "?"));
+            }
+        }
+
+        return new CaseProgressVm(dock, invoices, StringArray(root, "events"));
+    }
+
+    /// <summary>Polls the progress read until the first timeline lines
+    /// newer than since land, or the timeout passes. Null on timeout:
+    /// the receipt stands and the work continues in the background.</summary>
+    public async Task<IReadOnlyList<string>?> PollNewEventsAsync(
+        string caseId, DateTimeOffset since,
+        CancellationToken ct = default,
+        TimeSpan? pollInterval = null, TimeSpan? timeout = null)
+    {
+        var wait = pollInterval ?? TimeSpan.FromSeconds(1);
+        var limit = timeout ?? TimeSpan.FromSeconds(120);
+        using var timeoutCts = new CancellationTokenSource(limit);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            while (true)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                var progress = await GetCaseProgressAsync(caseId, since, linked.Token).ConfigureAwait(false);
+                if (progress.Events.Count > 0)
+                {
+                    return progress.Events;
+                }
+
+                await Task.Delay(wait, linked.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Polls the progress read until the dock outcome lands or the
+    /// timeout passes. Null on timeout: the photos stay received and the
+    /// outcome lands on the records when ready.</summary>
+    public async Task<SimulationOutcome?> PollDockOutcomeAsync(
+        string caseId, DateTimeOffset since, string label,
+        CancellationToken ct = default,
+        TimeSpan? pollInterval = null, TimeSpan? timeout = null)
+    {
+        var wait = pollInterval ?? TimeSpan.FromSeconds(1);
+        var limit = timeout ?? TimeSpan.FromSeconds(120);
+        using var timeoutCts = new CancellationTokenSource(limit);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            while (true)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                var progress = await GetCaseProgressAsync(caseId, since, linked.Token).ConfigureAwait(false);
+                if (progress.Dock is not null)
+                {
+                    var cartons = progress.Dock.Cartons;
+                    return new SimulationOutcome(
+                        true,
+                        $"{label} accepted: {(cartons.Count == 0 ? "no cartons read" : string.Join(", ", cartons))}.",
+                        progress.Dock.Issues.Select(i => i.Reason).ToList(),
+                        []);
+                }
+
+                await Task.Delay(wait, linked.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Polls the progress read until the photographed invoice
+    /// lands or the timeout passes. Null on timeout.</summary>
+    public async Task<SimulationOutcome?> PollInvoiceOutcomeAsync(
+        string caseId, DateTimeOffset since,
+        CancellationToken ct = default,
+        TimeSpan? pollInterval = null, TimeSpan? timeout = null)
+    {
+        var wait = pollInterval ?? TimeSpan.FromSeconds(1);
+        var limit = timeout ?? TimeSpan.FromSeconds(120);
+        using var timeoutCts = new CancellationTokenSource(limit);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            while (true)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                var progress = await GetCaseProgressAsync(caseId, since, linked.Token).ConfigureAwait(false);
+                var invoice = progress.Invoices.FirstOrDefault();
+                if (invoice is not null)
+                {
+                    return new SimulationOutcome(
+                        true,
+                        $"Invoice {invoice.VendorId}/{invoice.SupplierInvoiceNumber} intaken.",
+                        [$"Persisted: yes, accepted value {invoice.AcceptedValue}, held value {invoice.HeldValue}.",
+                         BackgroundNote],
+                        []);
+                }
+
+                await Task.Delay(wait, linked.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Polls the local dock options until recorded views appear
+    /// past the known files, or the timeout passes. Null on timeout.</summary>
+    public async Task<IReadOnlyList<string>?> PollRebuildFilesAsync(
+        IReadOnlyList<string> knownFiles,
+        CancellationToken ct = default,
+        TimeSpan? pollInterval = null, TimeSpan? timeout = null)
+    {
+        var known = knownFiles.ToHashSet(StringComparer.Ordinal);
+        var wait = pollInterval ?? TimeSpan.FromSeconds(1);
+        var limit = timeout ?? TimeSpan.FromSeconds(300);
+        using var timeoutCts = new CancellationTokenSource(limit);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        try
+        {
+            while (true)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                var options = await GetOptionsAsync(linked.Token).ConfigureAwait(false);
+                var fresh = options.DockImages.Where(f => !known.Contains(f)).ToList();
+                if (fresh.Count > 0)
+                {
+                    return fresh;
+                }
+
+                await Task.Delay(wait, linked.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    private async Task<T> GetAsync<T>(
+        string path, Func<string, T> parse, CancellationToken ct)
+        where T : class
+    {
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                using var response = await _http.GetAsync(path, ct).ConfigureAwait(false);
+                var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _log.LogWarning("GET {Path} refused: {Body}.", path, Excerpt(body));
+                    return parse("{}");
+                }
+
+                return parse(body);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                if (attempt == 1 && (ex is HttpRequestException || !ct.IsCancellationRequested))
+                {
+                    _log.LogWarning(ex, "GET {Path} attempt {Attempt} failed; retrying once.", path, attempt);
+                    continue;
+                }
+
+                _log.LogWarning(ex, "GET {Path} failed.", path);
+                return parse("{}");
+            }
+        }
+
+        return parse("{}");
     }
 
     public async Task<SimulationOutcome> SendInvoiceAsync(
@@ -643,7 +879,7 @@ public sealed class SimulationUiService
         var request = new InvoicePhotosRequest(
             caseId!.Trim(),
             photos!.Select(p => new InvoicePhoto(p.ImageId, p.Jpeg)).ToList());
-        return await PostAsync(InvoicePhotoPath, request, ParseInvoice, ct).ConfigureAwait(false);
+        return await PostAsync(InvoicePhotoPath, request, ParseInvoicePhotos, ct).ConfigureAwait(false);
     }
 
     public async Task<SimulationOutcome> SendVendorReplyAsync(
@@ -1400,24 +1636,10 @@ public sealed class SimulationUiService
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
         var caseIds = StringArray(root, "caseIds");
-        var details = new List<string>();
-        if (TryProp(root, "advances") is { ValueKind: JsonValueKind.Array } advances)
-        {
-            foreach (var advance in advances.EnumerateArray())
-            {
-                var id = Text(advance, "caseId") ?? "unknown case";
-                var stage = Text(advance, "stage") ?? "?";
-                var step = Text(advance, "step") ?? "?";
-                var done = Bool(advance, "complete");
-                details.Add($"{id}: {stage} / {step}{(done ? " (complete)" : string.Empty)}.");
-            }
-        }
-
-        if (details.Count == 0)
-        {
-            details.Add(Excerpt(body));
-        }
-
+        var details = caseIds
+            .Select(id => $"Case {id} opened; the agent is on it.")
+            .ToList();
+        details.Add(BackgroundNote);
         return new SimulationOutcome(
             true, $"Order accepted: {caseIds.Count} case(s).", details, caseIds);
     }
@@ -1442,7 +1664,7 @@ public sealed class SimulationUiService
         var root = doc.RootElement;
         var po = Text(root, "poNumber") ?? "unknown PO";
         return new SimulationOutcome(
-            true, $"PO {po} acknowledged.", AdvanceDetails(root).ToList(), []);
+            true, $"PO {po} acknowledged.", [BackgroundNote], []);
     }
 
     private static SimulationOutcome ParseAsn(string body)
@@ -1455,7 +1677,8 @@ public sealed class SimulationUiService
         details.Add(receipt is null
             ? "No receipt posted with the notice."
             : $"Receipt {receipt} posted with the notice.");
-        details.AddRange(AdvanceDetails(root));
+        details.Add("Pallet views build in the background; they land on the dock tab when ready.");
+        details.Add(BackgroundNote);
         return new SimulationOutcome(
             true, $"Shipment notice {asn} recorded.", details, []);
     }
@@ -1464,11 +1687,23 @@ public sealed class SimulationUiService
     {
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
-        var cartons = StringArray(root, "cartons");
+        var count = Text(root, "photoCount") ?? "0";
         return new SimulationOutcome(
             true,
-            $"{label} accepted: {(cartons.Count == 0 ? "no cartons read" : string.Join(", ", cartons))}.",
-            AdvanceDetails(root),
+            $"{label} received: {count} photo(s). The outcome lands below when ready.",
+            [],
+            []);
+    }
+
+    private static SimulationOutcome ParseInvoicePhotos(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var count = Text(root, "photoCount") ?? "0";
+        return new SimulationOutcome(
+            true,
+            $"Invoice photos received: {count} photo(s). The outcome lands below when ready.",
+            [BackgroundNote],
             []);
     }
 
@@ -1483,8 +1718,8 @@ public sealed class SimulationUiService
         var details = new List<string>
         {
             $"Persisted: {(persisted ? "yes" : "no")}, accepted value {accepted}, held value {held}.",
+            BackgroundNote,
         };
-        details.AddRange(AdvanceDetails(root));
         return new SimulationOutcome(true, $"Invoice {invoice} intaken.", details, []);
     }
 
@@ -1494,16 +1729,7 @@ public sealed class SimulationUiService
         var root = doc.RootElement;
         var emailId = Text(root, "emailId") ?? "unknown mail";
         return new SimulationOutcome(
-            true, $"Vendor reply recorded: {emailId}.", AdvanceDetails(root), []);
-    }
-
-    private static IReadOnlyList<string> AdvanceDetails(JsonElement root)
-    {
-        var step = Text(root, "step");
-        var done = Bool(root, "complete");
-        return step is null
-            ? []
-            : [$"Case advanced to {step}{(done ? " (complete)" : string.Empty)}."];
+            true, $"Vendor reply recorded: {emailId}.", [BackgroundNote], []);
     }
 
     private static SimulationOutcome Refusal(string message) =>

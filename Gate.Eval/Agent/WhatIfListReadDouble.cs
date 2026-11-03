@@ -296,8 +296,8 @@ internal sealed class WhatIfListReadDouble : IErpAdapter
     public Task ConsumeLotAsync(string lotRef, string soNumber, decimal quantity, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ConsumeLotAsync(lotRef, soNumber, quantity, actedBy, idempotencyKey, ct);
 
-    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.SetHoldAsync(reasonCode, note, ruleId, caseId, setBy, documentType, documentNumber, poLineRef, lotRef, cartonId, idempotencyKey, ct);
+    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default, string? asnNumber = null) =>
+        _inner.SetHoldAsync(reasonCode, note, ruleId, caseId, setBy, documentType, documentNumber, poLineRef, lotRef, cartonId, idempotencyKey, ct, asnNumber);
 
     public Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ReleaseHoldAsync(holdId, releasedBy, approvalRef, idempotencyKey, ct);
@@ -477,8 +477,8 @@ internal sealed class ListReadsMissingDouble : IErpAdapter
     public Task ConsumeLotAsync(string lotRef, string soNumber, decimal quantity, string actedBy, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ConsumeLotAsync(lotRef, soNumber, quantity, actedBy, idempotencyKey, ct);
 
-    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default) =>
-        _inner.SetHoldAsync(reasonCode, note, ruleId, caseId, setBy, documentType, documentNumber, poLineRef, lotRef, cartonId, idempotencyKey, ct);
+    public Task<HoldDto> SetHoldAsync(string reasonCode, string note, string? ruleId, string caseId, string setBy, string? documentType, string? documentNumber, string? poLineRef, string? lotRef, string? cartonId, string idempotencyKey, CancellationToken ct = default, string? asnNumber = null) =>
+        _inner.SetHoldAsync(reasonCode, note, ruleId, caseId, setBy, documentType, documentNumber, poLineRef, lotRef, cartonId, idempotencyKey, ct, asnNumber);
 
     public Task ReleaseHoldAsync(string holdId, string releasedBy, string? approvalRef, string idempotencyKey, CancellationToken ct = default) =>
         _inner.ReleaseHoldAsync(holdId, releasedBy, approvalRef, idempotencyKey, ct);

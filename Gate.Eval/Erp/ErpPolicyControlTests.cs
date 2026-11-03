@@ -20,7 +20,7 @@ public sealed class ErpPolicyControlTests
     {
         public IReadOnlyList<OpenReview> Reviews { get; set; } = reviews ?? [];
 
-        public IReadOnlyList<string> PassedCartons { get; set; } = [];
+        public IReadOnlyList<DockPassedCarton> PassedCartons { get; set; } = [];
 
         public Task<PolicyExceptionGrant?> FindExceptionGrantAsync(
             string ruleId, string vendorId, string? prNumber, CancellationToken ct = default) =>
@@ -30,7 +30,7 @@ public sealed class ErpPolicyControlTests
             IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default) =>
             Task.FromResult(Reviews);
 
-        public Task<IReadOnlyList<string>> FindDockPassedCartonsAsync(
+        public Task<IReadOnlyList<DockPassedCarton>> FindDockPassedCartonsAsync(
             IReadOnlyList<InvoiceKey> invoices, CancellationToken ct = default) =>
             Task.FromResult(PassedCartons);
     }

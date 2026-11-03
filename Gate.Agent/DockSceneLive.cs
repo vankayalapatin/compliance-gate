@@ -4,8 +4,8 @@
 // read back and verify); any failure falls back to the library scene and
 // the reason lands on the timeline plus the last-fallback slot the Admin
 // status reads. The switch defaults off and the generator stays null until
-// the host wires MetaImages credentials: the library path then runs
-// exactly as before.
+// the host wires it; the app turns the switch on at startup whenever the
+// image settings are present, so shipments build live by default.
 namespace Gate.Agent;
 
 public sealed class DockSceneLive

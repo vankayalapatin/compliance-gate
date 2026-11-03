@@ -48,7 +48,7 @@ public sealed class DockScenesUiTests
     {
         public string GeneratorName => "test-stub";
 
-        public Task<byte[]> GenerateSceneAsync(int cartonCount, CancellationToken ct = default) =>
+        public Task<byte[]> GenerateSceneAsync(int cartonCount, int crushedCount, CancellationToken ct = default) =>
             Task.FromResult(Array.Empty<byte>());
     }
 
@@ -88,9 +88,9 @@ public sealed class DockScenesUiTests
     {
         var values = new Dictionary<string, string?>
         {
-            ["MetaImages:BaseUrl"] = "https://images.test.example",
+            ["MetaApi:BaseUrl"] = "https://images.test.example",
+            ["MetaApi:ApiKey"] = "test-key",
             ["MetaImages:ImageModel"] = "edit-test",
-            ["MetaImages:ApiKey"] = "test-key",
         };
         if (sceneModel is not null)
         {
@@ -175,6 +175,49 @@ public sealed class DockScenesUiTests
         Assert.Null(DockSceneStatus.SceneModelName(new ConfigurationBuilder().Build()));
     }
 
+    [Fact]
+    public void DockSceneStatus_ImageOptionsComeFromMetaApiPlusSceneModel()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["MetaApi:BaseUrl"] = "https://images.test.example",
+                ["MetaApi:ApiKey"] = "test-key",
+                ["MetaImages:SceneModel"] = "scene-test",
+                ["MetaImages:ImageModel"] = "edit-test",
+            })
+            .Build();
+
+        var options = DockSceneStatus.ImageOptionsOrNull(config);
+        Assert.NotNull(options);
+        Assert.Equal("https://images.test.example", options.BaseUrl);
+        Assert.Equal("scene-test", options.SceneModel);
+        Assert.Equal("test-key", options.ApiKey);
+        Assert.Empty(DockSceneStatus.MissingSettings(config));
+    }
+
+    [Fact]
+    public void DockSceneStatus_MissingSettingsNameEachGap()
+    {
+        var empty = new ConfigurationBuilder().Build();
+
+        Assert.Null(DockSceneStatus.ImageOptionsOrNull(empty));
+        Assert.Equal(
+            ["MetaApi:BaseUrl", "MetaApi:ApiKey", "MetaImages:SceneModel"],
+            DockSceneStatus.MissingSettings(empty).ToList());
+
+        var partial = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["MetaApi:BaseUrl"] = "https://images.test.example",
+                ["MetaImages:ImageModel"] = "edit-test",
+            })
+            .Build();
+
+        Assert.Null(DockSceneStatus.ImageOptionsOrNull(partial));
+        Assert.Equal(["MetaApi:ApiKey"], DockSceneStatus.MissingSettings(partial).ToList());
+    }
+
     private static IConfiguration ConfigWithScene(string? sceneModel)
     {
         var values = new Dictionary<string, string?>
@@ -226,10 +269,10 @@ public sealed class DockScenesUiTests
     }
 
     [Fact]
-    public async Task Rebuild_PostsPinnedShapeAndParsesImages()
+    public async Task Rebuild_PostsPinnedShapeAndParsesAcceptance()
     {
         var h = Create();
-        Respond(h, """{"caseId":"CASE-1","images":["ASN-1-IMG-01.jpg","ASN-1-IMG-02.jpg"],"problems":[{"cartonId":"CTN-A","kind":"MissingMark"}]}""");
+        Respond(h, """{"accepted":true}""");
 
         var outcome = await h.Service.RebuildDockViewsAsync(
             "CASE-1", [new DockProblemForm("CTN-A", DockProblemKinds.MissingMark)]);
@@ -244,7 +287,8 @@ public sealed class DockScenesUiTests
         Assert.Equal("CTN-A", problem.GetProperty("cartonId").GetString());
         Assert.Equal("MissingMark", problem.GetProperty("kind").GetString());
         Assert.True(outcome.Ok, outcome.Message);
-        Assert.Equal(new[] { "ASN-1-IMG-01.jpg", "ASN-1-IMG-02.jpg" }, outcome.FileNames);
+        Assert.Empty(outcome.FileNames);
+        Assert.Contains("Rebuild started", outcome.Message);
     }
 
     [Fact]
@@ -286,61 +330,53 @@ public sealed class DockScenesUiTests
     }
 
     [Fact]
-    public async Task Rebuild_EmptyImagesIsAFailure()
+    public async Task Rebuild_AcceptanceCarriesNoFilesYet()
     {
         var h = Create();
-        Respond(h, """{"caseId":"CASE-1","images":[]}""");
+        Respond(h, """{"accepted":true}""");
 
         var outcome = await h.Service.RebuildDockViewsAsync(
             "CASE-1", [new DockProblemForm("CTN-A", DockProblemKinds.Hidden)]);
 
-        Assert.False(outcome.Ok);
-        Assert.Contains("no views", outcome.Message);
+        Assert.True(outcome.Ok, outcome.Message);
+        Assert.Empty(outcome.FileNames);
     }
 
     [Fact]
-    public async Task RebuildEndpoint_ValidationFailuresCarryReasons()
+    public void RebuildEndpoint_ValidationFailuresCarryReasons()
     {
-        var dir = UiTestSupport.NewDir("gate-ui-dockrebuild");
-        Directory.CreateDirectory(dir);
-        var runner = RunnerFor(Path.Combine(dir, "case-cache"));
-
-        var missing = await SimulationEndpoints.RebuildDockViewsAsync(null, runner);
+        var missing = SimulationEndpoints.AcceptRebuildAsync(null);
         Assert.False(missing.Ok);
         Assert.Contains("Case is required", missing.Error);
 
-        var blank = await SimulationEndpoints.RebuildDockViewsAsync(
-            new DockRebuildViewsRequest("  ", null), runner);
+        var blank = SimulationEndpoints.AcceptRebuildAsync(
+            new DockRebuildViewsRequest("  ", null));
         Assert.False(blank.Ok);
 
-        var unknown = await SimulationEndpoints.RebuildDockViewsAsync(
-            new DockRebuildViewsRequest("CASE-1", [new DockProblemInput("CTN-A", "Melted")]),
-            runner);
+        var unknown = SimulationEndpoints.AcceptRebuildAsync(
+            new DockRebuildViewsRequest("CASE-1", [new DockProblemInput("CTN-A", "Melted")]));
         Assert.False(unknown.Ok);
         Assert.Contains("Unknown carton problem", unknown.Error);
 
-        var cartonless = await SimulationEndpoints.RebuildDockViewsAsync(
-            new DockRebuildViewsRequest("CASE-1", [new DockProblemInput("  ", DockProblemKinds.Crushed)]),
-            runner);
+        var cartonless = SimulationEndpoints.AcceptRebuildAsync(
+            new DockRebuildViewsRequest("CASE-1", [new DockProblemInput("  ", DockProblemKinds.Crushed)]));
         Assert.False(cartonless.Ok);
         Assert.Contains("carton id", cartonless.Error);
         Assert.Empty(cartonless.Problems);
     }
 
     [Fact]
-    public async Task RebuildEndpoint_RunnerFailureCarriesReason()
+    public void RebuildEndpoint_AcceptsValidRequestForBackground()
     {
-        var dir = UiTestSupport.NewDir("gate-ui-dockrebuild");
-        Directory.CreateDirectory(dir);
-        var runner = RunnerFor(Path.Combine(dir, "case-cache"));
+        var accepted = SimulationEndpoints.AcceptRebuildAsync(
+            new DockRebuildViewsRequest(
+                "CASE-1", [new DockProblemInput("CTN-A", DockProblemKinds.MissingMark)]));
 
-        var outcome = await SimulationEndpoints.RebuildDockViewsAsync(
-            new DockRebuildViewsRequest("CASE-NOPE", [new DockProblemInput("CTN-A", DockProblemKinds.MissingMark)]),
-            runner);
-
-        Assert.False(outcome.Ok);
-        Assert.Contains("CASE-NOPE", outcome.Error);
-        Assert.Empty(outcome.Problems);
+        Assert.True(accepted.Ok, accepted.Error ?? string.Empty);
+        Assert.Equal("CASE-1", accepted.CaseId);
+        var problem = Assert.Single(accepted.Problems);
+        Assert.Equal("CTN-A", problem.CartonId);
+        Assert.Equal(DockProblemKinds.MissingMark, problem.Kind);
     }
 
     [Fact]
@@ -350,7 +386,7 @@ public sealed class DockScenesUiTests
         Directory.CreateDirectory(dir);
         var runner = RunnerFor(Path.Combine(dir, "case-cache"));
 
-        var outcome = await SimulationEndpoints.SubmitSupplierAsnAsync(
+        var outcome = await SimulationEndpoints.AcceptSupplierAsnAsync(
             new SupplierAsnWithProblemsRequest(
                 "CASE-1", "ASN-1", "PACK-1", [], null,
                 [new DockProblemInput("CTN-A", "Melted")]),
@@ -359,7 +395,7 @@ public sealed class DockScenesUiTests
         Assert.False(outcome.Ok);
         Assert.Contains("Unknown carton problem", outcome.Error);
 
-        var missing = await SimulationEndpoints.SubmitSupplierAsnAsync(null, runner);
+        var missing = await SimulationEndpoints.AcceptSupplierAsnAsync(null, runner);
         Assert.False(missing.Ok);
         Assert.Contains("Case is required", missing.Error);
     }

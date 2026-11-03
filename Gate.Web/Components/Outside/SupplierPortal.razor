@@ -2,6 +2,7 @@
 @using Gate.Web.Services
 @using Gate.Web.ViewModels
 @inject SimulationUiService Simulate
+@implements IDisposable
 
 <div id="supplier-@VendorId">
     @if (_loadingPos)
@@ -414,6 +415,13 @@
     private string _body = string.Empty;
     private SimulationOutcome? _replyOutcome;
     private bool _extraSends;
+    private bool _disposed;
+    private int _invSends;
+
+    public void Dispose()
+    {
+        _disposed = true;
+    }
 
     private bool ShowAck() =>
         _inbox is not null
@@ -676,13 +684,21 @@
                 confirm = parsed;
             }
 
-            _ackOutcome = await Simulate.SendAckAsync(_inbox?.CaseId, confirm);
+            // The button returns on the instant receipt; the inbox
+            // refreshes in the background as the agent advances.
+            var caseId = _inbox?.CaseId;
+            var since = DateTimeOffset.UtcNow;
+            _ackOutcome = await Simulate.SendAckAsync(caseId, confirm);
             if (_ackOutcome.Ok)
             {
                 var posted = _ackOutcome;
                 await LoadInboxAsync();
                 _ackOutcome = posted;
                 await OnChanged.InvokeAsync();
+                if (!string.IsNullOrWhiteSpace(caseId))
+                {
+                    _ = PollInboxAsync(caseId, since);
+                }
             }
         }
         catch (Exception ex)
@@ -701,8 +717,13 @@
         _asnOutcome = null;
         try
         {
+            // The button returns on the instant receipt; the views build
+            // and the agent advances in the background while the inbox
+            // refreshes below.
+            var caseId = _inbox?.CaseId ?? string.Empty;
+            var since = DateTimeOffset.UtcNow;
             _asnOutcome = await Simulate.SendAsnAsync(new AsnSubmission(
-                _inbox?.CaseId ?? string.Empty,
+                caseId,
                 _asnNumber,
                 _slip,
                 _asnCartons.Select(c => new AsnCartonForm(
@@ -714,6 +735,10 @@
                 await LoadInboxAsync();
                 _asnOutcome = posted;
                 await OnChanged.InvokeAsync();
+                if (!string.IsNullOrWhiteSpace(caseId))
+                {
+                    _ = PollInboxAsync(caseId, since);
+                }
             }
         }
         catch (Exception ex)
@@ -732,12 +757,17 @@
         _invOutcome = null;
         try
         {
+            // The button returns on the instant receipt; the intake and
+            // match run in the background and the outcome below grows
+            // the persisted accepted and held values when they land.
+            var caseId = _inbox?.CaseId;
+            var since = DateTimeOffset.UtcNow;
             if (_photoMode)
             {
                 var photos = _uploads
                     .Select(u => new SimulationPhoto(u.FileName, u.Bytes, null))
                     .ToList();
-                _invOutcome = await Simulate.SendInvoicePhotosAsync(_inbox?.CaseId, photos);
+                _invOutcome = await Simulate.SendInvoicePhotosAsync(caseId, photos);
             }
             else
             {
@@ -745,7 +775,7 @@
                     .Select(l => new InvoiceLineForm(l.PoLineRef, l.Quantity, l.UnitPrice))
                     .ToList();
                 _invOutcome = await Simulate
-                    .SendInvoiceAsync(_inbox?.CaseId, _invNumber, _invVendor, _invPo, lines, _bankRef);
+                    .SendInvoiceAsync(caseId, _invNumber, _invVendor, _invPo, lines, _bankRef);
             }
 
             if (_invOutcome.Ok)
@@ -754,6 +784,10 @@
                 await LoadInboxAsync();
                 _invOutcome = posted;
                 await OnChanged.InvokeAsync();
+                if (!string.IsNullOrWhiteSpace(caseId))
+                {
+                    _ = PollInvoiceAsync(caseId, since, ++_invSends);
+                }
             }
         }
         catch (Exception ex)
@@ -772,8 +806,10 @@
         _replyOutcome = null;
         try
         {
+            var caseId = _inbox?.CaseId;
+            var since = DateTimeOffset.UtcNow;
             var posted = await Simulate
-                .SendVendorReplyAsync(_inbox?.CaseId, _from, _body, _subject, _inReplyTo);
+                .SendVendorReplyAsync(caseId, _from, _body, _subject, _inReplyTo);
             _replyOutcome = posted;
             if (posted.Ok)
             {
@@ -781,6 +817,10 @@
                 await LoadInboxAsync();
                 _replyOutcome = posted;
                 await OnChanged.InvokeAsync();
+                if (!string.IsNullOrWhiteSpace(caseId))
+                {
+                    _ = PollInboxAsync(caseId, since);
+                }
             }
         }
         catch (Exception ex)
@@ -790,6 +830,99 @@
         finally
         {
             _busy = false;
+        }
+    }
+
+    /// <summary>Reloads the inbox without losing the receipts the sends
+    /// above already showed: the prefill clears outcomes, so the refresh
+    /// restores them.</summary>
+    private async Task RefreshInboxAsync()
+    {
+        var ack = _ackOutcome;
+        var asn = _asnOutcome;
+        var inv = _invOutcome;
+        var reply = _replyOutcome;
+        var extra = _extraSends;
+        await LoadInboxAsync();
+        _ackOutcome ??= ack;
+        _asnOutcome ??= asn;
+        _invOutcome ??= inv;
+        _replyOutcome ??= reply;
+        _extraSends = extra || _extraSends;
+    }
+
+    private async Task PollInboxAsync(string caseId, DateTimeOffset since)
+    {
+        try
+        {
+            var seen = new List<string>();
+            var quiet = 0;
+            for (var round = 0; round < 45 && quiet < 4 && !_disposed; round++)
+            {
+                IReadOnlyList<string> events;
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2));
+                    events = (await Simulate.GetCaseProgressAsync(caseId, since)).Events;
+                }
+                catch (Exception)
+                {
+                    break;
+                }
+
+                if (_disposed)
+                {
+                    return;
+                }
+
+                if (!events.SequenceEqual(seen, StringComparer.Ordinal))
+                {
+                    seen = events.ToList();
+                    quiet = 0;
+                    try
+                    {
+                        await RefreshInboxAsync();
+                        await OnChanged.InvokeAsync();
+                        await InvokeAsync(StateHasChanged);
+                    }
+                    catch (Exception)
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    quiet++;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Polling is best-effort: the receipt above already stands,
+            // so a polling failure never rewrites the outcome.
+        }
+    }
+
+    private async Task PollInvoiceAsync(string caseId, DateTimeOffset since, int send)
+    {
+        try
+        {
+            var outcome = await Simulate.PollInvoiceOutcomeAsync(caseId, since);
+            if (outcome is null || _disposed || send != _invSends)
+            {
+                return;
+            }
+
+            _invOutcome = outcome;
+            await RefreshInboxAsync();
+            _invOutcome = outcome;
+            await OnChanged.InvokeAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // Polling is best-effort: the receipt above already stands,
+            // so a polling failure never rewrites the outcome.
         }
     }
 }

@@ -129,23 +129,19 @@ builder.Services.AddScoped(sp => new CaseRunner(
     dockSceneLive: sp.GetRequiredService<DockSceneLive>()));
 // Turn token budget from config (MetaApi:TurnMaxTokens).
 builder.Services.AddSingleton(TurnBudgetOptions.FromConfig(builder.Configuration));
-// Dock scene source: photo library unless the Admin live build is on. The
-// scene generator arrives only with MetaImages credentials (SceneModel
-// defaulting to ImageModel); without them the live path reports itself
-// unavailable and the library stays in use.
+// Dock scene source: live generated scenes whenever the image settings
+// resolve (MetaApi address and key plus the scene model), so shipments
+// build live by default; the Admin switch can still turn live off. Without
+// the settings the generator stays null, one startup line names what's
+// missing, and the library stays in use.
 builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
-    var section = config.GetSection("MetaImages");
-    var baseUrl = section["BaseUrl"];
-    var model = DockSceneStatus.SceneModelName(config);
-    var key = section["ApiKey"];
-    ISceneGenerator? generator = string.IsNullOrWhiteSpace(baseUrl)
-        || string.IsNullOrWhiteSpace(model)
-        || string.IsNullOrWhiteSpace(key)
+    var options = DockSceneStatus.ImageOptionsOrNull(config);
+    ISceneGenerator? generator = options is null
         ? null
-        : new MetaSceneGenerator(new HttpClient(), new MetaSceneOptions(baseUrl, model, key));
-    return new DockSceneLive { SceneGenerator = generator };
+        : new MetaSceneGenerator(new HttpClient(), options);
+    return new DockSceneLive { SceneGenerator = generator, LiveOn = generator is not null };
 });
 builder.Services.AddSingleton<DockSceneStatus>();
 builder.Services.AddSingleton(sp => new CaseCacheStore(
@@ -242,6 +238,13 @@ using (var startup = app.Services.CreateScope())
     var factory = services.GetRequiredService<IDbContextFactory<ErpDbContext>>();
     using var db = factory.CreateDbContext();
     await db.Database.MigrateAsync();
+    var scenes = services.GetRequiredService<DockSceneLive>();
+    if (scenes.SceneGenerator is null)
+    {
+        app.Logger.LogWarning(
+            "Live dock scenes off ({Missing} not set); shipment photos use the photo library.",
+            string.Join(", ", DockSceneStatus.MissingSettings(builder.Configuration)));
+    }
 }
 app.MapAgentPickup();
 app.MapDockImages();

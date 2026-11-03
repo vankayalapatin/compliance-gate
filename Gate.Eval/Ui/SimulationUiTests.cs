@@ -193,13 +193,10 @@ public sealed class SimulationUiTests
     }
 
     [Fact]
-    public async Task SendOrderPostsWebhookShapeAndParsesAdvances()
+    public async Task SendOrderPostsWebhookShapeAndParsesAcceptance()
     {
         var h = Create();
-        Respond(h, """
-            {"caseIds":["CASE-1"],"advances":[
-             {"caseId":"CASE-1","stage":"Created","step":"RaisePr","complete":false}]}
-            """);
+        Respond(h, """{"accepted":true,"caseIds":["CASE-1"]}""");
 
         var outcome = await h.Service.SendOrderAsync(new OrderSubmission(
             "LE-T", "SHOP-7", "requester",
@@ -217,7 +214,7 @@ public sealed class SimulationUiTests
         Assert.False(string.IsNullOrWhiteSpace(sent.IdempotencyKey));
         Assert.True(outcome.Ok, outcome.Summary);
         Assert.Equal(new[] {"CASE-1"}, outcome.CaseIds);
-        Assert.Contains(outcome.Details, d => d.Contains("CASE-1") && d.Contains("Created"));
+        Assert.Contains(outcome.Details, d => d.Contains("CASE-1") && d.Contains("opened"));
     }
 
     [Fact]
@@ -329,10 +326,10 @@ public sealed class SimulationUiTests
     }
 
     [Fact]
-    public async Task SendDockPhotosPostsBytesAndParsesCartons()
+    public async Task SendDockPhotosPostsBytesAndParsesReceipt()
     {
         var h = Create();
-        Respond(h, """{"cartons":["CTN-A"],"step":"EvaluateDock","complete":false}""");
+        Respond(h, """{"accepted":true,"photoCount":1}""");
 
         var outcome = await h.Service.SendDockPhotosAsync(
             "CASE-1", [new SimulationPhoto("IMG-T.jpg", [7, 8, 9], "CTN-A")]);
@@ -346,8 +343,8 @@ public sealed class SimulationUiTests
         Assert.Equal(new byte[] {7, 8, 9}, photo.Jpeg);
         Assert.Equal("CTN-A", photo.CartonHint);
         Assert.True(outcome.Ok, outcome.Summary);
-        Assert.Contains("CTN-A", outcome.Summary);
-        Assert.Contains(outcome.Details, d => d.Contains("EvaluateDock"));
+        Assert.Contains("1 photo(s)", outcome.Summary);
+        Assert.Contains("lands below", outcome.Summary);
     }
 
     [Fact]
@@ -389,10 +386,10 @@ public sealed class SimulationUiTests
     }
 
     [Fact]
-    public async Task SendReshotPostsCartonsAndPhotos()
+    public async Task SendReshotPostsCartonsAndParsesReceipt()
     {
         var h = Create();
-        Respond(h, """{"Cartons":["CTN-B"],"Step":"EvaluateReshot","Complete":true}""");
+        Respond(h, """{"accepted":true,"photoCount":1}""");
 
         var outcome = await h.Service.SendReshotAsync(
             "CASE-1", ["CTN-B"], [new SimulationPhoto("IMG-R.jpg", [4, 5], "CTN-B")]);
@@ -403,8 +400,8 @@ public sealed class SimulationUiTests
         Assert.Equal(new[] {"CTN-B"}, sent.CartonIds);
         Assert.Equal(new byte[] {4, 5}, Assert.Single(sent.Photos).Jpeg);
         Assert.True(outcome.Ok, outcome.Summary);
-        Assert.Contains("CTN-B", outcome.Summary);
-        Assert.Contains(outcome.Details, d => d.Contains("complete"));
+        Assert.Contains("Reshot received: 1 photo(s)", outcome.Summary);
+        Assert.Contains("lands below", outcome.Summary);
     }
 
     [Fact]
@@ -548,10 +545,7 @@ public sealed class SimulationUiTests
     public async Task SendInvoicePhotosPostsPhotoShape()
     {
         var h = Create();
-        Respond(h, """
-            {"invoice":"V-1/INV-9","persisted":true,"acceptedValue":10,"heldValue":0,
-             "step":"Match","complete":false}
-            """);
+        Respond(h, """{"accepted":true,"photoCount":1}""");
 
         var outcome = await h.Service.SendInvoicePhotosAsync(
             "CASE-1", [new SimulationPhoto("PAGE-1.jpg", [9, 9], null)]);
@@ -562,6 +556,7 @@ public sealed class SimulationUiTests
         Assert.Equal("CASE-1", sent.CaseId);
         Assert.Equal(new byte[] {9, 9}, Assert.Single(sent.Photos).Jpeg);
         Assert.True(outcome.Ok, outcome.Summary);
+        Assert.Contains("Invoice photos received: 1 photo(s)", outcome.Summary);
     }
 
     [Fact]

@@ -328,6 +328,7 @@ public sealed class HoldRow
     public string? PoLineRef { get; set; }
     public string? LotRef { get; set; }
     public string? CartonId { get; set; }
+    public string? AsnNumber { get; set; }
 }
 
 public sealed class HoldReleaseRow

@@ -370,26 +370,56 @@
                 .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
                 .Select(kv => new DockProblemForm(kv.Key, kv.Value!))
                 .ToList();
+            // The rebuild answers on acceptance; the new views land in
+            // the background and join the picks through the poll below.
+            var known = state.MintedFiles.ToList()
+                .Concat(state.ServerPicks.Keys.ToList())
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
             var rebuilt = await Simulate.RebuildDockViewsAsync(truck.CaseId, problems);
             state.RebuildNote = rebuilt.Message;
             if (rebuilt.Ok)
             {
-                // Rebuilt views join the counter and go out through the
-                // normal dock photo send below.
-                foreach (var file in rebuilt.FileNames)
-                {
-                    if (!state.MintedFiles.Contains(file, StringComparer.Ordinal))
-                    {
-                        state.MintedFiles.Add(file);
-                    }
-
-                    state.ServerPicks.TryAdd(file, null);
-                }
+                _ = PollRebuiltViewsAsync(truck.AsnNumber, known);
+                await OnChanged.InvokeAsync();
             }
         }
         finally
         {
             _busy = false;
+        }
+    }
+
+    private async Task PollRebuiltViewsAsync(string asnNumber, IReadOnlyList<string> known)
+    {
+        try
+        {
+            var fresh = await Simulate.PollRebuildFilesAsync(known);
+            if (fresh is null || !_states.TryGetValue(asnNumber, out var state))
+            {
+                return;
+            }
+
+            // Rebuilt views join the counter and go out through the
+            // normal dock photo send below.
+            foreach (var file in fresh)
+            {
+                if (!state.MintedFiles.Contains(file, StringComparer.Ordinal))
+                {
+                    state.MintedFiles.Add(file);
+                }
+
+                state.ServerPicks.TryAdd(file, null);
+            }
+
+            state.RebuildNote = $"Rebuilt views ready: {string.Join(", ", fresh)}.";
+            await OnChanged.InvokeAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // Polling is best-effort: the acceptance above already
+            // stands, so a polling failure stays silent.
         }
     }
 
@@ -415,6 +445,7 @@
     private async Task SubmitAsync(ExpectedTruckVm truck)
     {
         var state = StateFor(truck.AsnNumber);
+        var label = state.Reshot ? "Reshot" : "Dock photos";
         _busy = true;
         state.Outcome = null;
         state.CaseId = truck.CaseId;
@@ -422,7 +453,9 @@
         {
             var photos = new List<SimulationPhoto>();
             var dropped = new List<string>();
-            foreach (var pick in state.ServerPicks)
+            // Snapshot: the rebuild poll below can tick new views into
+            // the picks while a send walks them.
+            foreach (var pick in state.ServerPicks.ToList())
             {
                 // Dock-camera modes never mix: a pick from the other mode
                 // (ticked before the reshot toggle flipped) stays out of
@@ -446,20 +479,29 @@
 
             photos.AddRange(state.Uploads.Select(u => new SimulationPhoto(u.FileName, u.Bytes, u.CartonHint)));
 
+            // The button returns on the instant receipt; the dock read
+            // lands in the background and this truck polls for it.
+            var since = DateTimeOffset.UtcNow;
             var sent = state.Reshot
                 ? await Simulate.SendReshotAsync(truck.CaseId, state.ReshotCartons.ToList(), photos)
                 : await Simulate.SendDockPhotosAsync(truck.CaseId, photos);
-            state.Outcome = dropped.Count == 0
-                ? sent
-                : sent with
-                {
-                    Details = [.. sent.Details,
-                        $"Left out of this send (other dock-camera mode): {string.Join(", ", dropped.Order(StringComparer.Ordinal))}."]
-                };
+            SimulationOutcome Combine(SimulationOutcome outcome) =>
+                dropped.Count == 0
+                    ? outcome
+                    : outcome with
+                    {
+                        Details = [.. outcome.Details,
+                            $"Left out of this send (other dock-camera mode): {string.Join(", ", dropped.Order(StringComparer.Ordinal))}."]
+                    };
+            state.Outcome = Combine(sent);
             if (state.Outcome.Ok)
             {
                 await ReloadAsync();
                 await OnChanged.InvokeAsync();
+                if (truck.CaseId is not null)
+                {
+                    _ = PollOutcomeAsync(truck.AsnNumber, truck.CaseId, since, label, dropped);
+                }
             }
         }
         catch (Exception ex)
@@ -469,6 +511,40 @@
         finally
         {
             _busy = false;
+        }
+    }
+
+    private async Task PollOutcomeAsync(
+        string asnNumber, string caseId, DateTimeOffset since,
+        string label, IReadOnlyList<string> dropped)
+    {
+        try
+        {
+            var outcome = await Simulate.PollDockOutcomeAsync(caseId, since, label);
+            if (outcome is null)
+            {
+                return;
+            }
+
+            if (_states.TryGetValue(asnNumber, out var state))
+            {
+                state.Outcome = dropped.Count == 0
+                    ? outcome
+                    : outcome with
+                    {
+                        Details = [.. outcome.Details,
+                            $"Left out of this send (other dock-camera mode): {string.Join(", ", dropped.Order(StringComparer.Ordinal))}."]
+                    };
+            }
+
+            await ReloadAsync();
+            await OnChanged.InvokeAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // Polling is best-effort: the receipt above already stands,
+            // so a polling failure never rewrites the outcome.
         }
     }
 }

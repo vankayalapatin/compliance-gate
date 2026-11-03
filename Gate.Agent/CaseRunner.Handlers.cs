@@ -456,7 +456,8 @@ public partial class CaseRunner
                 verdict.RuleId, verdict.Reason, verdict.RuleId, current.CaseId,
                 RecordSource.P2pAgent, "Receipt", current.ReceiptNumber,
                 poLineRef, carton.LotRef, carton.CartonId,
-                $"{current.CaseId}:hold:{carton.CartonId}:{verdict.RuleId}", ct).ConfigureAwait(false);
+                $"{current.CaseId}:hold:{carton.CartonId}:{verdict.RuleId}", ct,
+                asnNumber: current.AsnNumber).ConfigureAwait(false);
             await _erp.QuarantineLotAsync(
                 carton.LotRef, stored.HoldId, RecordSource.P2pAgent,
                 $"{current.CaseId}:quar:{carton.LotRef}", ct).ConfigureAwait(false);
@@ -1123,7 +1124,8 @@ public partial class CaseRunner
             var hold = await _erp.SetHoldAsync(
                 rule, $"Review {decision.DecisionId} rejected by {decidedBy}: {comment ?? "goods failed review"}.",
                 rule, current.CaseId, RecordSource.P2pAgent, "Receipt", current.ReceiptNumber,
-                null, lot, cartonId, $"{current.CaseId}:{decision.DecisionId}:hold", ct).ConfigureAwait(false);
+                null, lot, cartonId, $"{current.CaseId}:{decision.DecisionId}:hold", ct,
+                asnNumber: asn?.AsnNumber).ConfigureAwait(false);
             await _erp.QuarantineLotAsync(
                 lot, hold.HoldId, RecordSource.P2pAgent,
                 $"{current.CaseId}:{decision.DecisionId}:quar", ct).ConfigureAwait(false);

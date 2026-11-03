@@ -377,7 +377,8 @@ public sealed record HoldDto(
     string? DocumentNumber,
     string? PoLineRef,
     string? LotRef,
-    string? CartonId);
+    string? CartonId,
+    string? AsnNumber = null);
 
 public sealed record HoldRelease(
     string HoldId,

@@ -1,6 +1,7 @@
 @using Gate.Web.Services
 @using Gate.Web.ViewModels
 @inject SimulationUiService Simulate
+@implements IDisposable
 
 <div id="shop">
     <section class="gate-card">
@@ -75,6 +76,20 @@
             <div class="gate-notice" role="alert">Shop order @_placed.ShopOrderId accepted; the minted sales order is not recorded yet.</div>
         }
         <OutcomeBox Outcome="@_newOutcome" />
+        @if (_polling)
+        {
+            <p class="gate-meta">Agent working in the background…</p>
+        }
+        @if (_progress.Count > 0)
+        {
+            <p class="gate-row"><span class="gate-label">Agent progress</span></p>
+            <ul class="gate-list">
+                @foreach (var line in _progress)
+                {
+                    <li>@line</li>
+                }
+            </ul>
+        }
     </section>
 </div>
 
@@ -89,9 +104,17 @@
     private string _currency = string.Empty;
     private string? _requester;
     private bool _busy;
+    private bool _polling;
+    private bool _disposed;
     private SimulationOutcome? _newOutcome;
     private ShopOrderPlaced? _placed;
     private readonly List<OrderLineRow> _lines = [new()];
+    private readonly List<string> _progress = [];
+
+    public void Dispose()
+    {
+        _disposed = true;
+    }
 
     private sealed class OrderLineRow
     {
@@ -120,8 +143,13 @@
         _busy = true;
         _newOutcome = null;
         _placed = null;
+        _progress.Clear();
+        _polling = false;
         try
         {
+            // The button returns on the instant receipt; the agent works
+            // in the background and the progress list below follows it.
+            var since = DateTimeOffset.UtcNow;
             _placed = await Simulate.SendNewShopOrderAsync(new NewShopOrder(
                 _entityCode,
                 string.IsNullOrWhiteSpace(_requester) ? null : _requester,
@@ -132,6 +160,11 @@
             if (_newOutcome.Ok)
             {
                 await OnChanged.InvokeAsync();
+                if (_placed.CaseIds.Count > 0)
+                {
+                    _polling = true;
+                    _ = PollProgressAsync(_placed.ShopOrderId, _placed.CaseIds, since);
+                }
             }
         }
         catch (Exception ex)
@@ -141,6 +174,83 @@
         finally
         {
             _busy = false;
+        }
+    }
+
+    private async Task PollProgressAsync(
+        string shopOrderId, IReadOnlyList<string> caseIds, DateTimeOffset since)
+    {
+        try
+        {
+            var quiet = 0;
+            for (var round = 0; round < 90 && quiet < 4 && !_disposed; round++)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2));
+                }
+                catch (Exception)
+                {
+                    break;
+                }
+
+                if (_disposed || _placed?.ShopOrderId != shopOrderId)
+                {
+                    return;
+                }
+
+                var lines = new List<string>();
+                try
+                {
+                    foreach (var caseId in caseIds)
+                    {
+                        var progress = await Simulate.GetCaseProgressAsync(caseId, since);
+                        lines.AddRange(progress.Events);
+                    }
+                }
+                catch (Exception)
+                {
+                    break;
+                }
+
+                if (!lines.SequenceEqual(_progress, StringComparer.Ordinal))
+                {
+                    _progress.Clear();
+                    _progress.AddRange(lines);
+                    quiet = 0;
+                }
+                else
+                {
+                    quiet++;
+                }
+
+                try
+                {
+                    await OnChanged.InvokeAsync();
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (Exception)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            // Polling is best-effort: the receipt above already stands,
+            // so a polling failure never rewrites the outcome. The
+            // render itself is guarded: the panel may be gone.
+            if (!_disposed && _placed?.ShopOrderId == shopOrderId)
+            {
+                _polling = false;
+                try
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (Exception)
+                {
+                }
+            }
         }
     }
 }
