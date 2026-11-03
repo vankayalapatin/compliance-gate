@@ -683,6 +683,25 @@ public partial class CaseRunner
                 docKey, bankHeld, apReview: false, bankVerification: true, ct).ConfigureAwait(false);
         }
 
+        // Link before matching: the ERP's dock gate finds passed cartons
+        // through the case's invoices, so the key must be on the file for
+        // the match to see this case's passes. Without the link the match
+        // always sees an empty pass set and holds the full value, even
+        // when the dock check passed long ago. Same case-invoice condition
+        // as the intake finish below, and idempotent for redelivery.
+        if (string.Equals(input.PoNumber, current.PoNumber, StringComparison.Ordinal))
+        {
+            var linkKey = new InvoiceKey(vendorId, input.SupplierInvoiceNumber);
+            if (!current.Invoices.Contains(linkKey))
+            {
+                var link = new CaseWork(file);
+                link.Patch(current with { Invoices = current.Invoices.Append(linkKey).ToList() });
+                link.Save(_cacheDir);
+                file = CaseStore.Load(_cacheDir, input.CaseId) ?? file;
+                current = file.Case;
+            }
+        }
+
         var invoice = await _core.MatchInvoiceAsync(
             vendorId, input.SupplierInvoiceNumber, input.PoNumber,
             RecordSource.P2pAgent, createdBy, lines, ct,

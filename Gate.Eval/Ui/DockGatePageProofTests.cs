@@ -162,6 +162,62 @@ public sealed class DockGatePageProofTests
     }
 
     [Fact]
+    public async Task DockPassBeforeInvoiceAcceptsAtIntakeOnPages()
+    {
+        // The dock check passes first; the invoice arriving later must be
+        // accepted at intake instead of held for a check that already
+        // passed. Regression: the match ran before the invoice was linked
+        // to the case, so the dock-pass lookup always came back empty and
+        // every invoice matched accepted 0, held full.
+        var flow = await DriveDockStageAsync();
+        var po = await flow.Erp.GetPurchaseOrderAsync(flow.ScrewPoNumber);
+        Assert.NotNull(po);
+        var poLine = Assert.Single(po.Lines);
+
+        var verdicts = await flow.Runner.OnDockReadsAsync(
+            flow.ScrewCaseId,
+            [Read("CTN-G1", "LOT-G1", 75, flow.ScrewPoNumber),
+             Read("CTN-G2", "LOT-G2", 75, flow.ScrewPoNumber)]);
+        Assert.All(verdicts.Values, list => Assert.All(list, v => Assert.Equal(VerdictKind.Pass, v.Kind)));
+
+        var intake = await flow.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            flow.ScrewCaseId, "INV-G2", "V-C", flow.ScrewPoNumber,
+            [new SupplierInvoiceLineInput(poLine.PoLineRef, 150, poLine.UnitPrice)]));
+        Assert.True(intake.Persisted);
+        Assert.Equal(150 * poLine.UnitPrice, intake.AcceptedValue);
+        Assert.Equal(0, intake.HeldValue);
+
+        var screwFile = CaseStore.Load(flow.CaseDir, flow.ScrewCaseId);
+        Assert.NotNull(screwFile);
+        var approval = screwFile.Decisions.Single(d =>
+            d.Kind == DecisionKind.InvoiceApproval && d.Status == DecisionStatus.Pending);
+        using var ctx = Host(flow, approval.RequestedTo);
+        var actions = ctx.Services.GetRequiredService<ErpActionService>();
+
+        // The invoice record shows accepted value with no dock hold.
+        var accepted = RenderRecord(ctx, "V-C", "INV-G2");
+        Assert.DoesNotContain("Awaiting dock check", accepted);
+
+        // The approval card renders on Decisions and the flow pays.
+        using var board = ctx.RenderComponent<Decisions>();
+        board.WaitForAssertion(
+            () => Assert.DoesNotContain("Loading", board.Markup),
+            TimeSpan.FromSeconds(10));
+        AssertClean(board.Markup);
+        Assert.Contains("Approve invoice V-C/INV-G2", board.Markup);
+
+        var approved = await actions.AttemptAsync(
+            "invoice", "V-C", "INV-G2", ErpActions.Approve,
+            new Dictionary<string, string>(StringComparer.Ordinal), approval.RequestedTo);
+        Assert.True(approved.Ok, approved.Message);
+        // Approval settles the linked card, which posts the invoice; the
+        // draft then pays.
+        var draft = await actions.CreatePaymentDraftAsync(
+            [new InvoiceKey("V-C", "INV-G2")], null, "planner");
+        Assert.True(draft.Ok, draft.Message);
+    }
+
+    [Fact]
     public async Task DockGateHoldsReleasesAndPaysOnPages()
     {
         var flow = await DriveDockStageAsync();

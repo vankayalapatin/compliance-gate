@@ -238,32 +238,21 @@ public sealed class CartonScopePageProofTests
             [new InvoiceKey("V-B", "INV-TB")], null, "planner");
         Assert.False(refused.Ok);
 
-        var released = await actions.AttemptAsync(
-            "invoice", "V-C", "INV-TS", ErpActions.ReleaseInvoiceLine,
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                [ErpActions.InPoLineRef] = lineS.PoLineRef,
-                [ErpActions.InQuantity] = lineS.QtyOrdered.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            },
-            "planner");
-        Assert.True(released.Ok, released.Message);
-
-        var submitted = await actions.AttemptAsync(
-            "invoice", "V-C", "INV-TS", ErpActions.Submit,
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                [ErpActions.InRoutedTo] = "delegate",
-            },
-            "planner");
-        Assert.True(submitted.Ok, submitted.Message);
+        // Screw passed the dock before its invoice arrived, so intake
+        // accepts at once: no "Awaiting dock check", and the approval
+        // card is already there with no release step in between.
+        var accepted = RenderRecord(ctx, "V-C", "INV-TS");
+        Assert.DoesNotContain("Awaiting dock check", accepted);
+        var screwDecisions = CaseStore.Load(flow.CaseDir, flow.ScrewCaseId);
+        Assert.NotNull(screwDecisions);
+        var screwApproval = screwDecisions.Decisions.Single(d =>
+            d.Kind == DecisionKind.InvoiceApproval && d.Status == DecisionStatus.Pending);
         var approved = await actions.AttemptAsync(
             "invoice", "V-C", "INV-TS", ErpActions.Approve,
-            new Dictionary<string, string>(StringComparer.Ordinal), "delegate");
+            new Dictionary<string, string>(StringComparer.Ordinal), screwApproval.RequestedTo);
         Assert.True(approved.Ok, approved.Message);
-        var posted = await actions.AttemptAsync(
-            "invoice", "V-C", "INV-TS", ErpActions.PostInvoice,
-            new Dictionary<string, string>(StringComparer.Ordinal), "planner");
-        Assert.True(posted.Ok, posted.Message);
+        // Approval settles the linked card, which posts the invoice; the
+        // draft then pays.
         var draft = await actions.CreatePaymentDraftAsync(
             [new InvoiceKey("V-C", "INV-TS")], null, "planner");
         Assert.True(draft.Ok, draft.Message);
