@@ -72,7 +72,10 @@ internal static class MemoTestKit
     /// <summary>Valid document proposal with one blocking region question
     /// against MemoFixtures.TestKb: the statement carries no resolution, so
     /// the blocking question is required.</summary>
-    public static string QuestionProposalJson() => """
+    public static string QuestionProposalJson(string owner = "Terry Owner") =>
+        QuestionProposalJsonTemplate.Replace("Terry Owner", owner, StringComparison.Ordinal);
+
+    private const string QuestionProposalJsonTemplate = """
         {
           "statements": [{"quote": "all POs to northern suppliers for critical parts need a declaration on file before award", "interpretation": "require a COO declaration document for critical-part awards to northern-region vendors", "confidence": 0.7}],
           "resolutions": [],

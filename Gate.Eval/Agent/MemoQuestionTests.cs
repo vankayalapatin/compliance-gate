@@ -55,6 +55,130 @@ public sealed class MemoQuestionTests
     }
 
     [Fact]
+    public async Task AnsweringRoutesApprovalToEligibleOwner()
+    {
+        // Full walk: Robin authors a memo, answers its blocking question,
+        // and Spark names Robin on the clean round. Answering must continue
+        // to the proposal and route its approval past the author to the
+        // next eligible matrix owner; their approval then publishes.
+        var h = MemoTestKit.Create();
+        h.Compliance.Snapshot = MemoFixtures.TestKb() with
+        {
+            ApprovalMatrix =
+            [
+                new KbApprovalEntry("sourcing-policy", "approver", "Robin Author"),
+                new KbApprovalEntry("payment-approval", "payment-approver", "Terry Owner"),
+            ],
+        };
+        var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-R1",
+            "Cap the awarded-country share of critical battery cells.",
+            "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",
+            "Robin Author");
+        await h.Runner.IngestMemoAsync(h.InboxDir, file);
+        h.Models.QueueText(MemoTestKit.QuestionProposalJson("Robin Author"));
+        h.Models.QueueText(MemoTestKit.CapProposalJson(owner: "Robin Author"));
+
+        var asked = await h.Runner.AdvanceAsync("MEMO-R1");
+        Assert.Equal(MemoNextStep.AwaitAnswers, asked.Step);
+        var question = MemoStore.Load(h.CacheDir, "MEMO-R1")!.Decisions
+            .Single(d => d.Kind == DecisionKind.PolicyQuestion);
+
+        var updated = await h.Runner.ResolvePolicyQuestionAsync(
+            "MEMO-R1", question.DecisionId, true, "Robin Author", "Confirm US+MX");
+        Assert.Equal(DecisionStatus.Approved, updated.Status);
+
+        var after = MemoStore.Load(h.CacheDir, "MEMO-R1")!;
+        Assert.Equal(2, after.Proposals.Count);
+        Assert.Equal("Terry Owner", after.Proposals.Last().PolicyOwner);
+        var card = Assert.Single(after.Decisions.Where(d => d.Kind == DecisionKind.PolicyApproval));
+        Assert.Equal(DecisionStatus.Pending, card.Status);
+        Assert.Equal("Terry Owner", card.RequestedTo);
+        Assert.Contains(after.Events, e =>
+            e.Summary.Contains("approval routed to Terry Owner", StringComparison.Ordinal));
+        Assert.Equal(MemoNextStep.AwaitApproval, MemoPicker.Pick(after).Step);
+
+        var approval = await h.Runner.ResolvePolicyApprovalAsync(
+            "MEMO-R1", card.DecisionId,
+            new PolicyApprovalInput(
+                true, "Terry Owner", DateTimeOffset.UtcNow.AddDays(30),
+                RuleApplicability.ProspectiveOnly, null, null, null, null, null,
+                ["MemoQuestionTests.AnswerRoute"]));
+        Assert.Equal(DecisionStatus.Approved, approval.Decision.Status);
+        Assert.NotNull(approval.Activation);
+    }
+
+    [Fact]
+    public async Task AnsweringRoutesPastTheAuthorsDelegate()
+    {
+        var h = MemoTestKit.Create();
+        h.Compliance.Snapshot = MemoFixtures.TestKb() with
+        {
+            ApprovalMatrix =
+            [
+                new KbApprovalEntry("sourcing-policy", "approver", "Sam Substitute"),
+                new KbApprovalEntry("payment-approval", "payment-approver", "Terry Owner"),
+            ],
+        };
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        h.Erp.SeedDelegation(new DelegationDto("Robin Author", "Sam Substitute", today.AddDays(-1), today.AddDays(30)));
+        var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-R2",
+            "Cap the awarded-country share of critical battery cells.",
+            "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",
+            "Robin Author");
+        await h.Runner.IngestMemoAsync(h.InboxDir, file);
+        h.Models.QueueText(MemoTestKit.QuestionProposalJson("Sam Substitute"));
+        h.Models.QueueText(MemoTestKit.CapProposalJson(owner: "Sam Substitute"));
+
+        var asked = await h.Runner.AdvanceAsync("MEMO-R2");
+        Assert.Equal(MemoNextStep.AwaitAnswers, asked.Step);
+        var question = MemoStore.Load(h.CacheDir, "MEMO-R2")!.Decisions
+            .Single(d => d.Kind == DecisionKind.PolicyQuestion);
+
+        await h.Runner.ResolvePolicyQuestionAsync(
+            "MEMO-R2", question.DecisionId, true, "Robin Author", "Confirm US+MX");
+
+        var after = MemoStore.Load(h.CacheDir, "MEMO-R2")!;
+        var card = Assert.Single(after.Decisions.Where(d => d.Kind == DecisionKind.PolicyApproval));
+        Assert.Equal("Terry Owner", card.RequestedTo);
+        Assert.Contains(after.Events, e =>
+            e.Summary.Contains("approval routed to Terry Owner", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnsweringWithNoEligibleOwnerRefusesLoudly()
+    {
+        var h = MemoTestKit.Create();
+        h.Compliance.Snapshot = MemoFixtures.TestKb() with
+        {
+            ApprovalMatrix =
+            [
+                new KbApprovalEntry("sourcing-policy", "approver", "Robin Author"),
+            ],
+        };
+        var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-R3",
+            "Cap the awarded-country share of critical battery cells.",
+            "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",
+            "Robin Author");
+        await h.Runner.IngestMemoAsync(h.InboxDir, file);
+        h.Models.QueueText(MemoTestKit.QuestionProposalJson("Robin Author"));
+        h.Models.QueueText(MemoTestKit.CapProposalJson(owner: "Robin Author"));
+
+        var asked = await h.Runner.AdvanceAsync("MEMO-R3");
+        Assert.Equal(MemoNextStep.AwaitAnswers, asked.Step);
+        var question = MemoStore.Load(h.CacheDir, "MEMO-R3")!.Decisions
+            .Single(d => d.Kind == DecisionKind.PolicyQuestion);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => h.Runner.ResolvePolicyQuestionAsync(
+                "MEMO-R3", question.DecisionId, true, "Robin Author", "Confirm US+MX"));
+
+        Assert.Contains("names no other eligible owner", ex.Message, StringComparison.Ordinal);
+        var after = MemoStore.Load(h.CacheDir, "MEMO-R3")!;
+        Assert.Equal(2, after.Proposals.Count);
+        Assert.DoesNotContain(after.Decisions, d => d.Kind == DecisionKind.PolicyApproval);
+    }
+
+    [Fact]
     public async Task InvalidOptionIsRefused()
     {
         var h = MemoTestKit.Create();

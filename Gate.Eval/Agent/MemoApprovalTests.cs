@@ -143,6 +143,14 @@ public sealed class MemoApprovalTests
     public async Task AuthorCannotApproveOwnMemo()
     {
         var h = MemoTestKit.Create();
+        h.Compliance.Snapshot = MemoFixtures.TestKb() with
+        {
+            ApprovalMatrix =
+            [
+                new KbApprovalEntry("sourcing-policy", "approver", "Terry Owner"),
+                new KbApprovalEntry("payment-approval", "payment-approver", "Robin Author"),
+            ],
+        };
         var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-SOD1",
             "Cap the awarded-country share of critical battery cells.",
             "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",
@@ -196,6 +204,14 @@ public sealed class MemoApprovalTests
     public async Task AuthorMayRejectOwnMemo()
     {
         var h = MemoTestKit.Create();
+        h.Compliance.Snapshot = MemoFixtures.TestKb() with
+        {
+            ApprovalMatrix =
+            [
+                new KbApprovalEntry("sourcing-policy", "approver", "Terry Owner"),
+                new KbApprovalEntry("payment-approval", "payment-approver", "Robin Author"),
+            ],
+        };
         var file = MemoTestKit.WriteInboxMemo(h.InboxDir, "MEMO-SOD4",
             "Cap the awarded-country share of critical battery cells.",
             "Effective 2026-12-01, no more than 40% of critical battery cells from any single country.",

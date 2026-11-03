@@ -118,6 +118,22 @@ internal sealed class MemoWork
         _proposals[index] = _proposals[index] with { WhatIf = report };
     }
 
+    /// <summary>Rewrites the policy owner on the proposal round with the
+    /// given hash (approval re-routing when Spark names someone who
+    /// cannot approve).</summary>
+    public void SetPolicyOwner(string proposalHash, string owner)
+    {
+        var index = _proposals.FindIndex(p =>
+            string.Equals(p.Proposal.ProposalHash, proposalHash, StringComparison.Ordinal));
+        if (index < 0)
+        {
+            throw new InvalidOperationException(
+                $"Memo {_memoId} carries no proposal with hash '{proposalHash}' to re-route.");
+        }
+
+        _proposals[index] = _proposals[index] with { PolicyOwner = owner };
+    }
+
     public void AddActivation(RuleActivation activation) => _activations.Add(activation);
 
     public CaseEvent AddEvent(

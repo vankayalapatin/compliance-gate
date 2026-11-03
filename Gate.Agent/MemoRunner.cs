@@ -115,7 +115,7 @@ public sealed class MemoRunner
                         await ComputeWhatIfAsync(memoId, ct).ConfigureAwait(false);
                         break;
                     case MemoNextStep.RaiseApproval:
-                        RaiseApproval(memoId);
+                        await RaiseApprovalAsync(memoId, ct).ConfigureAwait(false);
                         break;
                     default:
                         throw new InvalidOperationException($"Step {step} is not runnable.");
@@ -234,6 +234,9 @@ public sealed class MemoRunner
             _logger.LogInformation(
                 "Decision {DecisionId} on memo {MemoId} already {Status}; replay returns it unchanged.",
                 decisionId, memoId, decision.Status);
+            // The card is unchanged, but the memo still continues: a prior
+            // continuation may have failed after the answer was recorded.
+            await AdvanceAsync(memoId, ct).ConfigureAwait(false);
             return decision;
         }
 
@@ -271,6 +274,9 @@ public sealed class MemoRunner
             documentType: "Memo", documentNumber: memoId);
         work.Save(_cacheDir);
         await ProposeAsync(memoId, ct).ConfigureAwait(false);
+        // Continue past the fresh round: a clean proposal must reach its
+        // what-if report and approval card without another human step.
+        await AdvanceAsync(memoId, ct).ConfigureAwait(false);
         return updated;
     }
 
@@ -470,17 +476,27 @@ public sealed class MemoRunner
         work.Save(_cacheDir);
     }
 
-    private void RaiseApproval(string memoId)
+    private async Task RaiseApprovalAsync(string memoId, CancellationToken ct)
     {
         var file = MemoStore.Load(_cacheDir, memoId)
             ?? throw new InvalidOperationException($"Unknown memo {memoId}.");
         var current = file.Proposals.LastOrDefault()
             ?? throw new InvalidOperationException($"Memo {memoId} has no proposal to approve.");
+        var routed = await ResolveApprovalOwnerAsync(file, current, ct).ConfigureAwait(false);
         var work = new MemoWork(file);
+        if (!string.Equals(routed, current.PolicyOwner, StringComparison.OrdinalIgnoreCase))
+        {
+            work.SetPolicyOwner(current.Proposal.ProposalHash, routed);
+            work.AddEvent(CaseEventKind.Note,
+                $"Proposal {current.Proposal.ProposalId} names {current.PolicyOwner}, " +
+                $"who cannot approve it; approval routed to {routed}.",
+                documentType: "Memo", documentNumber: memoId);
+        }
+
         var card = work.FindOrCreateDecision(
             DecisionKind.PolicyApproval,
             $"Approve rule proposal {current.Proposal.ProposalId}",
-            current.PolicyOwner,
+            routed,
             MemoPicker.ApprovalDocumentType,
             current.Proposal.ProposalHash,
             current.WhatIf?.Totals.Currency is null ? null : current.WhatIf.Totals.AmountFlipped,
@@ -488,10 +504,63 @@ public sealed class MemoRunner
             BuildApprovalReason(file.Memo, current),
             evidenceRefs: [$"memo:{memoId}", $"proposal:{current.Proposal.ProposalId}"]);
         work.AddEvent(CaseEventKind.Note,
-            $"Policy approval card {card.DecisionId} raised to {current.PolicyOwner} " +
+            $"Policy approval card {card.DecisionId} raised to {routed} " +
             $"for proposal {current.Proposal.ProposalId}.",
             documentType: "Memo", documentNumber: memoId);
         work.Save(_cacheDir);
+    }
+
+    /// <summary>Approval routing: the proposal's policy owner when they can
+    /// approve, else the first KB approval-matrix owner who is neither the
+    /// memo author nor the author's active delegate. Refuses loudly when
+    /// the matrix names nobody eligible: the card must reach someone who
+    /// can actually approve.</summary>
+    private async Task<string> ResolveApprovalOwnerAsync(
+        MemoFile file, MemoProposalRecord current, CancellationToken ct)
+    {
+        var author = file.Memo.Author;
+        var delegations = await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        if (ApprovalConflict(author, current.PolicyOwner, delegations, today) is null)
+        {
+            return current.PolicyOwner;
+        }
+
+        var snapshot = await _compliance.LoadKbSnapshotAsync(ct).ConfigureAwait(false);
+        var fallback = snapshot.ApprovalMatrix
+            .Select(e => e.Owner)
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(o => ApprovalConflict(author, o, delegations, today) is null);
+        if (fallback is null)
+        {
+            throw new InvalidOperationException(
+                $"Memo {file.Memo.MemoId} cannot raise its approval card: proposal " +
+                $"{current.Proposal.ProposalId} names {current.PolicyOwner}, who cannot approve it, " +
+                "and the KB approval matrix names no other eligible owner; " +
+                "add an owner to the matrix first.");
+        }
+
+        return fallback;
+    }
+
+    /// <summary>Why a person cannot approve a memo: "the author",
+    /// "the author's delegate", or null when eligible.</summary>
+    private static string? ApprovalConflict(
+        string? author, string person,
+        IReadOnlyList<DelegationDto> delegations, DateOnly today)
+    {
+        if (!string.IsNullOrWhiteSpace(author)
+            && string.Equals(person, author.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return "the author";
+        }
+
+        var deciding = !string.IsNullOrWhiteSpace(author) && delegations.Any(d =>
+            string.Equals(d.FromUser, author.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(d.ToUser, person, StringComparison.OrdinalIgnoreCase)
+            && today >= d.Start && today <= d.End);
+        return deciding ? "the author's delegate" : null;
     }
 
     private async Task<PackPublication> PublishAsync(
@@ -626,23 +695,17 @@ public sealed class MemoRunner
         MemoFile file, string decisionId, string approver, CancellationToken ct)
     {
         var memoId = file.Memo.MemoId;
-        var author = file.Memo.Author;
-        if (!string.IsNullOrWhiteSpace(author)
-            && string.Equals(approver, author.Trim(), StringComparison.OrdinalIgnoreCase))
+        var delegations = await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        var conflict = ApprovalConflict(file.Memo.Author, approver, delegations, today);
+        if (conflict == "the author")
         {
             throw new InvalidOperationException(
                 $"Decision {decisionId} on memo {memoId} is refused: the author can't approve " +
                 "their own memo; it needs another owner.");
         }
 
-        var delegations = await _erp.GetDelegationsAsync(ct).ConfigureAwait(false);
-        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
-        var decidingForAuthor = delegations.Any(d =>
-            !string.IsNullOrWhiteSpace(author)
-            && string.Equals(d.FromUser, author.Trim(), StringComparison.OrdinalIgnoreCase)
-            && string.Equals(d.ToUser, approver, StringComparison.OrdinalIgnoreCase)
-            && today >= d.Start && today <= d.End);
-        if (decidingForAuthor)
+        if (conflict is not null)
         {
             throw new InvalidOperationException(
                 $"Decision {decisionId} on memo {memoId} is refused: {approver} decides for the author " +
