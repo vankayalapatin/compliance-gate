@@ -22,7 +22,7 @@ ComplianceGate is a control layer that lets an AI agent work inside the ERP a co
 
 It closes both gaps. Companies with years and millions invested in SAP, D365 or Oracle won't replace them to use agents, so ComplianceGate works alongside the ERP instead of replacing it. The ERP's controls stay in place, and people stay the approvers. The agent does the work. Company policy, from a memo or a regulation, becomes a rule enforced where money moves, for the agent and for people alike.
 
-Everything in this repo was built during the hackathon, Oct 26 – Nov 4, 2026, by a technical architect who designs Dynamics 365 for a living. Purchasing is the first domain, because it's where policy meets money.
+Everything in this repo was built during the hackathon, Oct 26 – Nov 4, 2026, by a technical architect who designs Dynamics 365 solutions for a living. Purchasing is the first domain, because it's where policy meets money.
 
 ## The design
 
@@ -191,9 +191,9 @@ Open http://localhost:5080.
 
 The main walk runs one 1,300-glasses order from restore to resolved, with a held carton and a reshot: about 15 minutes with a key. Every step names the screen, who to act as (top-bar **Acting as**), and what you should see. The agent works in the background between steps and waits for a person wherever a **Decisions** card or an outside-world action is named; its current wait is always listed under **Agent activity › Waiting on** in the right-hand pane.
 
-1. **Admin → Saved data → Restore saved data.** Then **Admin → Split proposals**: uncheck **Propose split awards** (this walk uses the single-vendor award). Optional: **Admin → Presentation pace** → check **Pause between agent steps** to follow the agent step by step.
+1. **Admin → Saved data → Restore saved data.** Then, before ordering, **Admin → Split proposals**: uncheck **Propose split awards** — with it on, the agent would split this order across vendors instead of placing the single-vendor award below. Optional: **Admin → Presentation pace** → check **Pause between agent steps** to follow the agent step by step.
 2. **Outside world › Customer shop**, acting as anyone: item `GLASS-1`, quantity `1300`, requester blank → **Place new order**. You should see `Order SO-1001 received` and two cases: `SO-1001-BAT-1` (1,200 battery cells short) and `SO-1001-SCR-9` (screws). The agent raises request `PR-1036` and waits: **Decisions** shows **Approve PR PR-1036** (press **Refresh** if the card hasn't landed yet).
-3. **Decisions**, acting as **Del Delegate** (covering Dana Director): open **Approve PR PR-1036** → **Approve**. The agent screens vendors and waits again: CinderVolt is blocked by CORP-02 at 63.2%, so all 1,200 cells go to Meridian Cellworks ($22,200.00).
+3. **Decisions**, acting as **Del Delegate** (covering Dana Director): open **Approve PR PR-1036** → **Approve**. The agent screens vendors and waits again: CinderVolt is blocked by CORP-02 at 63.2%, so all 1,200 cells go to Meridian Cellworks Inc ($22,200.00).
 4. **Decisions**, still Del Delegate: open **Approve PO PO-1037** → **Approve**. Its screening table shows CinderVolt blocked at 63.2% and Meridian passing. The agent now waits on the supplier.
 5. **Outside world › Suppliers › VND-1002 — Meridian Cellworks Inc**: **Acknowledge**, then **Send shipment notice** (leave the ASN number blank — the ERP mints `ASN-1035`; accept the suggested packing slip and the 12-carton plan `CTN-01`…`CTN-12`). You should see receipt `RCT-1035` posted. The pallet views now build in the background — read the dock note below before continuing.
 6. **Outside world › Dock**, truck card `Truck ASN-1035`: under **Rebuild views with a simulated problem** set `CTN-07` to **missing mark** → **Rebuild views**, and wait for `Rebuilt views ready: …`. Tick the offered pallet view(s) → **Send dock photos**, then wait for the outcome in the same card: it names `CTN-07` held for the missing handling mark while the other 11 pass. **Cases › SO-1001-BAT-1** names the hold.
@@ -221,7 +221,7 @@ Restore again first. As Maya Planner: **ERP › Procurement › Purchase requisi
 <details>
 <summary>A memo cuts the cap to 40%</summary>
 
-Restore again first. As Dana Director: **Governance › Memos** → **New memo** → author `Dana Director`, and paste this text: `China's share of our battery cells must come down. Effective 2026-12-01, no more than 40% of critical battery cells from any single country, trailing 12 months. Policy owner: Dana Director.` → **Submit memo**. Wait about 90–115 seconds (`Drafting the proposal…`) for the proposal card (rule `CORP-02`, cap `0.40`). As **Finn Finance** (a second owner — the author can't approve their own memo): fill **Test evidence (passing test names, one per line; required to approve)** with e.g. `ErpPolicyControlTests` → **Approve**. The pack publishes `CORP v2` → `v3` (see **Governance › Rules**). Now order 200 glasses as above: CinderVolt at 59.2% is over the new 40% cap, so that award is blocked.
+Restore again first. As Dana Director: **Governance › Memos** → **New memo** → author `Dana Director`, and paste this text: `Effective immediately, for critical battery cells (item BAT-1) only: no single country of origin may exceed 40% of cells received or on open order over the trailing 12 months. This replaces the 60% limit for BAT-1. Other items are unchanged.` → **Submit memo**. Wait about 90–115 seconds (`Drafting the proposal…`) for the proposal card (rule `CORP-02`, cap `0.40`). As **Finn Finance** (a second owner — the author can't approve their own memo): fill **Test evidence (passing test names, one per line; required to approve)** with e.g. `ErpPolicyControlTests` → **Approve**. The pack publishes `CORP v2` → `v3` (see **Governance › Rules**). Now order 200 glasses as above: CinderVolt at 59.2% is over the new 40% cap, so that award is blocked.
 
 </details>
 
@@ -232,20 +232,9 @@ Restore again first. As Dana Director: **Governance › Memos** → **New memo**
 
 </details>
 
-## For ERP people
+## The built-in ERP
 
-The built-in ERP follows Dynamics 365 Finance & Operations structures, simplified:
-
-| Here | D365 F&O |
-|---|---|
-| Purchase request → PO only from an approved PR | Purchase requisition → purchase order |
-| PO approval status and document status kept separately; vendor confirmation required before receiving | PurchTable approval and document status; PurchConfirmJour |
-| ASN with carton lines; product receipt carrying the supplier's packing-slip number | Packing slip / product receipt journal |
-| Inventory transactions with status: available, quarantined, rejected, consumed | InventTrans; quarantine as a status, not a table |
-| Vendor invoice lines split by quantity into accepted and held parts | Vendor invoice with held lines |
-| Payment journal: draft → approved → posted, bank snapshot, due dates from terms | Vendor payment journal and payment proposal |
-| Approvals as records (routed to, acted by, delegate, limit checked) with dated delegations | Workflow approval history; delegation |
-| Number sequences per document type, assigned at creation (SO, PR, PO) or at posting (receipt, invoice, payment) | Number sequences |
+Modelled on Dynamics 365 Finance & Operations document patterns: header and lines, separate approval and document statuses, number sequences, immutable posted documents.
 
 What the ERP refuses, for people and the agent alike: approving your own request; approving above your signing limit; a PO without an approved PR; ordering from a blocked vendor; paying held value; paying to an unverified or changed bank account; the same person approving an invoice and its payment; receiving on a closed PO; a duplicate supplier invoice number. Company rules add their refusals at the same control points.
 

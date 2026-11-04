@@ -13,8 +13,8 @@ Restore saved data. The runbook starts here every time.
 
 ## A. 1300 glasses with split proposals on (the full walk)
 
-Admin page first: in the Split proposals card the switch reads "Split
-proposals: on". Leave it on.
+Admin page first: in the Split proposals card the Propose split
+awards box is checked. Leave it checked.
 
 ### 1. Place the shop order
 
@@ -75,13 +75,16 @@ that would breach the cap is refused here with the rule and the share.
 Act as: the supplier clerk (any name). Screen: Outside, Supplier
 portal. One card per PO.
 
-Meridian card (PO-1038): press Acknowledge. In the shipment notice
-form enter ASN number ASN-2026-1300-A, packing slip SLIP-2026-1300-A,
-and 4 cartons; press Send shipment notice. Receipt RCT-1035 is posted.
+Ship Meridian first so the numbers below match. Meridian card
+(PO-1038): press Acknowledge. In the shipment notice form leave the
+ASN number blank — the ERP mints ASN-1035 on send; accept the
+suggested packing slip and the 4-carton plan; press Send shipment
+notice. Receipt RCT-1035 is posted.
 
-CinderVolt card (PO-1037): press Acknowledge. Enter ASN number
-ASN-2026-1300-B, packing slip SLIP-2026-1300-B, and 8 cartons; press
-Send shipment notice. Receipt RCT-1036 is posted.
+CinderVolt card (PO-1037): press Acknowledge. Leave the ASN number
+blank — the ERP mints ASN-1036; accept the suggested packing slip
+and the 8-carton plan; press Send shipment notice. Receipt RCT-1036
+is posted.
 
 ### 6. Dock photos and reads, both shipments
 
@@ -89,11 +92,11 @@ Act as: dock staff (any name). Screen: Outside, Dock panel. One truck
 card per ASN; each shipment is photographed from the scene library for
 its own carton count.
 
-Meridian truck (ASN-2026-1300-A): tick the offered pallet view and
+Meridian truck (ASN-1035): tick the offered pallet view and
 press Send dock photos. 4 carton reads come back, 0 cartons held, 0
 for review.
 
-CinderVolt truck (ASN-2026-1300-B): tick the offered pallet view and
+CinderVolt truck (ASN-1036): tick the offered pallet view and
 press Send dock photos. 8 carton reads come back, 0 cartons held, 0
 for review.
 
@@ -103,12 +106,14 @@ What the agent did carries the read counts.
 ### 7. Invoices and full payments
 
 Act as: the supplier clerk. Screen: Outside, Supplier portal.
-Meridian card: press Send an invoice, invoice INV-PO-1038 for the full
-400 units at $18.50. CinderVolt card: press Send an invoice, invoice
-INV-PO-1037 for the full 800 units at $14.20.
+Meridian card: in Send an invoice accept the suggested supplier
+invoice number (next in the vendor's own series) and the full 400
+units at $18.50; press Send invoice. CinderVolt card: accept the
+suggested number and the full 800 units at $14.20; press Send
+invoice.
 
 Act as: Del Delegate. Screen: Decisions page. Approve invoice
-INV-PO-1038 ($7,400.00) and invoice INV-PO-1037 ($11,360.00).
+VND-1002/… ($7,400.00) and invoice VND-1001/… ($11,360.00).
 
 Act as: Finn Finance. Screen: Decisions page. Two payment cards
 appear: approve payment PAY-1013 for $7,400.00, then payment PAY-1014
@@ -117,9 +122,9 @@ for $11,360.00. Both children reach Resolved; both invoices read Paid.
 ### 8. The screw sibling resolves
 
 The screw case ran alongside throughout: its purchase order PO-1036
-($40.00) is acknowledged, shipped, read, invoiced as INV-PO-1036, and
-paid the same way through the same three screens. Its case reaches
-Resolved.
+($40.00) is acknowledged, shipped, read, invoiced under the suggested
+vendor-series number, and paid the same way through the same three
+screens. Its case reaches Resolved.
 
 ### 9. Parent resolves; the customer message goes out once
 
@@ -132,7 +137,7 @@ resolved." The walk used 29 live model calls.
 ## B. 1300 glasses with split proposals off (single award, a held carton, partial pay)
 
 Restore the saved data again first. Admin page, Split proposals card:
-switch it off ("Split proposals: off"). Steps 1 and 2 repeat exactly:
+uncheck Propose split awards. Steps 1 and 2 repeat exactly:
 shop order for 1300 glasses as Maya Planner, then PR-1036 for 1,200
 cells approved as Del Delegate.
 
@@ -147,9 +152,10 @@ PO PO-1037": 1,200 cells, $22,200.00. Press Approve.
 ### 4. Acknowledge and ship 12 cartons
 
 Act as: the supplier clerk. Screen: Outside, Supplier portal.
-Press Acknowledge. Enter ASN number ASN-2026-1300-OFF, any packing
-slip, and 12 cartons (CTN-01 to CTN-12); press Send shipment notice.
-Receipt RCT-1035 is posted.
+Press Acknowledge. Leave the ASN number blank — the ERP mints
+ASN-1035 on send; accept the suggested packing slip and the 12-carton
+plan (CTN-01 to CTN-12); press Send shipment notice. Receipt RCT-1035
+is posted.
 
 ### 5. Stage a missing mark, then photograph
 
@@ -170,13 +176,13 @@ is raised for a mark hold.
 
 ### 6. Invoice for the whole shipment, first payment partial
 
-Act as: the supplier clerk. Screen: Outside, Supplier portal. Press
-Send an invoice: invoice INV-PO-1037 for the full 1,200 units at
-$18.50. Intake accepts $20,350.00 and holds $1,850.00 (100 units on
-CTN-07 at $18.50).
+Act as: the supplier clerk. Screen: Outside, Supplier portal. In
+Send an invoice accept the suggested supplier invoice number and the
+full 1,200 units at $18.50; press Send invoice. Intake accepts
+$20,350.00 and holds $1,850.00 (100 units on CTN-07 at $18.50).
 
 Act as: Del Delegate. Screen: Decisions page. Approve invoice
-INV-PO-1037.
+VND-1002/….
 
 Act as: Finn Finance. Screen: Decisions page. The payment card offers
 $20,350.00 of $22,200.00: press Approve (payment PAY-1013). The held
@@ -184,13 +190,14 @@ $1,850.00 stays open.
 
 ### 7. Reshot clears the carton; second payment closes it
 
-Act as: dock staff. Screen: Outside, Dock panel. Tick Reshot, pick
-CTN-07, press Mint close-up for picked cartons, then press Send
-reshot. The corrected read passes every check.
+Act as: dock staff. Screen: Outside, Dock panel. Tick Reshot
+(follow-up reads for picked cartons), tick CTN-07, press Mint
+close-up for picked cartons, then press Send reshot. The corrected
+read passes every check.
 
 Act as: Finn Finance. Screen: Decisions page. A second payment card
 offers the released $1,850.00: press Approve (payment PAY-1014).
-Settled reads $22,200.00 in full; invoice INV-PO-1037 reads Paid; the
+Settled reads $22,200.00 in full; the invoice reads Paid; the
 battery case reaches Resolved.
 
 The screw sibling resolves as in part A, and the customer message
@@ -223,8 +230,8 @@ Energy Ltd, $1,420.00. Press Approve.
 ### 3. Ship, photograph, read
 
 Act as: the supplier clerk. Screen: Outside, Supplier portal. Press
-Acknowledge; send the shipment notice with 1 carton. Receipt RCT-1035
-is posted.
+Acknowledge; leave the ASN number blank (the ERP mints ASN-1035) and
+send the shipment notice with 1 carton. Receipt RCT-1035 is posted.
 
 Act as: dock staff. Screen: Outside, Dock panel. The truck card
 offers one scene-library view for the single carton: tick it and
@@ -232,11 +239,12 @@ press Send dock photos. 1 read comes back, 0 held.
 
 ### 4. Invoice, one payment, customer message
 
-Act as: the supplier clerk. Screen: Outside, Supplier portal. Press
-Send an invoice: invoice INV-PO-1036 for 100 units at $14.20.
+Act as: the supplier clerk. Screen: Outside, Supplier portal. In
+Send an invoice accept the suggested supplier invoice number and
+100 units at $14.20; press Send invoice.
 
 Act as: Del Delegate. Screen: Decisions page. Approve invoice
-INV-PO-1036 ($1,420.00).
+VND-1001/… ($1,420.00).
 
 Act as: Finn Finance. Screen: Decisions page. Approve payment
 PAY-1013 for $1,420.00. Settled reads $1,420.00 in full; the case
@@ -249,13 +257,17 @@ The ERP control point applies to people and the agent alike. This
 continues the part B data (after its order resolved): China sits near
 the cap, so a big manual CinderVolt order must fail.
 
-Act as: Maya Planner. Screen: ERP, Purchase requisitions. Create
-request PR-1038 for 2,400 battery cells.
+Act as: Maya Planner. Screen: ERP, Purchase requisitions. Press New
+purchase requisition: requester Maya Planner, line BAT-1 × 2400,
+unit EA; press Create purchase requisition. Request PR-1038 is
+created in Draft — a hand-made request raises no Decisions card.
 
-Act as: Del Delegate. Screen: Decisions page. Approve PR-1038.
+Still Maya: open PR-1038, press Submit for approval, route to Del
+Delegate. Act as: Del Delegate. Open PR-1038, press Approve.
 
-Act as: Maya Planner. Screen: ERP, Purchase orders. Start a new
-purchase order for PR-1038 from CinderVolt Energy Ltd and submit it.
+Act as: Maya Planner. Screen: ERP, Purchase orders. Press New
+purchase order (or New purchase order from this PR on PR-1038),
+pick PR-1038 and CinderVolt Energy Ltd, press Create purchase order.
 The ERP refuses with "Refused." plus the sentence:
 
 > CORP-02 (CORP v2): Awarding 2,400 battery cells (BAT-1) to CN puts
@@ -269,7 +281,7 @@ country's share and the total.
 
 ## E. A memo moves the China cap to 40%
 
-Act as: Dana Director. Screen: Governance, Memos. Press Submit a memo
+Act as: Dana Director. Screen: Governance, Memos. Press Submit memo
 and file a memo cutting the China cap for battery cells to 40%. The
 agent drafts the rule proposal (rule CORP-02, cap 0.40) and routes it
 to a second owner.
@@ -288,5 +300,6 @@ is refused at the ERP; the live memo run recorded the sentence:
 > its share at 60.4% (6,000+90 of 10,000+90 battery cells), exceeding
 > the 40% country-of-origin cap.
 
-That run also placed a control purchase order to Meridian (PO-0001)
-to prove passing vendors still order.
+In the app, the follow-up order proves passing vendors still order:
+after the memo, a 200-glasses order awards its 100 cells to Meridian
+as PO-1036 ($1,850.00).
