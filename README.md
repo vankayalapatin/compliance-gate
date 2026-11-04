@@ -22,7 +22,7 @@ ComplianceGate is a control layer that lets an AI agent work inside the ERP a co
 
 It closes both gaps. Companies with years and millions invested in SAP, D365 or Oracle won't replace them to use agents, so ComplianceGate works alongside the ERP instead of replacing it. The ERP's controls stay in place, and people stay the approvers. The agent does the work. Company policy, from a memo or a regulation, becomes a rule enforced where money moves, for the agent and for people alike.
 
-Everything in this repo was built during the hackathon, Oct 26 – Nov 4, 2026, by a technical architect building on Dynamics 365 for a living. Purchasing is the first domain, because it's where policy meets money.
+Everything in this repo was built during the hackathon, Oct 26 – Nov 4, 2026, by a technical architect who designs Dynamics 365 for a living. Purchasing is the first domain, because it's where policy meets money.
 
 ## The design
 
@@ -60,12 +60,12 @@ The control layer works from two kinds of company material, both owned by named 
 
 **Rule packs** turn that material into enforceable checks. Each pack has an owner, a version, an adoption date and its public source:
 
-| Pack | Covers | Examples | Public source |
-|---|---|---|---|
-| **BAT-LI** | Shipping lithium-ion cells | Lithium-battery mark on every carton; damaged cartons to a person; label PO and lot must match the shipment | UN 38.3, IATA DGR |
-| **ELEC** | Electronics documents and payment | RoHS and REACH declarations from the supplier; ELEC-04, pay only what passed the dock | EU RoHS, REACH |
-| **SCR** | Supplier screening | Restricted-party screening (OFAC SDN); UFLPA entity screening | OFAC SDN, UFLPA |
-| **CORP** | Company sourcing policy, from memo MEMO-0001 | CORP-02, no country above 60% of a critical part over 12 months | MEMO-0001 |
+| Pack | Covers | Owner | Adopted | Examples | Public source |
+|---|---|---|---|---|---|
+| **BAT-LI** | Shipping lithium-ion cells | Maya Planner | v1 2026-01-01 (5 rules), v2 2026-11-02 (6 rules) | Lithium-battery mark on every carton; damaged cartons to a person; label PO and lot must match the shipment | UN 38.3, IATA DGR |
+| **ELEC** | Electronics documents and payment | Dana Director | v1 2026-01-01 (4 rules) | RoHS and REACH declarations from the supplier; ELEC-04, pay only what passed the dock | EU RoHS, REACH |
+| **SCR** | Supplier screening | Finn Finance | v1 2026-01-01 (2 rules) | Restricted-party screening (OFAC SDN); UFLPA entity screening | OFAC SDN, UFLPA |
+| **CORP** | Company sourcing policy, from memo MEMO-0001 | Dana Director | v2 2026-10-01 (2 rules) | CORP-02, no country above 60% of a critical part over 12 months | MEMO-0001 |
 
 Every block cites its rule, its version and its source, so a person can check why.
 
