@@ -1,6 +1,6 @@
-# Eval sources (DRAFT — companion to README.DRAFT.md)
+# Eval sources (companion to README.md)
 
-> Every number in the README draft traces to a file below, grouped by section. Items marked "author note" came from the author, not the repo.
+> Every number in the README traces to a file below, grouped by section. Items marked "author note" came from the author, not the repo.
 
 ## Opening and product intro
 
@@ -47,7 +47,14 @@
 
 ## Agent results
 
-- Pending author fill-in; no files yet.
+- `docs/ONE-ORDER-RUNBOOK.md` — recorded walks used 29, 21, and 12 live model calls (split order, held carton, small top-up).
+- `Gate.Web/ViewModels/ScorecardVm.cs` — per-case tool calls, refused calls with reasons, rule steps, model calls, tokens, and cost on the case scorecard.
+
+## Memo proposals
+
+- `Gate.Eval/Agent/MemoLiveDemoTests.cs` — Asian-suppliers question-back; sustainability and UFLPA not-mappable reports with the gap named.
+- `Gate.Eval/Agent/MemoCapLiveTests.cs` — 40% cap proposal tightening CORP-02; Chinese order refused, Mexican control passes.
+- Proposal time/tokens (about 90–115 s, roughly 1.8K in / 8–11K out per memo): observed in Live memo-test output on November 3; rerun the Live memo tests to reproduce, no committed file.
 
 ## How this was built
 

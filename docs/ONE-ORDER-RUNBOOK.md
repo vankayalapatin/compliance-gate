@@ -43,16 +43,15 @@ proposes a split instead of a single award.
 Act as: Del Delegate. Screen: Decisions page.
 The card reads "Approve split award (PR-1036)" and carries the plan:
 
-> Split 1,200 battery cells (BAT-1): 300 to CinderVolt Energy Ltd, 900
-> to Meridian Cellworks Inc. Final shares: China 55.2%, Mexico 42.2%.
-> Split $20,910.00 against a single award of $22,200.00: saves
-> $1,290.00. Agent note: 300x14.2+900x18.5=20910 beats single 22200
+> Split 1,200 battery cells (BAT-1): 800 to CinderVolt Energy Ltd, 400
+> to Meridian Cellworks Inc. Final shares: China 59.6%, Mexico 37.7%.
+> Split $18,760.00 against a single award of $22,200.00: saves
+> $3,440.00. Agent note: 800x14.2+400x18.5=18760 beats single 22200
 
 Press Approve. (The agent proposes a fresh plan each run and code
 checks every line plus the combined country shares before the card
-appears; an earlier live run agreed 800 CinderVolt plus 400 Meridian
-at $18,760 against $22,200, saving $3,440 with China at 59.6%. Any
-plan shown always beats the single-vendor award or it never appears.)
+appears. Any plan shown always beats the single-vendor award or it
+never appears.)
 
 Approving creates two child cases under SO-1001-BAT-1. The parent case
 page lists both children in the Split orders card with their progress;
@@ -63,10 +62,10 @@ each child links back to the parent.
 Act as: Del Delegate. Screen: Decisions page.
 Two cards appear:
 
-- "Approve PO PO-1037": 300 cells from CinderVolt Energy Ltd,
-  $4,260.00. Press Approve.
-- "Approve PO PO-1038": 900 cells from Meridian Cellworks Inc,
-  $16,650.00. Press Approve.
+- "Approve PO PO-1037": 800 cells from CinderVolt Energy Ltd,
+  $11,360.00. Press Approve.
+- "Approve PO PO-1038": 400 cells from Meridian Cellworks Inc,
+  $7,400.00. Press Approve.
 
 Each PO passes the ERP country-cap check on its own at creation; a PO
 that would breach the cap is refused here with the rule and the share.
@@ -78,10 +77,10 @@ portal. One card per PO.
 
 Meridian card (PO-1038): press Acknowledge. In the shipment notice
 form enter ASN number ASN-2026-1300-A, packing slip SLIP-2026-1300-A,
-and 9 cartons; press Send shipment notice. Receipt RCT-1035 is posted.
+and 4 cartons; press Send shipment notice. Receipt RCT-1035 is posted.
 
 CinderVolt card (PO-1037): press Acknowledge. Enter ASN number
-ASN-2026-1300-B, packing slip SLIP-2026-1300-B, and 3 cartons; press
+ASN-2026-1300-B, packing slip SLIP-2026-1300-B, and 8 cartons; press
 Send shipment notice. Receipt RCT-1036 is posted.
 
 ### 6. Dock photos and reads, both shipments
@@ -91,11 +90,11 @@ card per ASN; each shipment is photographed from the scene library for
 its own carton count.
 
 Meridian truck (ASN-2026-1300-A): tick the offered pallet view and
-press Send dock photos. 9 carton reads come back, 0 cartons held, 0
+press Send dock photos. 4 carton reads come back, 0 cartons held, 0
 for review.
 
 CinderVolt truck (ASN-2026-1300-B): tick the offered pallet view and
-press Send dock photos. 3 carton reads come back, 0 cartons held, 0
+press Send dock photos. 8 carton reads come back, 0 cartons held, 0
 for review.
 
 Open either child case: the Decisions card shows no dock reviews, and
@@ -105,15 +104,15 @@ What the agent did carries the read counts.
 
 Act as: the supplier clerk. Screen: Outside, Supplier portal.
 Meridian card: press Send an invoice, invoice INV-PO-1038 for the full
-900 units at $18.50. CinderVolt card: press Send an invoice, invoice
-INV-PO-1037 for the full 300 units at $14.20.
+400 units at $18.50. CinderVolt card: press Send an invoice, invoice
+INV-PO-1037 for the full 800 units at $14.20.
 
 Act as: Del Delegate. Screen: Decisions page. Approve invoice
-INV-PO-1038 ($16,650.00) and invoice INV-PO-1037 ($4,260.00).
+INV-PO-1038 ($7,400.00) and invoice INV-PO-1037 ($11,360.00).
 
 Act as: Finn Finance. Screen: Decisions page. Two payment cards
-appear: approve payment PAY-1013 for $16,650.00, then payment PAY-1014
-for $4,260.00. Both children reach Resolved; both invoices read Paid.
+appear: approve payment PAY-1013 for $7,400.00, then payment PAY-1014
+for $11,360.00. Both children reach Resolved; both invoices read Paid.
 
 ### 8. The screw sibling resolves
 
