@@ -1,6 +1,7 @@
 # Mini-ERP Design (D365 F&O thinking, simplified)
 
-Status: **Design for review. No code.** Lead approves schema before build.
+Status: **Implemented in `Gate.Erp/`.** This doc is the design record;
+behavior lives in code.
 Scope: `Gate.Erp/` tables only. Contracts (`Gate.Contracts/`, `schema.md`, adapter interface) change in the lead session only — gaps are flagged in §9, not fixed here.
 
 ## 1. How to read this doc

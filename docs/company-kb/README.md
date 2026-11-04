@@ -1,7 +1,8 @@
-# Company Knowledge Base + Memo-to-Rule (Design)
+# Company Knowledge Base + Memo-to-Rule
 
-Status: **Design only, not built.** No code exists for this feature. All
-names, numbers, and dates are fictional and mirror the demo scenario.
+Status: **Built.** The KB and memo pipeline are implemented and tested;
+this doc set is the design record. All names, numbers, and dates are
+fictional and mirror the company data in `docs/COMPANY-DATA.md`.
 
 ## What this is
 
@@ -45,7 +46,7 @@ tested proposals become versioned rules. See
 
 ## Boundaries
 
-- Sibling docs (`docs/DECISIONS.md`, `PRODUCT.md`,
+- Sibling docs (`docs/DECISIONS.md`, `../archive/PRODUCT.md`,
   `ERP-DESIGN.md`) plus `docs/DATA-MODEL.md`, `docs/COMPANY-DATA.md`,
   `schema.md`, and `Gate.Compliance/Packs/` are read-only for this work.
   (`docs/archive/` holds frozen early-demo history.)

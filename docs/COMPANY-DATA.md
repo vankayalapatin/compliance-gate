@@ -1,10 +1,10 @@
-# ComplianceGate — Company Data (tonight's build scope)
+# ComplianceGate — Company Data
 
-The company the product runs for. Design for the implementation step; no
-code changes here. Business today is **November 1, 2026**. Every number
-and policy below is carried from the current build; nothing is retuned.
-Items marked [A] are assumptions flagged for correction. Tonight's scope
-replaces the full proposal: anything not listed in the build brief waits.
+The company the product runs for. Company business date is
+**November 1, 2026**. Every number and policy below is carried from the
+current build; nothing is retuned. Items marked [A] are assumptions
+flagged for correction. Scope is the shipped baseline: anything not
+listed here waits.
 
 ## 1. Company identity (ERP `company_info`, legal entity LE-1)
 

@@ -8,8 +8,12 @@ scenarios/run-manifest.json
 # Local sqlite databases (live app state stays untracked).
 **/*.db
 **/*.db-journal
+**/*.db-shm
+**/*.db-wal
 # Exception: the shipped baseline snapshot pair.
 !Gate.Web/data/baseline/erp.db
+# Minted dock views from live walks (reproducible in-app); originals stay tracked.
+assets/dock/ASN-*.jpg
 # Agent check runner traffic (requests, results, logs).
 .agent-checks/inbox/*.json
 .agent-checks/outbox/*.json

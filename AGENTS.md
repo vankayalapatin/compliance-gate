@@ -51,7 +51,7 @@ and agents alike.
   has a test, including its failure path.
 
 Spec: `docs/DATA-MODEL.md` plus `docs/COMPANY-DATA.md`. Audit:
-`docs/AUDIT-DATA.md`. Early-demo history, frozen, not spec:
+`docs/archive/AUDIT-DATA.md`. Early-demo history, frozen, not spec:
 `docs/archive/`.
 
 ## Standing roles

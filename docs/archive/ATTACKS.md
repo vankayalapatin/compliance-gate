@@ -7,7 +7,7 @@ the stretch list).
 
 Source of decisions: `docs/DATA-MODEL.md` plus `docs/COMPANY-DATA.md`.
 Early-demo history: `docs/archive/` (frozen). Product view:
-`docs/PRODUCT.md`. Decision log: `docs/DECISIONS.md`. ERP refusals:
+`docs/archive/PRODUCT.md`. Decision log: `docs/DECISIONS.md`. ERP refusals:
 `docs/ERP-DESIGN.md` §8.
 
 ## 1. Why this doc exists

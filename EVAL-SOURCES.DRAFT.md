@@ -4,7 +4,7 @@
 
 ## Opening and product intro
 
-- `docs/PRODUCT.md` — problem, story, gates, surfaces.
+- `docs/archive/PRODUCT.md` — problem, story, gates, surfaces.
 - `docs/DECISIONS.md` — decision-by-decision record behind the product claims.
 - `AGENTS.md` — two-db system of record, single adapter interface, human money approvals.
 
@@ -53,7 +53,7 @@
 
 - `AGENTS.md` — 6 role skills, folder ownership, contract rule.
 - `.agents/skills/gate-erp-architect/SKILL.md`, `.agents/skills/gate-compliance-engineer/SKILL.md`, `.agents/skills/gate-vision-assets/SKILL.md`, `.agents/skills/gate-agent-engineer/SKILL.md`, `.agents/skills/gate-ui-engineer/SKILL.md`, `.agents/skills/gate-reviewer/SKILL.md` — what each role owns.
-- `docs/PRODUCT.md`, `docs/DECISIONS.md`, `assets/README.md` — Spark reading plus tool-calling orchestration; C# keeps verdicts and controls.
+- `docs/archive/PRODUCT.md`, `docs/DECISIONS.md`, `assets/README.md` — Spark reading plus tool-calling orchestration; C# keeps verdicts and controls.
 - `scripts/agent-check.sh` — checks run outside the sandbox because local sockets are blocked there (header comment); script authorship is an author note.
 - Glimmer note (local MacBook trial too slow; hackathon key served only Spark Open): author note, no repo file. Repo names Glimmer only as the later second model in `assets/README.md`, `docs/DECISIONS.md`, `assets/dock-eval-50/answer-key.json`.
 - SAM 3.1 rationale: author note; repo mentions the id only in the model-discovery list in `assets/key-test.md`.
