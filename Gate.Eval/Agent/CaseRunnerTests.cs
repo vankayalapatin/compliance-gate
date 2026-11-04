@@ -405,6 +405,7 @@ public sealed class CaseRunnerTests
             e.Kind == CaseEventKind.Note && e.Summary.StartsWith("Pre-pay gate:", StringComparison.Ordinal));
         Assert.Contains("$120.00 held", prePay.Summary, StringComparison.Ordinal);
         Assert.Contains("quarantine", prePay.Summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("awaiting the dock check", prePay.Summary, StringComparison.Ordinal);
         Assert.Contains("The other $960.00 can be paid.", prePay.Summary, StringComparison.Ordinal);
         Assert.NotNull(pay1.DocumentNumber);
         await h.Runner.ResolveDecisionAsync(ctx.CaseId, pay1.DecisionId, true, "finance", "ok");

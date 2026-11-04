@@ -180,6 +180,30 @@ public sealed class ErpDockGateTests
     }
 
     [Fact]
+    public async Task QuarantinedLotHoldsExactlyItsOwnValue()
+    {
+        // One carton passed, one held and quarantined: the held carton is
+        // both unpassed and quarantined, but the match must hold its value
+        // once, not once per taint.
+        var w = await ReceivedWorldAsync(SeededErp.Battery, "V-B", "INV-D6");
+        SavePass(w, SeededErp.Battery, "CTN-A1");
+        var hold = await w.Erp.SetHoldAsync(
+            "RELABEL", "missing mark", DockEvaluator.MarkRuleId, w.CaseId,
+            "planner", "Receipt", null, w.PoLineRef, "LOT-A2", "CTN-A2", Idem());
+        await w.Erp.QuarantineLotAsync("LOT-A2", hold.HoldId, "planner", Idem());
+
+        await w.Erp.RecordMatchResultAsync("V-B", "INV-D6",
+            [new LineMatchResult(w.PoLineRef, true, "ok")], Idem());
+        var invoice = await InvoiceOf(w, "V-B");
+        Assert.Equal(2, invoice.Lines.Count);
+        var accepted = Assert.Single(invoice.Lines, l => l.Disposition == LineDisposition.Accepted);
+        Assert.Equal(40m, accepted.Quantity);
+        var held = Assert.Single(invoice.Lines, l => l.Disposition == LineDisposition.Held);
+        Assert.Equal(40m, held.Quantity);
+        Assert.StartsWith("Quarantine hold", held.HoldReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task NonCriticalScrewHeldIdentically()
     {
         var w = await ReceivedWorldAsync(SeededErp.Screw, "V-C", "INV-D4");

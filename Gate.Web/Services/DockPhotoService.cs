@@ -49,10 +49,11 @@ public sealed class DockPhotoService
     }
 
     // Dock-camera counter rules for the shipped image set: *-base.jpg files
-    // are the unlabeled working originals and are never offered; IMG-04 is
-    // the carton close-up and is reshot-only; every other labeled photo is
-    // a pallet view for the first dock check. These are presentation facts
-    // about the shipped photo set, kept in this one place.
+    // are the unlabeled working originals and are never offered; carton
+    // close-ups (the legacy IMG-04 plus minted *-CU-carton files) are
+    // reshot-only; every other labeled photo is a pallet view for the
+    // first dock check. These are presentation facts about the shipped
+    // photo set, kept in this one place.
     public static bool IsBaseImage(string fileName) =>
         fileName.EndsWith("-base.jpg", StringComparison.OrdinalIgnoreCase)
         || fileName.EndsWith("-base.jpeg", StringComparison.OrdinalIgnoreCase);
@@ -61,7 +62,8 @@ public sealed class DockPhotoService
     {
         var name = Path.GetFileNameWithoutExtension(fileName);
         return string.Equals(name, "IMG-04", StringComparison.OrdinalIgnoreCase)
-            || name.EndsWith("-IMG-04", StringComparison.OrdinalIgnoreCase);
+            || name.EndsWith("-IMG-04", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("-CU-", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Counter images for one dock-camera mode: pallet views for a

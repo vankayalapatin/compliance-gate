@@ -1361,7 +1361,7 @@ public partial class CaseRunner
         AsnDto? asn = current.AsnNumber is null
             ? null
             : await _erp.GetAsnAsync(current.AsnNumber, ct).ConfigureAwait(false);
-        var dockPending = DockPendingLots(current.CaseId, asn);
+        var dockPending = DockPendingLots(current.CaseId, asn, quarantined);
         var reviews = file.Decisions
             .Where(d => d.Status == DecisionStatus.Pending
                 && d.Kind is DecisionKind.DockReview or DecisionKind.DamageReview)
@@ -1379,9 +1379,12 @@ public partial class CaseRunner
     }
 
     /// <summary>Lots on the case's ASN cartons without a complete all-pass
-    /// dock verdict. No ASN (or no cartons) means nothing pending: nothing
-    /// photographable was declared.</summary>
-    private IReadOnlyList<string> DockPendingLots(string caseId, AsnDto? asn)
+    /// dock verdict. Quarantined lots are excluded: they already hold under
+    /// quarantine, so naming them pending too would count one carton twice.
+    /// No ASN (or no cartons) means nothing pending: nothing photographable
+    /// was declared.</summary>
+    private IReadOnlyList<string> DockPendingLots(
+        string caseId, AsnDto? asn, IReadOnlyList<string> quarantined)
     {
         if (asn is null || asn.Cartons.Count == 0)
         {
@@ -1401,9 +1404,11 @@ public partial class CaseRunner
             }
         }
 
+        var quarantinedSet = quarantined.ToHashSet(StringComparer.Ordinal);
         return asn.Cartons
             .Where(c => !passed.Contains(c.CartonId))
             .Select(c => c.LotRef)
+            .Where(lot => !quarantinedSet.Contains(lot))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(l => l, StringComparer.Ordinal)
             .ToList();

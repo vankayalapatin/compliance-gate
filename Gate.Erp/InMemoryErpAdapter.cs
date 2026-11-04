@@ -1245,7 +1245,9 @@ public sealed class InMemoryErpAdapter : IErpAdapter
 
     /// <summary>Dock-pending received quantity per PO line: receipt lots on
     /// ASN-declared cartons the platform has not passed yet, net of their
-    /// quarantine and rejections. Empty without a platform context or
+    /// rejections. Quarantined lots are excluded: their value already holds
+    /// under quarantine (the PO line carries it), so counting them here
+    /// would hold one carton twice. Empty without a platform context or
     /// without declared cartons.</summary>
     private async Task<IReadOnlyDictionary<string, decimal>> DockPendingQtyByLineAsync(
         string vendorId, string supplierInvoiceNumber, CancellationToken ct)
@@ -1278,6 +1280,14 @@ public sealed class InMemoryErpAdapter : IErpAdapter
             .Where(kv => !passedSet.Contains(kv.Key))
             .Select(kv => kv.Value)
             .ToHashSet(StringComparer.Ordinal);
+        var quarantinedLots = _inventory.Values
+            .SelectMany(list => list)
+            .Where(t => t.Status == InventoryStatus.Quarantined && pendingLots.Contains(t.LotRef))
+            .GroupBy(t => t.LotRef, StringComparer.Ordinal)
+            .Where(g => g.Sum(t => t.Quantity) > 0)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        pendingLots.ExceptWith(quarantinedLots);
         if (pendingLots.Count == 0)
         {
             return empty;

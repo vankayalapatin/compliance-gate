@@ -210,4 +210,80 @@ public sealed class EfCorePolicyControlTests
             [new InvoiceKey("V-C", "INV-E1")], null, RecordSource.Human, "planner", Idem());
         Assert.Equal(100 * 1m, draft.Lines.Sum(l => l.Amount));
     }
+
+    [Fact]
+    public async Task QuarantinedLotHoldsExactlyItsOwnValue()
+    {
+        // One carton passed, one held and quarantined: the held carton is
+        // both unpassed and quarantined, but the match must hold its value
+        // once, not once per taint. Same hook as the fake, against sqlite.
+        await using var db = await EfCoreTestDb.CreateAsync();
+        var dir = NewDir();
+        var options = new DbContextOptionsBuilder<ErpDbContext>()
+            .UseSqlite($"Data Source={db.FilePath}")
+            .Options;
+        var erp = new EfCoreErpAdapter(options, new ErpPolicy(), new CasePolicyContext(dir));
+        var pr = await erp.CreatePrAsync("planner", RecordSource.Human, "planner",
+            [new PurchaseRequisitionLine("SCR-9", 100, "EA")], Idem());
+        if (pr.Status == PrStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PR", pr.PrNumber, "approver", "planner", Idem());
+            await erp.RecordApprovalAsync("PR", pr.PrNumber, "delegate", true, "ok", Idem());
+        }
+
+        var po = await erp.CreatePoAsync(pr.PrNumber, "V-C", RecordSource.Human, "planner", Idem());
+        if (po.ApprovalStatus == PoApprovalStatus.Draft)
+        {
+            await erp.SubmitForApprovalAsync("PO", po.PoNumber, "delegate", "planner", Idem());
+            await erp.RecordApprovalAsync("PO", po.PoNumber, "delegate", true, "ok", Idem());
+            po = (await erp.GetPurchaseOrderAsync(po.PoNumber))!;
+        }
+
+        var line = po.Lines.Single(l => l.ItemId == "SCR-9");
+        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.DateTime);
+        await erp.RecordVendorConfirmationAsync(po.PoNumber, today, RecordSource.Vendor, "V-C",
+            po.Lines.Select(l => new VendorConfirmLine(l.PoLineRef, l.QtyOrdered, null)).ToList(), Idem());
+        var asn = await erp.CreateAsnAsync(null, po.PoNumber, RecordSource.Human, "planner",
+            [new AsnCarton("CTN-Q1", "SCR-9", 50, "LOT-Q1"),
+             new AsnCarton("CTN-Q2", "SCR-9", 50, "LOT-Q2")], Idem());
+        await erp.PostReceiptAsync(po.PoNumber, "PACK-Q1", RecordSource.Human, "planner",
+            [new ReceiptLine(line.PoLineRef, 50, 0, 0, "LOT-Q1", null),
+             new ReceiptLine(line.PoLineRef, 50, 0, 0, "LOT-Q2", null)], Idem());
+        await erp.CreateInvoiceAsync("INV-Q1", "V-C", po.PoNumber, RecordSource.Human, "planner",
+            [new InvoiceLineInput(line.PoLineRef, 100, 1m)], Idem());
+        await erp.RecordMatchResultAsync("V-C", "INV-Q1",
+            [new LineMatchResult(line.PoLineRef, true, "ok")], Idem());
+
+        var now = DateTimeOffset.UtcNow;
+        CaseStore.Save(dir, new CaseFile(
+            new Case("DOCK-INV-Q1", "SO-DOCK", "SCR-9", "ef-dock-test", CaseStage.ReceiptPosted,
+                now, now, null, po.PoNumber, asn.AsnNumber, null,
+                [new InvoiceKey("V-C", "INV-Q1")], [], null, null),
+            [], []));
+        var reads = new List<CartonRead>
+        {
+            new("CTN-Q1", "SCR-9", po.PoNumber, "LOT-Q1", 50, true, true, "UN3480",
+                false, false, false, null, "img-CTN-Q1", 0.95m),
+        };
+        var verdicts = new DockEvaluator().EvaluateDock(
+            ["CTN-Q1"], reads, po.PoNumber,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["CTN-Q1"] = "LOT-Q1" });
+        Assert.All(verdicts.Values, list => Assert.All(list, v => Assert.Equal(VerdictKind.Pass, v.Kind)));
+        CaseStore.SaveDock(dir, new DockEvidence("DOCK-INV-Q1", [], verdicts, DateTimeOffset.UtcNow));
+
+        var hold = await erp.SetHoldAsync("RELABEL", "missing mark", DockEvaluator.MarkRuleId,
+            "DOCK-INV-Q1", "planner", "Receipt", null, line.PoLineRef, "LOT-Q2", "CTN-Q2", Idem());
+        await erp.QuarantineLotAsync("LOT-Q2", hold.HoldId, "planner", Idem());
+
+        await erp.RecordMatchResultAsync("V-C", "INV-Q1",
+            [new LineMatchResult(line.PoLineRef, true, "ok")], Idem());
+        var invoice = await erp.GetInvoiceAsync("V-C", "INV-Q1");
+        Assert.NotNull(invoice);
+        Assert.Equal(2, invoice.Lines.Count);
+        var accepted = Assert.Single(invoice.Lines, l => l.Disposition == LineDisposition.Accepted);
+        Assert.Equal(50m, accepted.Quantity);
+        var held = Assert.Single(invoice.Lines, l => l.Disposition == LineDisposition.Held);
+        Assert.Equal(50m, held.Quantity);
+        Assert.StartsWith("Quarantine hold", held.HoldReason, StringComparison.Ordinal);
+    }
 }

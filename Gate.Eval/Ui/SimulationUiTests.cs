@@ -138,17 +138,21 @@ public sealed class SimulationUiTests
     {
         // Dock-camera modes: a first check offers pallet views, a reshot
         // offers the close-up only, and base originals appear in neither.
+        // Minted close-ups (*-CU-carton) are reshot-only like the legacy
+        // IMG-04: without the split the reshot send drops them and the
+        // cartons can only go out as whole-ASN dock photos.
         var files = new[]
         {
             "IMG-01.jpg", "IMG-02.jpg", "IMG-03.jpg", "IMG-04.jpg",
             "IMG-01-base.jpg", "IMG-02-base.jpg", "IMG-03-base.jpg",
+            "ASN-T1-SCENE-2.jpg", "ASN-T1-SCENE-2-CU-CTN-2.jpg",
         };
 
         Assert.Equal(
-            new[] { "IMG-01.jpg", "IMG-02.jpg", "IMG-03.jpg" },
+            new[] { "ASN-T1-SCENE-2.jpg", "IMG-01.jpg", "IMG-02.jpg", "IMG-03.jpg" },
             DockPhotoService.OfferedCounterImages(files, reshot: false));
         Assert.Equal(
-            new[] { "IMG-04.jpg" },
+            new[] { "ASN-T1-SCENE-2-CU-CTN-2.jpg", "IMG-04.jpg" },
             DockPhotoService.OfferedCounterImages(files, reshot: true));
     }
 

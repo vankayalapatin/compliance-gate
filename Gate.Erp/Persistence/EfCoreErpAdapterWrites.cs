@@ -997,7 +997,9 @@ public sealed partial class EfCoreErpAdapter
 
     /// <summary>Dock-pending received quantity per PO line: receipt lots on
     /// ASN-declared cartons the platform has not passed yet, net of their
-    /// quarantine and rejections. Empty without a platform context or
+    /// rejections. Quarantined lots are excluded: their value already holds
+    /// under quarantine (the PO line carries it), so counting them here
+    /// would hold one carton twice. Empty without a platform context or
     /// without declared cartons.</summary>
     private async Task<IReadOnlyDictionary<string, decimal>> DockPendingQtyByLineAsync(
         ErpDbContext db, string poNumber, IReadOnlyList<InvoiceKey> invoices, CancellationToken ct)
@@ -1034,6 +1036,15 @@ public sealed partial class EfCoreErpAdapter
             .Where(kv => !passedSet.Contains(kv.Key))
             .Select(kv => kv.Value)
             .ToHashSet(StringComparer.Ordinal);
+        // Client-side sum: SQLite cannot aggregate decimals server-side.
+        var quarantinedLots = (await db.InventoryTransactions
+            .Where(t => t.Status == nameof(InventoryStatus.Quarantined) && pendingLots.Contains(t.LotRef))
+            .ToListAsync(ct).ConfigureAwait(false))
+            .GroupBy(t => t.LotRef, StringComparer.Ordinal)
+            .Where(g => g.Sum(t => t.Quantity) > 0)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        pendingLots.ExceptWith(quarantinedLots);
         if (pendingLots.Count == 0)
         {
             return empty;

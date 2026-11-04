@@ -322,6 +322,25 @@ public partial class CaseRunner
         RequirePhotoProvenance(input.CaseId, input.Reads);
         var outcome = await EvaluateCartonsAsync(file, input.CartonIds, input.Reads, isReshot: true, ct)
             .ConfigureAwait(false);
+        // The reshot outcome persists before anything releases: the
+        // held-line release runs the releasable gate, which reads this
+        // evidence to see the carton as passed. Releasing first leaves
+        // the carton dock-pending, and the gate refuses its own reshot.
+        var reshot = new HashSet<string>(input.CartonIds, StringComparer.Ordinal);
+        var prior = CaseStore.LoadDock(_cacheDir, input.CaseId);
+        var mergedReads = (prior?.Reads ?? [])
+            .Where(r => !reshot.Contains(r.CartonId))
+            .Concat(input.Reads)
+            .ToList();
+        var mergedVerdicts = new Dictionary<string, IReadOnlyList<Verdict>>(
+            prior?.Verdicts ?? new Dictionary<string, IReadOnlyList<Verdict>>(),
+            StringComparer.Ordinal);
+        foreach (var (cartonId, verdicts) in outcome)
+        {
+            mergedVerdicts[cartonId] = verdicts;
+        }
+
+        CaseStore.SaveDock(_cacheDir, new DockEvidence(input.CaseId, mergedReads, mergedVerdicts, DateTimeOffset.UtcNow));
         var reloaded = CaseStore.Load(_cacheDir, input.CaseId)
             ?? throw new InvalidOperationException($"Case {input.CaseId} vanished during the reshot.");
         var work = new CaseWork(reloaded);
@@ -347,21 +366,6 @@ public partial class CaseRunner
         }
 
         work.Save(_cacheDir);
-        var reshot = new HashSet<string>(input.CartonIds, StringComparer.Ordinal);
-        var prior = CaseStore.LoadDock(_cacheDir, input.CaseId);
-        var mergedReads = (prior?.Reads ?? [])
-            .Where(r => !reshot.Contains(r.CartonId))
-            .Concat(input.Reads)
-            .ToList();
-        var mergedVerdicts = new Dictionary<string, IReadOnlyList<Verdict>>(
-            prior?.Verdicts ?? new Dictionary<string, IReadOnlyList<Verdict>>(),
-            StringComparer.Ordinal);
-        foreach (var (cartonId, verdicts) in outcome)
-        {
-            mergedVerdicts[cartonId] = verdicts;
-        }
-
-        CaseStore.SaveDock(_cacheDir, new DockEvidence(input.CaseId, mergedReads, mergedVerdicts, DateTimeOffset.UtcNow));
         return outcome;
     }
 

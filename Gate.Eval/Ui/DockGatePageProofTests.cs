@@ -50,9 +50,10 @@ public sealed class DockGatePageProofTests
         };
 
     private static DockCartonRead Read(
-        string carton, string lot, int units, string poNumber) =>
-        new(carton, SeededErp.Screw, poNumber, lot, units, true, true, "UN3480",
-            false, false, false, null, $"img-{carton}", 0.95m);
+        string carton, string lot, int units, string poNumber,
+        bool mark = true, string? image = null) =>
+        new(carton, SeededErp.Screw, poNumber, lot, units, mark, mark, "UN3480",
+            false, false, false, null, image ?? $"img-{carton}", 0.95m);
 
     /// <summary>Drives the two-case walk on a policy-wired ERP: battery
     /// parks on its PR approval while screw reaches a receipted two-carton
@@ -215,6 +216,60 @@ public sealed class DockGatePageProofTests
         var draft = await actions.CreatePaymentDraftAsync(
             [new InvoiceKey("V-C", "INV-G2")], null, "planner");
         Assert.True(draft.Ok, draft.Message);
+    }
+
+    [Fact]
+    public async Task ReshotReleasesHoldQuarantineAndHeldValueOnPages()
+    {
+        // One carton held for a missing mark, then a reshot of that carton
+        // only: intake holds exactly the held carton's value, the reshot
+        // re-judges only the picked carton, and the pass releases the hold,
+        // the quarantine, and the held value on the policy-wired ERP.
+        // Regression: the reshot released before its evidence saved, so the
+        // releasable gate saw the carton as still dock-pending and refused
+        // its own reshot.
+        var flow = await DriveDockStageAsync();
+        var po = await flow.Erp.GetPurchaseOrderAsync(flow.ScrewPoNumber);
+        Assert.NotNull(po);
+        var poLine = Assert.Single(po.Lines);
+
+        var verdicts = await flow.Runner.OnDockReadsAsync(
+            flow.ScrewCaseId,
+            [Read("CTN-G1", "LOT-G1", 75, flow.ScrewPoNumber),
+             Read("CTN-G2", "LOT-G2", 75, flow.ScrewPoNumber, mark: false)]);
+        Assert.All(verdicts["CTN-G1"], v => Assert.Equal(VerdictKind.Pass, v.Kind));
+        Assert.Contains(verdicts["CTN-G2"],
+            v => v.Kind == VerdictKind.Hold && v.RuleId == DockEvaluator.MarkRuleId);
+
+        var intake = await flow.Runner.OnInvoiceAsync(new SupplierInvoiceInput(
+            flow.ScrewCaseId, "INV-G3", "V-C", flow.ScrewPoNumber,
+            [new SupplierInvoiceLineInput(poLine.PoLineRef, 150, poLine.UnitPrice)]));
+        Assert.True(intake.Persisted);
+        Assert.Equal(75 * poLine.UnitPrice, intake.AcceptedValue);
+        Assert.Equal(75 * poLine.UnitPrice, intake.HeldValue);
+
+        var reshot = await flow.Runner.OnReshotAsync(new ReshotInput(
+            flow.ScrewCaseId, ["CTN-G2"],
+            [Read("CTN-G2", "LOT-G2", 75, flow.ScrewPoNumber, image: "img-reshot-CTN-G2")]));
+        Assert.Equal("CTN-G2", Assert.Single(reshot.Keys));
+        Assert.All(reshot["CTN-G2"], v => Assert.Equal(VerdictKind.Pass, v.Kind));
+
+        var open = await flow.Erp.GetOpenHoldsAsync(null);
+        Assert.DoesNotContain(open,
+            h => string.Equals(h.CaseId, flow.ScrewCaseId, StringComparison.Ordinal));
+        var released = await flow.Erp.GetPurchaseOrderAsync(flow.ScrewPoNumber);
+        Assert.NotNull(released);
+        Assert.Equal(0, Assert.Single(released.Lines).QtyQuarantined);
+        var invoice = await flow.Erp.GetInvoiceAsync("V-C", "INV-G3");
+        Assert.NotNull(invoice);
+        Assert.Equal(150 * poLine.UnitPrice, invoice.Lines
+            .Where(l => l.Disposition == LineDisposition.Accepted)
+            .Sum(l => l.Quantity * l.UnitPrice));
+        Assert.Empty(invoice.Lines.Where(l => l.Disposition == LineDisposition.Held));
+
+        var file = CaseStore.Load(flow.CaseDir, flow.ScrewCaseId);
+        Assert.NotNull(file);
+        Assert.Contains(file.Events, e => e.Kind == CaseEventKind.HoldReleased);
     }
 
     [Fact]
