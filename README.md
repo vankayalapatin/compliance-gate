@@ -4,7 +4,7 @@ ERP agents can read your policies. ComplianceGate enforces them.
 
 Public regulations and your own company knowledge base, turned into controls that every agent and every person must pass, changed by memo in minutes, with a named owner signing off.
 
-Demo video: [watch on YouTube](https://youtu.be/4blj5IrT_LY)
+Demo video: [watch on YouTube](https://youtu.be/8KkSuRME9-Q)
 
 **AI agents are starting to place orders and move company money. Who makes sure they follow the rules?**
 
