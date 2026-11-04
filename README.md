@@ -181,17 +181,56 @@ dotnet user-secrets --project Gate.Web set "MetaImages:ImageModel" "muse-image-1
 dotnet run --project Gate.Web
 ```
 
-Open http://localhost:5080 and choose **Admin → Restore saved data**. Then:
-
-1. **Outside world → Customer shop:** order 1,300 GLASS-1.
-2. Switch **Acting as** to approve on **Decisions**: Del Delegate covers Dana Director's purchase approvals, and Finn Finance approves payments.
-3. **Outside world → Suppliers:** each supplier acknowledges, ships and invoices from its own portal.
-4. **Outside world → Dock:** send the dock photos, then the reshot for CTN-07.
-5. Watch the agent activity panel on the right. **Admin → Presentation pace** slows the agent down so you can follow it.
+Open http://localhost:5080.
 
 **No key?** Admin → **Use offline answers** runs the recorded walk with zero model calls.
 
 **Tests:** `dotnet test --filter "Category!=Live"` runs the offline suite. Live tests need a key and make real model calls.
+
+## Try it
+
+The main walk runs one 1,300-glasses order from restore to resolved, with a held carton and a reshot: about 15 minutes with a key. Every step names the screen, who to act as (top-bar **Acting as**), and what you should see. The agent works in the background between steps and waits for a person wherever a **Decisions** card or an outside-world action is named; its current wait is always listed under **Agent activity › Waiting on** in the right-hand pane.
+
+1. **Admin → Saved data → Restore saved data.** Then **Admin → Split proposals**: uncheck **Propose split awards** (this walk uses the single-vendor award). Optional: **Admin → Presentation pace** → check **Pause between agent steps** to follow the agent step by step.
+2. **Outside world › Customer shop**, acting as anyone: item `GLASS-1`, quantity `1300`, requester blank → **Place new order**. You should see `Order SO-1001 received` and two cases: `SO-1001-BAT-1` (1,200 battery cells short) and `SO-1001-SCR-9` (screws). The agent raises request `PR-1036` and waits: **Decisions** shows **Approve PR PR-1036** (press **Refresh** if the card hasn't landed yet).
+3. **Decisions**, acting as **Del Delegate** (covering Dana Director): open **Approve PR PR-1036** → **Approve**. The agent screens vendors and waits again: CinderVolt is blocked by CORP-02 at 63.2%, so all 1,200 cells go to Meridian Cellworks ($22,200.00).
+4. **Decisions**, still Del Delegate: open **Approve PO PO-1037** → **Approve**. Its screening table shows CinderVolt blocked at 63.2% and Meridian passing. The agent now waits on the supplier.
+5. **Outside world › Suppliers › VND-1002 — Meridian Cellworks Inc**: **Acknowledge**, then **Send shipment notice** (leave the ASN number blank — the ERP mints `ASN-1035`; accept the suggested packing slip and the 12-carton plan `CTN-01`…`CTN-12`). You should see receipt `RCT-1035` posted. The pallet views now build in the background — read the dock note below before continuing.
+6. **Outside world › Dock**, truck card `Truck ASN-1035`: under **Rebuild views with a simulated problem** set `CTN-07` to **missing mark** → **Rebuild views**, and wait for `Rebuilt views ready: …`. Tick the offered pallet view(s) → **Send dock photos**, then wait for the outcome in the same card: it names `CTN-07` held for the missing handling mark while the other 11 pass. **Cases › SO-1001-BAT-1** names the hold.
+7. **Outside world › Suppliers › Meridian**: **Send an invoice** → accept the suggested number and the full 1,200 units at $18.50 → **Send invoice**. Intake accepts **$20,350.00** and holds **$1,850.00** (`CTN-07`'s 100 units). **Decisions** as Del Delegate: **Approve invoice `VND-1002`/…** → **Approve**. **Decisions** as **Finn Finance**: **Approve payment `PAY-1013`** ($20,350.00) → **Approve**. The held $1,850 stays open (the invoice reads Partly paid under **ERP › Accounts Payable › Invoices**).
+8. **Outside world › Dock**: tick **Reshot (follow-up reads for picked cartons)** → tick `CTN-07` → **Mint close-up for picked cartons** → tick the close-up → **Send reshot**; wait for the passing outcome. **Decisions** as Finn Finance: **Approve payment `PAY-1014`** ($1,850.00) → **Approve**. **Cases › SO-1001-BAT-1** now reads **resolved**; the invoice reads Paid and $22,200.00 is settled in full. The screw sibling `SO-1001-SCR-9` resolves the same way through the same screens (one carton).
+
+**Dock photos take a while.** `Send shipment notice` answers instantly and the pallet views build in the background (a generated scene plus one Spark read per view). The truck card appears on the Dock tab first while the counter still reads `No pallet views on the counter; upload files below.` Press **Reload options** (top right of the Outside world page) until a thumbnail appears under **Counter images (pallet views)** — usually within a minute or two. If the truck card itself is missing, click **Customer shop** and back to **Dock** (the truck list loads when the tab opens). After **Send dock photos** / **Send reshot**, wait for the outcome line in the same card before moving on.
+
+### Try next
+
+<details>
+<summary>Order 200 glasses: CinderVolt wins on price</summary>
+
+Restore again first (split either way). As Maya Planner: **Outside world › Customer shop**, `GLASS-1` × `200` → **Place new order**. One case opens (`SO-1001-BAT-1`, 100 cells short; the screws on hand cover that line). As Del Delegate: **Decisions** → **Approve PR PR-1036** → **Approve PO PO-1036** (100 cells, $1,420.00). No split card appears: CinderVolt at 59.2% is under the 60% cap, so the cheapest vendor takes the whole order. Acknowledge, ship (1 carton), photograph, invoice, and pay as in steps 5–8 (`PAY-1013`, $1,420.00); the case resolves.
+
+</details>
+
+<details>
+<summary>A manual CinderVolt order is refused with the same reason</summary>
+
+Restore again first. As Maya Planner: **ERP › Procurement › Purchase requisitions** → **New purchase requisition** → requester `Maya Planner`, line `BAT-1` × `1200`, unit `EA` → **Create purchase requisition**. Open the request → **Submit for approval** → route to `Del Delegate`. As Del Delegate, open it again → **Approve**. Back as Maya: **ERP › Procurement › Purchase orders** → **New purchase order** (or **New purchase order from this PR** on the request) → pick the request and **CinderVolt Energy Ltd** → **Create purchase order**. The ERP answers **Refused.** with the same CORP-02 sentence (63.2% over the 60% cap); no purchase order is created.
+
+</details>
+
+<details>
+<summary>A memo cuts the cap to 40%</summary>
+
+Restore again first. As Dana Director: **Governance › Memos** → **New memo** → author `Dana Director`, and paste this text: `China's share of our battery cells must come down. Effective 2026-12-01, no more than 40% of critical battery cells from any single country, trailing 12 months. Policy owner: Dana Director.` → **Submit memo**. Wait about 90–115 seconds (`Drafting the proposal…`) for the proposal card (rule `CORP-02`, cap `0.40`). As **Finn Finance** (a second owner — the author can't approve their own memo): fill **Test evidence (passing test names, one per line; required to approve)** with e.g. `ErpPolicyControlTests` → **Approve**. The pack publishes `CORP v2` → `v3` (see **Governance › Rules**). Now order 200 glasses as above: CinderVolt at 59.2% is over the new 40% cap, so that award is blocked.
+
+</details>
+
+<details>
+<summary>The split switch in Admin</summary>
+
+**Admin › Split proposals** → **Propose split awards** (on by default): when the cheapest vendor is blocked for the full quantity, the agent proposes a verified split across vendors, and a person approves the plan on **Decisions** before anything is ordered. The main walk above turns it off for the single-vendor award.
+
+</details>
 
 ## For ERP people
 
@@ -234,6 +273,7 @@ Not built: general ledger, accounts receivable, tax, landed cost, budget control
 
 - **The ERP is built in, not a live D365.** Everything the agent does goes through one adapter interface, ready for a real ERP connection that isn't built.
 - **The outside world is simulated:** the customer shop, the supplier portals and the dock. Dock photos are generated, with scenes from Muse Image and labels drawn from the shipment notice. Spark never sees the shipment notice; it only transcribes, and code compares.
+- **Dock views need a manual refresh.** Pallet views build in the background after each shipment notice; press **Reload options** on the Outside world page (or leave and reopen the Dock tab) until the counter thumbnails appear.
 - **The eval is on generated photos** with a known answer key: 100% there, not tested on a real dock. Both tiers share one scene family (cartons on a pallet with a blurred background), so the difficulty comes from the labels. The manual-check boxes for damage photos are still unticked.
 - **No real sign-in.** "Acting as" switches between the five people.
 - **One currency (USD), one company.**
