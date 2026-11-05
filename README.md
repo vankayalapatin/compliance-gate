@@ -6,7 +6,11 @@ Public regulations and your own company knowledge base, turned into controls tha
 
 Demo video: [watch on YouTube](https://youtu.be/8KkSuRME9-Q)
 
-**AI agents are starting to place orders and move company money. Who makes sure they follow the rules?**
+Companies have spent years and millions on SAP, Dynamics 365 or Oracle. Replacing a system of record is a multi-year migration, and it shouldn't be the price of using AI agents. Reconfiguring it for every new policy doesn't work either: each one means consultants, sign-offs and months. And the AI now built into ERPs mostly answers questions and drafts documents; even the agents that read company policy don't enforce it.
+
+ComplianceGate connects to the ERP's control points once and leaves the rest of it alone; after that, a policy change is a memo. It's the enforcement layer at every step of procure-to-pay (purchase requisition, purchase order, receiving, invoice and payment): whoever acts, an AI agent or a person, passes the same gate, and the gate decides what's allowed.
+
+The ERP is the anchor. The agent moves fast around it, but only as far as the gate allows.
 
 ## Why companies aren't letting agents act yet
 
@@ -19,8 +23,6 @@ The rules are the other problem. When tariffs rise or a government tightens impo
 **The ERP stays strict and simple. The agent does the thinking. People make the decisions.**
 
 ComplianceGate is a control layer that lets an AI agent work inside the ERP a company already has, under the same rules as the people around it. The *gate* is the control point: the moment the ERP commits a purchase order, a payment or a release. Every actor passes through the same gate, agent or person, and the gate decides what's allowed.
-
-It closes both gaps. Companies with years and millions invested in SAP, D365 or Oracle won't replace them to use agents, so ComplianceGate works alongside the ERP instead of replacing it. The ERP's controls stay in place, and people stay the approvers. The agent does the work. Company policy, from a memo or a regulation, becomes a rule enforced where money moves, for the agent and for people alike.
 
 Everything in this repo was built during the hackathon, Oct 26 – Nov 4, 2026, by a technical architect who designs Dynamics 365 solutions for a living. Purchasing is the first domain, because it's where policy meets money.
 
